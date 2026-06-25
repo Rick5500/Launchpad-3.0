@@ -12,6 +12,9 @@ app.use(express.json());
 // Health check
 app.get('/api/health', (req, res) => res.json({ status: 'ok', env: process.env.NODE_ENV || 'development' }));
 
+// Short health route for external tools
+app.get('/health', (req, res) => res.json({ status: 'ok', env: process.env.NODE_ENV || 'development' }));
+
 // Auth routes
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body || {};
