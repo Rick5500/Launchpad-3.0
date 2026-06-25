@@ -1,6 +1,16 @@
-Frontend placeholder for Launchpad 3.0.
+Frontend for Launchpad 3.0 using Vite + React.
 
-This folder contains a minimal React placeholder app. Replace with your preferred React tooling (CRA, Vite, etc.) when ready.
+This folder contains a minimal Vite-powered React app. To run locally:
 
-Run (example using a simple bundler/setup):
-- `npm install` in `frontend/` then `npm start` (if configured)
+```powershell
+cd "C:\Projects\Launchpad 3.0\frontend"
+npm install
+npm run dev
+```
+
+Build for production:
+
+```powershell
+npm run build
+npm run preview
+```
