@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS work_orders (
   description TEXT,
   quantity INTEGER DEFAULT 0,
   status TEXT DEFAULT 'open',
+  department TEXT DEFAULT 'General',
   due_date DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME,
