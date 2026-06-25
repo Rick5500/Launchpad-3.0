@@ -1,4 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { ThemeProvider, CssBaseline, Box, Typography, Avatar, Button } from '@mui/material';
+import HomeDashboard from './routes/HomeDashboard';
+import PlaceholderPage from './routes/PlaceholderPage';
+import Layout from './components/Layout';
+import theme from './theme';
 
 export default function App() {
   const [username, setUsername] = useState('');
@@ -14,7 +20,10 @@ export default function App() {
         .then((data) => {
           if (data && data.user) setUser(data.user);
         })
-        .catch(() => {});
+        .catch(() => {
+          setToken(null);
+          localStorage.removeItem('lp_token');
+        });
     }
   }, [token]);
 
@@ -34,7 +43,7 @@ export default function App() {
         setUser(body.user);
         setMessage('Login successful');
       })
-      .catch((err) => setMessage('Network error'));
+      .catch(() => setMessage('Network error'));
   }
 
   function logout() {
@@ -45,35 +54,64 @@ export default function App() {
     setPassword('');
   }
 
-  if (user) {
+  if (!user) {
     return (
-      <div style={{ fontFamily: 'sans-serif', padding: 20 }}>
-        <h1>Welcome, {user.display_name || user.username}</h1>
-        <p>Role: {user.role}</p>
-        <p>This is a placeholder dashboard. Routes planned: /admin /customer /production</p>
-        <button onClick={logout}>Logout</button>
-      </div>
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <Box sx={{ fontFamily: 'sans-serif', p: 4, minHeight: '100vh', bgcolor: 'background.default' }}>
+          <Box sx={{ maxWidth: 380, mx: 'auto', p: 4, bgcolor: 'background.paper', borderRadius: 2, boxShadow: 3 }}>
+            <Typography variant="h4" gutterBottom>
+              Launchpad 3.0 Login
+            </Typography>
+            <Box component="form" onSubmit={doLogin} sx={{ display: 'grid', gap: 2 }}>
+              <input
+                placeholder="Username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                style={{ width: '100%', padding: '12px', borderRadius: 8, border: '1px solid #333', background: '#121212', color: '#fff' }}
+              />
+              <input
+                type="password"
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                style={{ width: '100%', padding: '12px', borderRadius: 8, border: '1px solid #333', background: '#121212', color: '#fff' }}
+              />
+              <Button type="submit" variant="contained" size="large">
+                Login
+              </Button>
+            </Box>
+            {message && (
+              <Typography sx={{ mt: 2 }} color="warning.main">
+                {message}
+              </Typography>
+            )}
+            <Typography sx={{ mt: 3 }} color="text.secondary">
+              Demo credentials: <strong>admin / adminpass</strong>
+            </Typography>
+          </Box>
+        </Box>
+      </ThemeProvider>
     );
   }
 
   return (
-    <div style={{ fontFamily: 'sans-serif', padding: 20 }}>
-      <h1>Launchpad 3.0 — Login</h1>
-      <form onSubmit={doLogin} style={{ maxWidth: 320 }}>
-        <div style={{ marginBottom: 8 }}>
-          <label>Username</label>
-          <input value={username} onChange={(e) => setUsername(e.target.value)} style={{ width: '100%' }} />
-        </div>
-        <div style={{ marginBottom: 8 }}>
-          <label>Password</label>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: '100%' }} />
-        </div>
-        <div style={{ marginTop: 8 }}>
-          <button type="submit">Login</button>
-        </div>
-      </form>
-      {message && <p>{message}</p>}
-      <p style={{ marginTop: 16 }}>Demo: initialize DB then use <strong>admin / adminpass</strong></p>
-    </div>
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<Layout user={user} onLogout={logout} />}>
+            <Route index element={<HomeDashboard />} />
+            <Route path="work-orders" element={<PlaceholderPage title="Work Orders" />} />
+            <Route path="production-board" element={<PlaceholderPage title="Production Board" />} />
+            <Route path="customers" element={<PlaceholderPage title="Customers" />} />
+            <Route path="delivery" element={<PlaceholderPage title="Delivery" />} />
+            <Route path="reports" element={<PlaceholderPage title="Reports" />} />
+            <Route path="admin" element={<PlaceholderPage title="Admin" />} />
+          </Route>
+          <Route path="*" element={<Navigate to="/" />} />
+        </Routes>
+      </BrowserRouter>
+    </ThemeProvider>
   );
 }
