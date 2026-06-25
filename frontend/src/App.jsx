@@ -3,6 +3,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider, CssBaseline, Box, Typography, Avatar, Button } from '@mui/material';
 import HomeDashboard from './routes/HomeDashboard';
 import PlaceholderPage from './routes/PlaceholderPage';
+import WorkOrdersList from './routes/WorkOrdersList';
+import WorkOrderDetail from './routes/WorkOrderDetail';
 import Layout from './components/Layout';
 import theme from './theme';
 
@@ -102,7 +104,8 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Layout user={user} onLogout={logout} />}>
             <Route index element={<HomeDashboard />} />
-            <Route path="work-orders" element={<PlaceholderPage title="Work Orders" />} />
+            <Route path="work-orders" element={<WorkOrdersList />} />
+            <Route path="workorders/:id" element={<WorkOrderDetail />} />
             <Route path="production-board" element={<PlaceholderPage title="Production Board" />} />
             <Route path="customers" element={<PlaceholderPage title="Customers" />} />
             <Route path="delivery" element={<PlaceholderPage title="Delivery" />} />
