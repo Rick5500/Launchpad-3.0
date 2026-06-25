@@ -6,6 +6,11 @@ const port = process.env.PORT || 3000;
 
 const auth = require('./auth');
 const db = require('./db');
+const dashboardRouter = require('./routes/dashboard');
+const workOrdersRouter = require('./routes/workOrders');
+const productionRouter = require('./routes/production');
+const customersRouter = require('./routes/customers');
+const deliveryRouter = require('./routes/delivery');
 
 app.use(express.json());
 
@@ -30,18 +35,17 @@ app.get('/api/auth/me', auth.requireAuth, (req, res) => {
   res.json({ user: req.user });
 });
 
+app.use('/api/dashboard', dashboardRouter);
+app.use('/api/workorders', workOrdersRouter);
+app.use('/api/production', productionRouter);
+app.use('/api/customers', customersRouter);
+app.use('/api/delivery', deliveryRouter);
+
 // Admin placeholder
 app.get('/api/admin', auth.requireAuth, (req, res) => res.json({ message: 'admin endpoint (placeholder)', user: req.user }));
 
 // Customer placeholder
 app.get('/api/customer', auth.requireAuth, (req, res) => res.json({ message: 'customer endpoint (placeholder)', user: req.user }));
-
-// Work orders placeholder
-app.post('/api/workorders', auth.requireAuth, (req, res) => res.json({ message: 'create work order (placeholder)' }));
-app.get('/api/workorders', auth.requireAuth, (req, res) => res.json({ message: 'list work orders (placeholder)' }));
-
-// Production board placeholder
-app.get('/api/production', auth.requireAuth, (req, res) => res.json({ message: 'production board (placeholder)' }));
 
 // Barcode tracking placeholder
 app.post('/api/barcode', auth.requireAuth, (req, res) => res.json({ message: 'barcode event recorded (placeholder)' }));
