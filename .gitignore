@@ -1,37 +1,84 @@
-# Node modules
+# =========================
+# Dependencies
+# =========================
 node_modules/
 
-# Environment files
+# =========================
+# Environment Variables
+# =========================
 .env
-.env.local
+.env.*
+!.env.example
 
-# macOS
-.DS_Store
+# =========================
+# Database
+# =========================
+database/*.db
+database/*.sqlite
+database/*.sqlite3
+*.db
+*.sqlite
+*.sqlite3
 
-# Windows
-Thumbs.db
+# Keep database folder
+!database/.gitkeep
 
-# Build / output folders
-dist/
-build/
-.parcel-cache/
-.cache/
-
-# Coverage
-coverage/
-
+# =========================
 # Logs
+# =========================
 logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Editor settings (local)
-.vscode/settings.json
+# =========================
+# Build Output
+# =========================
+dist/
+build/
+coverage/
 
-# Optional: OS or editor swap files
+# =========================
+# Cache
+# =========================
+.cache/
+.parcel-cache/
+.eslintcache
+*.tsbuildinfo
+
+# =========================
+# IDE Files
+# =========================
+.vscode/*
+!.vscode/extensions.json
+
+.idea/
+
+# =========================
+# Operating System Files
+# =========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================
+# Temporary Files
+# =========================
+*.tmp
+*.temp
 *.swp
-*~
+*.swo
+
+# =========================
+# Test Output
+# =========================
+test-results/
+playwright-report/
+
+# =========================
+# Misc
+# =========================
+*.pid
 
 # Keep source and config files tracked (package.json, .eslintrc, etc.)
