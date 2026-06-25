@@ -13,7 +13,7 @@ app.use(express.json());
 app.get('/api/health', (req, res) => res.json({ status: 'ok', env: process.env.NODE_ENV || 'development' }));
 
 // Short health route for external tools
-app.get('/health', (req, res) => res.json({ status: 'ok', env: process.env.NODE_ENV || 'development' }));
+app.get('/health', (req, res) => res.json({ status: 'ok', service: 'launchpad-backend' }));
 
 // Auth routes
 app.post('/api/auth/login', (req, res) => {
