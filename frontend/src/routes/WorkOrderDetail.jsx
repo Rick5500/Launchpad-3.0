@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { Box, Card, CardContent, Chip, Grid, Typography, Tabs, Tab, Divider } from '@mui/material';
+import { useNavigate, useParams } from 'react-router-dom';
+import { Box, Button, Card, CardContent, Chip, Grid, Typography, Tabs, Tab, Divider } from '@mui/material';
 import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
 import SectionCard from '../components/SectionCard';
+import { authFetch } from '../api';
 
 const tabs = ['Overview', 'Specifications', 'Attachments', 'Activity History', 'Routing', 'Notes'];
 
@@ -60,7 +61,7 @@ export default function WorkOrderDetail() {
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/workorders/${id}`)
+    authFetch(`/api/workorders/${id}`)
       .then((res) => {
         if (!res.ok) throw new Error('Work order not found');
         return res.json();
@@ -76,12 +77,19 @@ export default function WorkOrderDetail() {
 
   return (
     <Box sx={{ p: 3 }}>
-      <Typography variant="h4" gutterBottom>
-        Work Order Detail
-      </Typography>
-      <Typography color="text.secondary" gutterBottom>
-        Detailed information for work order {workOrder.external_id || `#${workOrder.id}`}
-      </Typography>
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 2, mb: 2 }}>
+        <Box>
+          <Typography variant="h4" gutterBottom>
+            Work Order Detail
+          </Typography>
+          <Typography color="text.secondary">
+            Detailed information for work order {workOrder.external_id || `#${workOrder.id}`}
+          </Typography>
+        </Box>
+        <Button variant="contained" onClick={() => navigate(`/work-orders/${id}/edit`)}>
+          Edit Work Order
+        </Button>
+      </Box>
 
       <Box sx={{ mt: 2, mb: 3 }}>
         <Chip label={workOrder.status} color="primary" sx={{ mr: 1 }} />

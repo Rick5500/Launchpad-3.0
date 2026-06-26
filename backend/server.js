@@ -1,7 +1,15 @@
 require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
 const path = require('path');
+
 const app = express();
+app.use(cors({
+  origin: ['http://localhost:5173', 'http://localhost:5174'],
+  credentials: true
+}));
+
+app.use(express.json());
 const port = process.env.PORT || 3000;
 
 const auth = require('./auth');
@@ -12,7 +20,6 @@ const productionRouter = require('./routes/production');
 const customersRouter = require('./routes/customers');
 const deliveryRouter = require('./routes/delivery');
 
-app.use(express.json());
 
 // Health check
 app.get('/api/health', (req, res) => res.json({ status: 'ok', env: process.env.NODE_ENV || 'development' }));

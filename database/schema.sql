@@ -19,7 +19,13 @@ CREATE TABLE IF NOT EXISTS work_orders (
   quantity INTEGER DEFAULT 0,
   status TEXT DEFAULT 'open',
   department TEXT DEFAULT 'General',
+  specifications TEXT,
+  start_date DATETIME,
   due_date DATETIME,
+  production_line TEXT,
+  routing_instructions TEXT,
+  attachments TEXT,
+  notes TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME,
   FOREIGN KEY(customer_id) REFERENCES users(id)

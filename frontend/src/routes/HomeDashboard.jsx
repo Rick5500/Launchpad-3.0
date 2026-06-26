@@ -17,6 +17,7 @@ import {
   Typography,
   Divider,
 } from '@mui/material';
+import { authFetch } from '../api';
 
 const metricCards = [
   { key: 'totalWorkOrders', label: 'Total Work Orders' },
@@ -37,8 +38,14 @@ export default function HomeDashboard() {
   useEffect(() => {
     setLoading(true);
     Promise.all([
-      fetch('/api/dashboard').then((res) => res.json()),
-      fetch('/api/workorders').then((res) => res.json()),
+      authFetch('/api/dashboard').then((res) => {
+        if (!res.ok) throw new Error('Unable to load dashboard summary');
+        return res.json();
+      }),
+      authFetch('/api/workorders').then((res) => {
+        if (!res.ok) throw new Error('Unable to load work orders');
+        return res.json();
+      }),
     ])
       .then(([summaryData, workOrdersData]) => {
         setSummary(summaryData);

@@ -5,6 +5,7 @@ import HomeDashboard from './routes/HomeDashboard';
 import PlaceholderPage from './routes/PlaceholderPage';
 import WorkOrdersList from './routes/WorkOrdersList';
 import WorkOrderDetail from './routes/WorkOrderDetail';
+import WorkOrderForm from './routes/WorkOrderForm';
 import Layout from './components/Layout';
 import theme from './theme';
 
@@ -32,7 +33,8 @@ export default function App() {
   function doLogin(e) {
     e && e.preventDefault();
     setMessage('');
-    fetch('/api/auth/login', {
+    
+fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
@@ -105,7 +107,9 @@ export default function App() {
           <Route path="/" element={<Layout user={user} onLogout={logout} />}>
             <Route index element={<HomeDashboard />} />
             <Route path="work-orders" element={<WorkOrdersList />} />
-            <Route path="workorders/:id" element={<WorkOrderDetail />} />
+            <Route path="work-orders/new" element={<WorkOrderForm />} />
+            <Route path="work-orders/:id" element={<WorkOrderDetail />} />
+            <Route path="work-orders/:id/edit" element={<WorkOrderForm />} />
             <Route path="production-board" element={<PlaceholderPage title="Production Board" />} />
             <Route path="customers" element={<PlaceholderPage title="Customers" />} />
             <Route path="delivery" element={<PlaceholderPage title="Delivery" />} />

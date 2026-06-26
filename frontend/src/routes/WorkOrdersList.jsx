@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
+  Button,
   Card,
   CardContent,
   Table,
@@ -17,6 +18,7 @@ import {
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
+import { authFetch } from '../api';
 
 export default function WorkOrdersList() {
   const [workOrders, setWorkOrders] = useState([]);
@@ -26,8 +28,11 @@ export default function WorkOrdersList() {
 
   useEffect(() => {
     setLoading(true);
-    fetch('/api/workorders')
-      .then((res) => res.json())
+    authFetch('/api/workorders')
+      .then((res) => {
+        if (!res.ok) throw new Error('Unable to load work orders.');
+        return res.json();
+      })
       .then((data) => setWorkOrders(data))
       .catch(() => setError('Unable to load work orders.'))
       .finally(() => setLoading(false));
@@ -38,12 +43,19 @@ export default function WorkOrdersList() {
 
   return (
     <Box>
-      <Typography variant="h4" gutterBottom>
-        Work Orders
-      </Typography>
-      <Typography color="text.secondary" gutterBottom>
-        Browse all active work orders and explore detailed records.
-      </Typography>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 2 }}>
+        <Box>
+          <Typography variant="h4" gutterBottom>
+            Work Orders
+          </Typography>
+          <Typography color="text.secondary">
+            Browse all active work orders and explore detailed records.
+          </Typography>
+        </Box>
+        <Button variant="contained" onClick={() => navigate('/work-orders/new')}>
+          New Work Order
+        </Button>
+      </Box>
       <Card sx={{ bgcolor: '#1f2a38' }}>
         <CardContent>
           <TableContainer>
@@ -72,7 +84,7 @@ export default function WorkOrdersList() {
                       key={order.id}
                       hover
                       sx={{ cursor: 'pointer', '&:hover': { bgcolor: '#16212d' } }}
-                      onClick={() => navigate(`/workorders/${order.id}`)}
+                      onClick={() => navigate(`/work-orders/${order.id}`)}
                     >
                       <TableCell>{order.external_id || `WO-${order.id}`}</TableCell>
                       <TableCell>{order.description}</TableCell>
@@ -82,7 +94,7 @@ export default function WorkOrdersList() {
                       <TableCell>{order.due_date || '-'}</TableCell>
                       <TableCell>
                         <Tooltip title="View details">
-                          <IconButton onClick={(e) => { e.stopPropagation(); navigate(`/workorders/${order.id}`); }}>
+                          <IconButton onClick={(e) => { e.stopPropagation(); navigate(`/work-orders/${order.id}`); }}>
                             <VisibilityIcon />
                           </IconButton>
                         </Tooltip>
