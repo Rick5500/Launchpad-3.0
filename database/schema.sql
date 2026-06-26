@@ -83,6 +83,23 @@ CREATE TABLE IF NOT EXISTS barcode_events (
   FOREIGN KEY(operator_id) REFERENCES users(id)
 );
 
+CREATE TABLE IF NOT EXISTS work_order_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  work_order_id INTEGER NOT NULL,
+  event_type TEXT NOT NULL,
+  from_stage_id INTEGER,
+  to_stage_id INTEGER,
+  from_department_id INTEGER,
+  to_department_id INTEGER,
+  note TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(work_order_id) REFERENCES work_orders(id),
+  FOREIGN KEY(from_stage_id) REFERENCES production_stages(id),
+  FOREIGN KEY(to_stage_id) REFERENCES production_stages(id),
+  FOREIGN KEY(from_department_id) REFERENCES departments(id),
+  FOREIGN KEY(to_department_id) REFERENCES departments(id)
+);
+
 CREATE TABLE IF NOT EXISTS deliveries (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   work_order_id INTEGER,

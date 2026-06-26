@@ -21,6 +21,7 @@ const productionBoardRouter = require('./routes/productionBoard');
 const customersRouter = require('./routes/customers');
 const deliveryRouter = require('./routes/delivery');
 const departmentsRouter = require('./routes/departments');
+const barcodeRouter = require('./routes/barcode');
 
 
 // Health check
@@ -52,15 +53,13 @@ app.use('/api/production-stages', productionBoardRouter);
 app.use('/api/customers', customersRouter);
 app.use('/api/delivery', deliveryRouter);
 app.use('/api/departments', departmentsRouter);
+app.use('/api/barcode', barcodeRouter);
 
 // Admin placeholder
 app.get('/api/admin', auth.requireAuth, (req, res) => res.json({ message: 'admin endpoint (placeholder)', user: req.user }));
 
 // Customer placeholder
 app.get('/api/customer', auth.requireAuth, (req, res) => res.json({ message: 'customer endpoint (placeholder)', user: req.user }));
-
-// Barcode tracking placeholder
-app.post('/api/barcode', auth.requireAuth, (req, res) => res.json({ message: 'barcode event recorded (placeholder)' }));
 
 // Delivery / will-call rules placeholder
 app.get('/api/delivery/rules', auth.requireAuth, (req, res) => res.json({ message: 'delivery rules (placeholder)' }));

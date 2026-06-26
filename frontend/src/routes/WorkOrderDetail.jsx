@@ -1,14 +1,43 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Box, Button, Card, CardContent, Chip, Grid, Typography, Tabs, Tab, Divider } from '@mui/material';
+import { Box, Button, Card, CardContent, Chip, Grid, Typography, Tabs, Tab, Divider, Paper } from '@mui/material';
+import { Timeline, TimelineItem, TimelineOppositeContent, TimelineSeparator, TimelineConnector, TimelineDot, TimelineContent } from '@mui/lab';
 import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
 import SectionCard from '../components/SectionCard';
 import { authFetch } from '../api';
 
-const tabs = ['Overview', 'Specifications', 'Attachments', 'Activity History', 'Routing', 'Notes'];
+const tabs = ['Overview', 'Timeline', 'Specifications', 'Attachments', 'Activity History', 'Routing', 'Notes'];
 
-function getTabContent(tab, workOrder) {
+function getEventTypeLabel(eventType) {
+  const labels = {
+    'stage_change': 'Stage Updated',
+    'department_change': 'Department Updated',
+    'barcode_scan': 'Barcode Scanned',
+    'stage_change+department_change': 'Stage & Department Updated',
+    'note': 'Note Added',
+  };
+  return labels[eventType] || eventType;
+}
+
+function getEventTypeColor(eventType) {
+  const colors = {
+    'stage_change': '#42a5f5',
+    'department_change': '#66bb6a',
+    'barcode_scan': '#ffb300',
+    'stage_change+department_change': '#ab47bc',
+    'note': '#90caf9',
+  };
+  return colors[eventType] || '#90caf9';
+}
+
+function formatDateTime(isoString) {
+  if (!isoString) return '-';
+  const date = new Date(isoString);
+  return date.toLocaleString();
+}
+
+function getTabContent(tab, workOrder, events, eventsLoading) {
   switch (tab) {
     case 'Overview':
       return (
@@ -37,6 +66,55 @@ function getTabContent(tab, workOrder) {
           </Grid>
         </Box>
       );
+    case 'Timeline':
+      if (eventsLoading) {
+        return <Typography color="text.secondary">Loading events...</Typography>;
+      }
+      if (!events || events.length === 0) {
+        return <Typography color="text.secondary">No events yet. Events will appear as the work order progresses through production stages.</Typography>;
+      }
+      return (
+        <Box>
+          <Typography gutterBottom sx={{ mb: 3 }}>
+            Work order timeline showing all stage changes, department updates, and barcode scans in chronological order.
+          </Typography>
+          <Timeline position="alternate">
+            {events.map((event, index) => (
+              <TimelineItem key={event.id}>
+                <TimelineOppositeContent color="text.secondary" sx={{ fontSize: '0.875rem' }}>
+                  {formatDateTime(event.created_at)}
+                </TimelineOppositeContent>
+                <TimelineSeparator>
+                  <TimelineDot sx={{ bgcolor: getEventTypeColor(event.event_type) }} />
+                  {index < events.length - 1 && <TimelineConnector />}
+                </TimelineSeparator>
+                <TimelineContent>
+                  <Paper elevation={0} sx={{ p: 2, bgcolor: '#14202b', border: '1px solid #334455' }}>
+                    <Typography variant="h6" sx={{ color: getEventTypeColor(event.event_type) }}>
+                      {getEventTypeLabel(event.event_type)}
+                    </Typography>
+                    {event.from_stage_name && (
+                      <Typography variant="body2" color="text.secondary">
+                        Stage: {event.from_stage_name} → {event.to_stage_name}
+                      </Typography>
+                    )}
+                    {event.from_department_name && (
+                      <Typography variant="body2" color="text.secondary">
+                        Department: {event.from_department_name} → {event.to_department_name}
+                      </Typography>
+                    )}
+                    {event.note && (
+                      <Typography variant="body2" sx={{ mt: 1 }}>
+                        {event.note}
+                      </Typography>
+                    )}
+                  </Paper>
+                </TimelineContent>
+              </TimelineItem>
+            ))}
+          </Timeline>
+        </Box>
+      );
     case 'Specifications':
       return <Typography color="text.secondary">Specification details will be added here when available.</Typography>;
     case 'Attachments':
@@ -60,6 +138,8 @@ export default function WorkOrderDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('Overview');
+  const [events, setEvents] = useState([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -71,6 +151,19 @@ export default function WorkOrderDetail() {
       .then((data) => setWorkOrder(data))
       .catch((err) => setError(err.message || 'Unable to load work order'))
       .finally(() => setLoading(false));
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) return;
+    setEventsLoading(true);
+    authFetch(`/api/workorders/${id}/events`)
+      .then((res) => {
+        if (!res.ok) throw new Error('Unable to load events');
+        return res.json();
+      })
+      .then((data) => setEvents(data || []))
+      .catch((err) => console.error('Error loading events:', err))
+      .finally(() => setEventsLoading(false));
   }, [id]);
 
   if (loading) return <LoadingState message="Loading work order details..." />;
@@ -107,7 +200,7 @@ export default function WorkOrderDetail() {
             ))}
           </Tabs>
           <Divider sx={{ borderColor: '#334455', my: 2 }} />
-          {getTabContent(activeTab, workOrder)}
+          {getTabContent(activeTab, workOrder, events, eventsLoading)}
         </CardContent>
       </Card>
     </Box>

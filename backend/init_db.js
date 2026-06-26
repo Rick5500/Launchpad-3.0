@@ -120,6 +120,29 @@ function ensureWorkOrderNewColumns(next) {
   });
 }
 
+function ensureWorkOrderEventsTable(next) {
+  db.get(`SELECT name FROM sqlite_master WHERE type='table' AND name='work_order_events'`, [], (err, row) => {
+    if (err) return next(err);
+    if (row) return next();
+    db.run(`CREATE TABLE work_order_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      work_order_id INTEGER NOT NULL,
+      event_type TEXT NOT NULL,
+      from_stage_id INTEGER,
+      to_stage_id INTEGER,
+      from_department_id INTEGER,
+      to_department_id INTEGER,
+      note TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(work_order_id) REFERENCES work_orders(id),
+      FOREIGN KEY(from_stage_id) REFERENCES production_stages(id),
+      FOREIGN KEY(to_stage_id) REFERENCES production_stages(id),
+      FOREIGN KEY(from_department_id) REFERENCES departments(id),
+      FOREIGN KEY(to_department_id) REFERENCES departments(id)
+    )`, (err2) => next(err2));
+  });
+}
+
 db.exec(schema, (err) => {
   if (err) {
     console.error('Failed to apply schema:', err);
@@ -150,7 +173,13 @@ db.exec(schema, (err) => {
             process.exit(1);
           }
 
-          const adminPass = process.env.INIT_ADMIN_PASSWORD || 'adminpass';
+          ensureWorkOrderEventsTable((err6) => {
+            if (err6) {
+              console.error('Failed to ensure work order events table:', err6);
+              process.exit(1);
+            }
+
+            const adminPass = process.env.INIT_ADMIN_PASSWORD || 'adminpass';
           const hash = crypto.createHash('sha256').update(adminPass).digest('hex');
 
           db.get('SELECT id FROM users WHERE username = ?', ['admin'], (err, row) => {
@@ -276,6 +305,7 @@ db.exec(schema, (err) => {
                 });
               }
             );
+          });
           });
         });
       });
