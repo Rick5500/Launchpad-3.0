@@ -17,6 +17,7 @@ const db = require('./db');
 const dashboardRouter = require('./routes/dashboard');
 const workOrdersRouter = require('./routes/workOrders');
 const productionRouter = require('./routes/production');
+const productionBoardRouter = require('./routes/productionBoard');
 const customersRouter = require('./routes/customers');
 const deliveryRouter = require('./routes/delivery');
 const departmentsRouter = require('./routes/departments');
@@ -46,6 +47,8 @@ app.get('/api/auth/me', auth.requireAuth, (req, res) => {
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/workorders', workOrdersRouter);
 app.use('/api/production', productionRouter);
+app.use('/api/production-board', productionBoardRouter);
+app.use('/api/production-stages', productionBoardRouter);
 app.use('/api/customers', customersRouter);
 app.use('/api/delivery', deliveryRouter);
 app.use('/api/departments', departmentsRouter);

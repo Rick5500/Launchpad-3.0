@@ -7,6 +7,7 @@ import WorkOrdersList from './routes/WorkOrdersList';
 import WorkOrderDetail from './routes/WorkOrderDetail';
 import WorkOrderForm from './routes/WorkOrderForm';
 import DepartmentsAdmin from './routes/DepartmentsAdmin';
+import ProductionBoard from './routes/ProductionBoard';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -103,7 +104,7 @@ function AppRoutes() {
         <Route path="work-orders/new" element={<ProtectedRoute><WorkOrderForm /></ProtectedRoute>} />
         <Route path="work-orders/:id" element={<ProtectedRoute><WorkOrderDetail /></ProtectedRoute>} />
         <Route path="work-orders/:id/edit" element={<ProtectedRoute><WorkOrderForm /></ProtectedRoute>} />
-        <Route path="production-board" element={<ProtectedRoute><PlaceholderPage title="Production Board" /></ProtectedRoute>} />
+        <Route path="production-board" element={<ProtectedRoute><ProductionBoard /></ProtectedRoute>} />
         <Route path="customers" element={<ProtectedRoute><PlaceholderPage title="Customers" /></ProtectedRoute>} />
         <Route path="delivery" element={<ProtectedRoute><PlaceholderPage title="Delivery" /></ProtectedRoute>} />
         <Route path="reports" element={<ProtectedRoute><PlaceholderPage title="Reports" /></ProtectedRoute>} />

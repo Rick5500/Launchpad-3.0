@@ -23,6 +23,16 @@ CREATE TABLE IF NOT EXISTS departments (
   updated_at DATETIME
 );
 
+CREATE TABLE IF NOT EXISTS production_stages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  color TEXT DEFAULT '#90caf9',
+  icon TEXT,
+  sort_order INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME
+);
+
 CREATE TABLE IF NOT EXISTS work_orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   external_id TEXT,
@@ -31,6 +41,12 @@ CREATE TABLE IF NOT EXISTS work_orders (
   quantity INTEGER DEFAULT 0,
   status TEXT DEFAULT 'open',
   department TEXT DEFAULT 'General',
+  stage_id INTEGER,
+  priority TEXT DEFAULT 'Normal',
+  assigned_department_id INTEGER,
+  assigned_user_id INTEGER,
+  estimated_hours REAL,
+  actual_hours REAL,
   specifications TEXT,
   start_date DATETIME,
   due_date DATETIME,
@@ -40,7 +56,10 @@ CREATE TABLE IF NOT EXISTS work_orders (
   notes TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME,
-  FOREIGN KEY(customer_id) REFERENCES users(id)
+  FOREIGN KEY(customer_id) REFERENCES users(id),
+  FOREIGN KEY(stage_id) REFERENCES production_stages(id),
+  FOREIGN KEY(assigned_department_id) REFERENCES departments(id),
+  FOREIGN KEY(assigned_user_id) REFERENCES users(id)
 );
 
 CREATE TABLE IF NOT EXISTS production_board (

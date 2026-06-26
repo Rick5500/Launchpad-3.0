@@ -33,6 +33,7 @@ export default function HomeDashboard() {
   const [summary, setSummary] = useState(null);
   const [workOrders, setWorkOrders] = useState([]);
   const [departments, setDepartments] = useState([]);
+  const [productionMetrics, setProductionMetrics] = useState(null);
   const [activeTab, setActiveTab] = useState('All');
   const [loading, setLoading] = useState(true);
 
@@ -51,11 +52,16 @@ export default function HomeDashboard() {
         if (!res.ok) throw new Error('Unable to load departments');
         return res.json();
       }),
+      authFetch('/api/production-board').then((res) => {
+        if (!res.ok) throw new Error('Unable to load production board metrics');
+        return res.json();
+      }),
     ])
-      .then(([summaryData, workOrdersData, departmentData]) => {
+      .then(([summaryData, workOrdersData, departmentData, boardData]) => {
         setSummary(summaryData);
         setWorkOrders(workOrdersData);
         setDepartments((departmentData || []).filter((dept) => dept.is_active !== 0));
+        setProductionMetrics(boardData?.metrics || null);
       })
       .catch(() => {
         setSummary({});
@@ -114,6 +120,41 @@ export default function HomeDashboard() {
       </Grid>
 
       <Grid container spacing={3} sx={{ mt: 3 }}>
+        <Grid item xs={12}>
+          <Card sx={{ bgcolor: '#1f2a38' }}>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Production Snapshot
+              </Typography>
+              <Grid container spacing={2}>
+                <Grid item xs={12} sm={6} md={3}>
+                  <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#14202b' }}>
+                    <Typography variant="subtitle2" color="text.secondary">Work Orders by Stage</Typography>
+                    <Typography variant="h5">{productionMetrics?.workOrdersByStage?.length || 0}</Typography>
+                  </Box>
+                </Grid>
+                <Grid item xs={12} sm={6} md={3}>
+                  <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#14202b' }}>
+                    <Typography variant="subtitle2" color="text.secondary">Rush Orders</Typography>
+                    <Typography variant="h5">{productionMetrics?.rushOrders ?? 0}</Typography>
+                  </Box>
+                </Grid>
+                <Grid item xs={12} sm={6} md={3}>
+                  <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#14202b' }}>
+                    <Typography variant="subtitle2" color="text.secondary">Late Orders</Typography>
+                    <Typography variant="h5">{productionMetrics?.lateOrders ?? 0}</Typography>
+                  </Box>
+                </Grid>
+                <Grid item xs={12} sm={6} md={3}>
+                  <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#14202b' }}>
+                    <Typography variant="subtitle2" color="text.secondary">Today&apos;s Shipments</Typography>
+                    <Typography variant="h5">{productionMetrics?.todaysShipments ?? 0}</Typography>
+                  </Box>
+                </Grid>
+              </Grid>
+            </CardContent>
+          </Card>
+        </Grid>
         <Grid item xs={12} md={8}>
           <Card sx={{ bgcolor: '#1f2a38' }}>
             <CardContent>
