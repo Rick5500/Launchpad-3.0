@@ -9,6 +9,7 @@ import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import LogoutIcon from '@mui/icons-material/Logout';
+import BusinessIcon from '@mui/icons-material/Business';
 
 const drawerWidth = 280;
 
@@ -20,11 +21,12 @@ const navItems = [
   { title: 'Delivery', route: '/delivery', icon: <LocalShippingIcon /> },
   { title: 'Reports', route: '/reports', icon: <BarChartIcon /> },
   { title: 'Admin', route: '/admin', icon: <AdminPanelSettingsIcon /> },
+  { title: 'Departments', route: '/admin/departments', icon: <BusinessIcon /> },
 ];
 
 export default function Layout({ user, onLogout }) {
   const navigate = useNavigate();
-  const initials = user?.display_name?.charAt(0).toUpperCase() || user?.username?.charAt(0).toUpperCase();
+  const initials = (user?.display_name || user?.username || 'U').charAt(0).toUpperCase();
 
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh' }}>
@@ -34,7 +36,7 @@ export default function Layout({ user, onLogout }) {
             Launchpad 3.0
           </Typography>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <Typography>{user.display_name || user.username}</Typography>
+            <Typography>{user?.display_name || user?.username || 'User'}</Typography>
             <Avatar>{initials}</Avatar>
             <Button color="inherit" startIcon={<LogoutIcon />} onClick={onLogout}>
               Logout

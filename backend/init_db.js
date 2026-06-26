@@ -24,6 +24,7 @@ function addColumnIfMissing(column, definition, callback) {
 
 function ensureWorkOrderColumns(next) {
   const columns = [
+    { name: 'department', definition: "TEXT DEFAULT 'General'" },
     { name: 'specifications', definition: 'TEXT' },
     { name: 'start_date', definition: 'DATETIME' },
     { name: 'production_line', definition: 'TEXT' },
@@ -32,22 +33,43 @@ function ensureWorkOrderColumns(next) {
     { name: 'notes', definition: 'TEXT' },
   ];
 
-  let pending = columns.length;
-  columns.forEach((column) => {
-    db.get(`PRAGMA table_info(work_orders)`, [], (err, row) => {
-      db.all(`PRAGMA table_info(work_orders)`, [], (err2, rows) => {
-        if (err2) return next(err2);
-        const exists = rows.some((r) => r.name === column.name);
-        if (!exists) {
-          db.run(`ALTER TABLE work_orders ADD COLUMN ${column.name} ${column.definition}`, (err3) => {
-            if (err3) return next(err3);
-            if (--pending === 0) next();
-          });
-        } else if (--pending === 0) {
-          next();
-        }
+  db.all(`PRAGMA table_info(work_orders)`, [], (err, rows) => {
+    if (err) return next(err);
+
+    const existingColumns = new Set((rows || []).map((row) => row.name));
+    const missingColumns = columns.filter((column) => !existingColumns.has(column.name));
+
+    if (missingColumns.length === 0) return next();
+
+    let index = 0;
+    const applyNextColumn = () => {
+      if (index >= missingColumns.length) return next();
+      const column = missingColumns[index++];
+      db.run(`ALTER TABLE work_orders ADD COLUMN ${column.name} ${column.definition}`, (alterErr) => {
+        if (alterErr) return next(alterErr);
+        applyNextColumn();
       });
-    });
+    };
+
+    applyNextColumn();
+  });
+}
+
+function ensureDepartmentsTable(next) {
+  db.get(`SELECT name FROM sqlite_master WHERE type='table' AND name='departments'`, [], (err, row) => {
+    if (err) return next(err);
+    if (row) return next();
+    db.run(`CREATE TABLE departments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      description TEXT,
+      color TEXT DEFAULT '#90caf9',
+      icon TEXT,
+      sort_order INTEGER DEFAULT 0,
+      is_active INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME
+    )`, (err2) => next(err2));
   });
 }
 
@@ -63,7 +85,13 @@ db.exec(schema, (err) => {
       process.exit(1);
     }
 
-    const adminPass = process.env.INIT_ADMIN_PASSWORD || 'adminpass';
+    ensureDepartmentsTable((err3) => {
+      if (err3) {
+        console.error('Failed to ensure departments table:', err3);
+        process.exit(1);
+      }
+
+      const adminPass = process.env.INIT_ADMIN_PASSWORD || 'adminpass';
     const hash = crypto.createHash('sha256').update(adminPass).digest('hex');
 
     db.get('SELECT id FROM users WHERE username = ?', ['admin'], (err, row) => {
@@ -117,7 +145,27 @@ db.exec(schema, (err) => {
                   seedOrders.forEach((order) => insertOrder.run(order));
                   insertOrder.finalize();
 
-                  const sampleProduction = [
+                  db.get('SELECT COUNT(*) AS count FROM departments', [], (err, deptCountRow) => {
+                    if (err) {
+                      console.error(err);
+                      process.exit(1);
+                    }
+
+                    if (deptCountRow.count === 0) {
+                      const defaultDepartments = [
+                        ['Small Format', 'Small format print production', '#90caf9', 'print', 1, 1],
+                        ['Signs & Graphics', 'Large format and signage jobs', '#f6c343', 'branding_watermark', 2, 1],
+                        ['Reprographics', 'Reproduction and copy projects', '#7e57c2', 'copy_all', 3, 1],
+                        ['Scanning', 'Scanning and digitization tasks', '#26a69a', 'scanner', 4, 1],
+                        ['Delivery', 'Logistics and outbound delivery', '#ef5350', 'local_shipping', 5, 1],
+                        ['Admin', 'Administrative and ops support', '#78909c', 'admin_panel_settings', 6, 1],
+                      ];
+                      const insertDepartment = db.prepare('INSERT INTO departments (name, description, color, icon, sort_order, is_active) VALUES (?,?,?,?,?,?)');
+                      defaultDepartments.forEach((dept) => insertDepartment.run(dept));
+                      insertDepartment.finalize();
+                    }
+
+                    const sampleProduction = [
                     [1, 'Cutting', 1, 'in-progress'],
                     [2, 'Assembly', 2, 'open'],
                     [3, 'Inspection', 3, 'open'],

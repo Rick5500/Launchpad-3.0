@@ -32,6 +32,7 @@ const formatter = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numer
 export default function HomeDashboard() {
   const [summary, setSummary] = useState(null);
   const [workOrders, setWorkOrders] = useState([]);
+  const [departments, setDepartments] = useState([]);
   const [activeTab, setActiveTab] = useState('All');
   const [loading, setLoading] = useState(true);
 
@@ -46,10 +47,15 @@ export default function HomeDashboard() {
         if (!res.ok) throw new Error('Unable to load work orders');
         return res.json();
       }),
+      authFetch('/api/departments').then((res) => {
+        if (!res.ok) throw new Error('Unable to load departments');
+        return res.json();
+      }),
     ])
-      .then(([summaryData, workOrdersData]) => {
+      .then(([summaryData, workOrdersData, departmentData]) => {
         setSummary(summaryData);
         setWorkOrders(workOrdersData);
+        setDepartments((departmentData || []).filter((dept) => dept.is_active !== 0));
       })
       .catch(() => {
         setSummary({});
@@ -58,13 +64,15 @@ export default function HomeDashboard() {
       .finally(() => setLoading(false));
   }, []);
 
-  const departments = useMemo(() => {
+  const departmentTabs = useMemo(() => {
     const names = new Set(['All']);
+    const activeNames = departments.map((dept) => dept.name);
+    activeNames.forEach((name) => names.add(name));
     workOrders.forEach((workOrder) => {
       if (workOrder.department) names.add(workOrder.department);
     });
     return Array.from(names);
-  }, [workOrders]);
+  }, [departments, workOrders]);
 
   const filteredOrders = useMemo(() => {
     if (activeTab === 'All') return workOrders;
@@ -123,7 +131,7 @@ export default function HomeDashboard() {
                   scrollButtons="auto"
                   allowScrollButtonsMobile
                 >
-                  {departments.map((department) => (
+                  {departmentTabs.map((department) => (
                     <Tab key={department} label={department} value={department} />
                   ))}
                 </Tabs>

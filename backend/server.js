@@ -19,6 +19,7 @@ const workOrdersRouter = require('./routes/workOrders');
 const productionRouter = require('./routes/production');
 const customersRouter = require('./routes/customers');
 const deliveryRouter = require('./routes/delivery');
+const departmentsRouter = require('./routes/departments');
 
 
 // Health check
@@ -47,6 +48,7 @@ app.use('/api/workorders', workOrdersRouter);
 app.use('/api/production', productionRouter);
 app.use('/api/customers', customersRouter);
 app.use('/api/delivery', deliveryRouter);
+app.use('/api/departments', departmentsRouter);
 
 // Admin placeholder
 app.get('/api/admin', auth.requireAuth, (req, res) => res.json({ message: 'admin endpoint (placeholder)', user: req.user }));

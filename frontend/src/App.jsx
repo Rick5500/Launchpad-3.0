@@ -1,123 +1,128 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { ThemeProvider, CssBaseline, Box, Typography, Avatar, Button } from '@mui/material';
+import { ThemeProvider, CssBaseline, Box, Typography, TextField, Button, CircularProgress, Alert } from '@mui/material';
 import HomeDashboard from './routes/HomeDashboard';
 import PlaceholderPage from './routes/PlaceholderPage';
 import WorkOrdersList from './routes/WorkOrdersList';
 import WorkOrderDetail from './routes/WorkOrderDetail';
 import WorkOrderForm from './routes/WorkOrderForm';
+import DepartmentsAdmin from './routes/DepartmentsAdmin';
 import Layout from './components/Layout';
+import ProtectedRoute from './components/ProtectedRoute';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import theme from './theme';
 
-export default function App() {
+function LoginScreen() {
+  const { login, isLoggingIn, loginError, authMessage } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [token, setToken] = useState(localStorage.getItem('lp_token'));
-  const [user, setUser] = useState(null);
-  const [message, setMessage] = useState('');
+  const [localError, setLocalError] = useState('');
+  const usernameRef = useRef(null);
 
   useEffect(() => {
-    if (token) {
-      fetch('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } })
-        .then((r) => r.json())
-        .then((data) => {
-          if (data && data.user) setUser(data.user);
-        })
-        .catch(() => {
-          setToken(null);
-          localStorage.removeItem('lp_token');
-        });
+    usernameRef.current?.focus();
+  }, []);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setLocalError('');
+
+    if (!username.trim()) {
+      setLocalError('Please enter your username.');
+      usernameRef.current?.focus();
+      return;
     }
-  }, [token]);
 
-  function doLogin(e) {
-    e && e.preventDefault();
-    setMessage('');
-    
-fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    })
-      .then((r) => r.json().then((b) => ({ ok: r.ok, body: b })))
-      .then(({ ok, body }) => {
-        if (!ok) return setMessage(body.error || 'Login failed');
-        localStorage.setItem('lp_token', body.token);
-        setToken(body.token);
-        setUser(body.user);
-        setMessage('Login successful');
-      })
-      .catch(() => setMessage('Network error'));
+    if (!password) {
+      setLocalError('Please enter your password.');
+      return;
+    }
+
+    await login(username.trim(), password);
   }
 
-  function logout() {
-    localStorage.removeItem('lp_token');
-    setToken(null);
-    setUser(null);
-    setUsername('');
-    setPassword('');
-  }
-
-  if (!user) {
-    return (
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
-        <Box sx={{ fontFamily: 'sans-serif', p: 4, minHeight: '100vh', bgcolor: 'background.default' }}>
-          <Box sx={{ maxWidth: 380, mx: 'auto', p: 4, bgcolor: 'background.paper', borderRadius: 2, boxShadow: 3 }}>
-            <Typography variant="h4" gutterBottom>
-              Launchpad 3.0 Login
-            </Typography>
-            <Box component="form" onSubmit={doLogin} sx={{ display: 'grid', gap: 2 }}>
-              <input
-                placeholder="Username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                style={{ width: '100%', padding: '12px', borderRadius: 8, border: '1px solid #333', background: '#121212', color: '#fff' }}
-              />
-              <input
-                type="password"
-                placeholder="Password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                style={{ width: '100%', padding: '12px', borderRadius: 8, border: '1px solid #333', background: '#121212', color: '#fff' }}
-              />
-              <Button type="submit" variant="contained" size="large">
-                Login
-              </Button>
-            </Box>
-            {message && (
-              <Typography sx={{ mt: 2 }} color="warning.main">
-                {message}
-              </Typography>
-            )}
-            <Typography sx={{ mt: 3 }} color="text.secondary">
-              Demo credentials: <strong>admin / adminpass</strong>
-            </Typography>
-          </Box>
+  return (
+    <Box sx={{ fontFamily: 'sans-serif', p: 4, minHeight: '100vh', bgcolor: 'background.default' }}>
+      <Box sx={{ maxWidth: 380, mx: 'auto', p: 4, bgcolor: 'background.paper', borderRadius: 2, boxShadow: 3 }}>
+        <Typography variant="h4" gutterBottom>
+          Launchpad 3.0 Login
+        </Typography>
+        <Box component="form" onSubmit={handleSubmit} sx={{ display: 'grid', gap: 2 }}>
+          <TextField
+            inputRef={usernameRef}
+            label="Username"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            fullWidth
+            autoComplete="username"
+            variant="outlined"
+          />
+          <TextField
+            label="Password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            fullWidth
+            autoComplete="current-password"
+            variant="outlined"
+          />
+          <Button type="submit" variant="contained" size="large" disabled={isLoggingIn}>
+            {isLoggingIn ? <CircularProgress size={24} color="inherit" /> : 'Login'}
+          </Button>
         </Box>
-      </ThemeProvider>
+        {(loginError || localError || authMessage) && (
+          <Alert severity="warning" sx={{ mt: 2 }}>
+            {loginError || localError || authMessage}
+          </Alert>
+        )}
+        <Typography sx={{ mt: 3 }} color="text.secondary">
+          Demo credentials: <strong>admin / adminpass</strong>
+        </Typography>
+      </Box>
+    </Box>
+  );
+}
+
+function AppRoutes() {
+  const { user, logout, isLoading } = useAuth();
+
+  if (isLoading && !user) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
+        <CircularProgress />
+      </Box>
     );
   }
 
   return (
+    <Routes>
+      <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginScreen />} />
+      <Route path="/" element={<Layout user={user} onLogout={logout} />}>
+        <Route index element={<ProtectedRoute><HomeDashboard /></ProtectedRoute>} />
+        <Route path="work-orders" element={<ProtectedRoute><WorkOrdersList /></ProtectedRoute>} />
+        <Route path="work-orders/new" element={<ProtectedRoute><WorkOrderForm /></ProtectedRoute>} />
+        <Route path="work-orders/:id" element={<ProtectedRoute><WorkOrderDetail /></ProtectedRoute>} />
+        <Route path="work-orders/:id/edit" element={<ProtectedRoute><WorkOrderForm /></ProtectedRoute>} />
+        <Route path="production-board" element={<ProtectedRoute><PlaceholderPage title="Production Board" /></ProtectedRoute>} />
+        <Route path="customers" element={<ProtectedRoute><PlaceholderPage title="Customers" /></ProtectedRoute>} />
+        <Route path="delivery" element={<ProtectedRoute><PlaceholderPage title="Delivery" /></ProtectedRoute>} />
+        <Route path="reports" element={<ProtectedRoute><PlaceholderPage title="Reports" /></ProtectedRoute>} />
+        <Route path="admin" element={<ProtectedRoute><PlaceholderPage title="Admin" /></ProtectedRoute>} />
+        <Route path="admin/departments" element={<ProtectedRoute><DepartmentsAdmin /></ProtectedRoute>} />
+      </Route>
+      <Route path="*" element={<Navigate to={user ? '/' : '/login'} replace />} />
+    </Routes>
+  );
+}
+
+export default function App() {
+  return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Layout user={user} onLogout={logout} />}>
-            <Route index element={<HomeDashboard />} />
-            <Route path="work-orders" element={<WorkOrdersList />} />
-            <Route path="work-orders/new" element={<WorkOrderForm />} />
-            <Route path="work-orders/:id" element={<WorkOrderDetail />} />
-            <Route path="work-orders/:id/edit" element={<WorkOrderForm />} />
-            <Route path="production-board" element={<PlaceholderPage title="Production Board" />} />
-            <Route path="customers" element={<PlaceholderPage title="Customers" />} />
-            <Route path="delivery" element={<PlaceholderPage title="Delivery" />} />
-            <Route path="reports" element={<PlaceholderPage title="Reports" />} />
-            <Route path="admin" element={<PlaceholderPage title="Admin" />} />
-          </Route>
-          <Route path="*" element={<Navigate to="/" />} />
-        </Routes>
+        <AuthProvider>
+          <AppRoutes />
+        </AuthProvider>
       </BrowserRouter>
     </ThemeProvider>
   );

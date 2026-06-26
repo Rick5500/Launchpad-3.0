@@ -48,7 +48,23 @@ function validateWorkOrder(data) {
 
   return errors;
 }
+router.get('/', auth.requireAuth, (req, res) => {
+  db.all(
+    `SELECT ${workOrderFieldList}
+     FROM work_orders wo
+     LEFT JOIN users u ON wo.customer_id = u.id
+     ORDER BY wo.created_at DESC`,
+    [],
+    (err, rows) => {
+      if (err) {
+        console.error('WORK ORDER LIST ERROR:', err);
+        return res.status(500).json({ error: err.message });
+      }
 
+      res.json(rows);
+    }
+  );
+});
 
 router.get('/:id', auth.requireAuth, (req, res) => {
   db.get(

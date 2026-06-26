@@ -16,7 +16,6 @@ import LoadingState from '../components/LoadingState';
 import { authFetch } from '../api';
 
 const statusOptions = ['open', 'in-progress', 'complete', 'on-hold'];
-const departmentOptions = ['Manufacturing', 'Assembly', 'Quality', 'Shipping', 'General'];
 
 const defaultValues = {
   external_id: '',
@@ -48,6 +47,7 @@ export default function WorkOrderForm() {
   const navigate = useNavigate();
   const [values, setValues] = useState(defaultValues);
   const [customers, setCustomers] = useState([]);
+  const [departments, setDepartments] = useState([]);
   const [customerInput, setCustomerInput] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -62,6 +62,11 @@ export default function WorkOrderForm() {
       return res.json();
     });
 
+    const fetchDepartments = authFetch('/api/departments').then((res) => {
+      if (!res.ok) throw new Error('Unable to load departments');
+      return res.json();
+    });
+
     const fetchWorkOrder = id
       ? authFetch(`/api/workorders/${id}`).then((res) => {
           if (!res.ok) throw new Error('Unable to load work order');
@@ -69,9 +74,10 @@ export default function WorkOrderForm() {
         })
       : Promise.resolve(null);
 
-    Promise.all([fetchCustomers, fetchWorkOrder])
-      .then(([customerData, workOrderData]) => {
+    Promise.all([fetchCustomers, fetchDepartments, fetchWorkOrder])
+      .then(([customerData, departmentData, workOrderData]) => {
         setCustomers(customerData);
+        setDepartments(departmentData.filter((dept) => dept.is_active !== 0));
         if (workOrderData) {
           setValues({
             external_id: workOrderData.external_id || '',
@@ -262,11 +268,13 @@ export default function WorkOrderForm() {
                   variant="filled"
                   InputProps={{ sx: { bgcolor: '#121d27' } }}
                 >
-                  {departmentOptions.map((department) => (
-                    <MenuItem key={department} value={department}>
-                      {department}
+                  {departments.length ? departments.map((department) => (
+                    <MenuItem key={department.id} value={department.name}>
+                      {department.name}
                     </MenuItem>
-                  ))}
+                  )) : (
+                    <MenuItem value="General">General</MenuItem>
+                  )}
                 </TextField>
               </Grid>
               <Grid item xs={12} md={8}>

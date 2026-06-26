@@ -53,7 +53,9 @@ function getTabContent(tab, workOrder) {
 }
 
 export default function WorkOrderDetail() {
+  const navigate = useNavigate();
   const { id } = useParams();
+
   const [workOrder, setWorkOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
