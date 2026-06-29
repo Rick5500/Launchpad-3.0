@@ -22,6 +22,9 @@ const customersRouter = require('./routes/customers');
 const deliveryRouter = require('./routes/delivery');
 const departmentsRouter = require('./routes/departments');
 const barcodeRouter = require('./routes/barcode');
+const usersRouter = require('./routes/users');
+const matrixRouter = require('./routes/matrix');
+const productsRouter = require('./routes/products');
 
 
 // Health check
@@ -54,9 +57,20 @@ app.use('/api/customers', customersRouter);
 app.use('/api/delivery', deliveryRouter);
 app.use('/api/departments', departmentsRouter);
 app.use('/api/barcode', barcodeRouter);
+app.use('/api/users', usersRouter);
+app.use('/api/matrix', matrixRouter);
+app.use('/api/products', productsRouter);
+
+// Admin settings endpoint (admin only)
+app.get('/api/admin/settings', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
+  res.json({
+    message: 'System settings and configuration',
+    features: ['user_management', 'department_settings', 'barcode_settings', 'system_logs'],
+  });
+});
 
 // Admin placeholder
-app.get('/api/admin', auth.requireAuth, (req, res) => res.json({ message: 'admin endpoint (placeholder)', user: req.user }));
+app.get('/api/admin', auth.requireAuth, auth.requireRole('admin'), (req, res) => res.json({ message: 'admin endpoint', user: req.user }));
 
 // Customer placeholder
 app.get('/api/customer', auth.requireAuth, (req, res) => res.json({ message: 'customer endpoint (placeholder)', user: req.user }));

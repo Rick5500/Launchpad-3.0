@@ -45,7 +45,7 @@ if (err) {
   );
 });
 
-router.post('/', auth.requireAuth, (req, res) => {
+router.post('/', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
   const payload = req.body || {};
   const name = String(payload.name || '').trim();
   if (!name) return res.status(400).json({ error: 'name is required' });
@@ -75,7 +75,7 @@ router.post('/', auth.requireAuth, (req, res) => {
   );
 });
 
-router.put('/:id', auth.requireAuth, (req, res) => {
+router.put('/:id', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
   const id = req.params.id;
   const payload = req.body || {};
   const name = String(payload.name || '').trim();
@@ -103,7 +103,7 @@ router.put('/:id', auth.requireAuth, (req, res) => {
   );
 });
 
-router.delete('/:id', auth.requireAuth, (req, res) => {
+router.delete('/:id', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
   const id = req.params.id;
   db.run(
     `UPDATE departments SET is_active = 0, updated_at = datetime('now') WHERE id = ?`,

@@ -110,3 +110,64 @@ CREATE TABLE IF NOT EXISTS deliveries (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(work_order_id) REFERENCES work_orders(id)
 );
+
+-- Operations Matrix Tables
+CREATE TABLE IF NOT EXISTS work_order_department_status (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  work_order_id INTEGER NOT NULL,
+  department_id INTEGER NOT NULL,
+  status TEXT DEFAULT 'Not Required', -- Not Required, Waiting, Proof, In Progress, On Hold, Complete
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(work_order_id) REFERENCES work_orders(id) ON DELETE CASCADE,
+  FOREIGN KEY(department_id) REFERENCES departments(id),
+  UNIQUE(work_order_id, department_id)
+);
+
+CREATE TABLE IF NOT EXISTS work_order_matrix_state (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  work_order_id INTEGER NOT NULL UNIQUE,
+  qc_status TEXT DEFAULT 'Not Required', -- Not Required, Waiting, Ready for QC, In QC, On Hold, Complete
+  delivery_type TEXT, -- delivery or will_call, auto-set when QC completes
+  is_completed BOOLEAN DEFAULT 0,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(work_order_id) REFERENCES work_orders(id) ON DELETE CASCADE
+);
+
+-- Product Catalog Tables
+CREATE TABLE IF NOT EXISTS product_categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT,
+  sort_order INTEGER DEFAULT 0,
+  is_active INTEGER DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME
+);
+
+CREATE TABLE IF NOT EXISTS products (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  description TEXT,
+  category_id INTEGER NOT NULL,
+  is_active INTEGER DEFAULT 1,
+  proof_required INTEGER DEFAULT 0,
+  qc_required INTEGER DEFAULT 0,
+  barcode_required INTEGER DEFAULT 0,
+  default_turnaround_hours INTEGER,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME,
+  FOREIGN KEY(category_id) REFERENCES product_categories(id)
+);
+
+CREATE TABLE IF NOT EXISTS product_required_departments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  product_id INTEGER NOT NULL,
+  department_id INTEGER NOT NULL,
+  sort_order INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE,
+  FOREIGN KEY(department_id) REFERENCES departments(id),
+  UNIQUE(product_id, department_id)
+);

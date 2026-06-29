@@ -7,7 +7,9 @@ import WorkOrdersList from './routes/WorkOrdersList';
 import WorkOrderDetail from './routes/WorkOrderDetail';
 import WorkOrderForm from './routes/WorkOrderForm';
 import DepartmentsAdmin from './routes/DepartmentsAdmin';
+import AdminProducts from './routes/AdminProducts';
 import ProductionBoard from './routes/ProductionBoard';
+import OperationsMatrix from './routes/OperationsMatrix';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -102,14 +104,18 @@ function AppRoutes() {
         <Route index element={<ProtectedRoute><HomeDashboard /></ProtectedRoute>} />
         <Route path="work-orders" element={<ProtectedRoute><WorkOrdersList /></ProtectedRoute>} />
         <Route path="work-orders/new" element={<ProtectedRoute><WorkOrderForm /></ProtectedRoute>} />
+        <Route path="workorders/:id" element={<ProtectedRoute><WorkOrderDetail /></ProtectedRoute>} />
         <Route path="work-orders/:id" element={<ProtectedRoute><WorkOrderDetail /></ProtectedRoute>} />
         <Route path="work-orders/:id/edit" element={<ProtectedRoute><WorkOrderForm /></ProtectedRoute>} />
-        <Route path="production-board" element={<ProtectedRoute><ProductionBoard /></ProtectedRoute>} />
+        <Route path="production-board" element={<ProtectedRoute><OperationsMatrix /></ProtectedRoute>} />
         <Route path="customers" element={<ProtectedRoute><PlaceholderPage title="Customers" /></ProtectedRoute>} />
         <Route path="delivery" element={<ProtectedRoute><PlaceholderPage title="Delivery" /></ProtectedRoute>} />
-        <Route path="reports" element={<ProtectedRoute><PlaceholderPage title="Reports" /></ProtectedRoute>} />
-        <Route path="admin" element={<ProtectedRoute><PlaceholderPage title="Admin" /></ProtectedRoute>} />
-        <Route path="admin/departments" element={<ProtectedRoute><DepartmentsAdmin /></ProtectedRoute>} />
+        <Route path="reports" element={<ProtectedRoute allowedRoles={['manager', 'admin']}><PlaceholderPage title="Reports" /></ProtectedRoute>} />
+        <Route path="admin" element={<ProtectedRoute allowedRoles={['admin']}><PlaceholderPage title="Admin" /></ProtectedRoute>} />
+        <Route path="admin/departments" element={<ProtectedRoute allowedRoles={['admin']}><DepartmentsAdmin /></ProtectedRoute>} />
+        <Route path="admin/products" element={<ProtectedRoute allowedRoles={['admin']}><AdminProducts /></ProtectedRoute>} />
+        <Route path="admin/users" element={<ProtectedRoute allowedRoles={['admin']}><PlaceholderPage title="Users Management" /></ProtectedRoute>} />
+        <Route path="admin/settings" element={<ProtectedRoute allowedRoles={['admin']}><PlaceholderPage title="System Settings" /></ProtectedRoute>} />
       </Route>
       <Route path="*" element={<Navigate to={user ? '/' : '/login'} replace />} />
     </Routes>
