@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Box, Button, Card, CardContent, Chip, Grid, Typography, Tabs, Tab, Divider, Paper } from '@mui/material';
+import { Box, Button, Card, CardContent, Chip, Grid, Typography, Tabs, Tab, Divider, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow } from '@mui/material';
 import { Timeline, TimelineItem, TimelineOppositeContent, TimelineSeparator, TimelineConnector, TimelineDot, TimelineContent } from '@mui/lab';
 import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
@@ -64,6 +64,54 @@ function getTabContent(tab, workOrder, events, eventsLoading) {
               </Grid>
             ))}
           </Grid>
+
+          {/* Product Line Items Section */}
+          {workOrder.line_items && workOrder.line_items.length > 0 && (
+            <Box sx={{ mt: 4 }}>
+              <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
+                Product Line Items
+              </Typography>
+              <TableContainer component={Paper} sx={{ bgcolor: '#0f1822', border: '1px solid #334455' }}>
+                <Table>
+                  <TableHead sx={{ bgcolor: '#1f2a38' }}>
+                    <TableRow>
+                      <TableCell sx={{ color: '#e0e0e0', fontWeight: 'bold' }}>Product</TableCell>
+                      <TableCell sx={{ color: '#e0e0e0', fontWeight: 'bold' }} align="right">Quantity</TableCell>
+                      <TableCell sx={{ color: '#e0e0e0', fontWeight: 'bold' }}>Departments</TableCell>
+                      <TableCell sx={{ color: '#e0e0e0', fontWeight: 'bold' }}>Notes</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {workOrder.line_items.map((item, index) => (
+                      <TableRow key={index} sx={{ '&:hover': { bgcolor: '#1f2a38' } }}>
+                        <TableCell sx={{ color: '#e0e0e0' }}>{item.product_name || 'Unknown Product'}</TableCell>
+                        <TableCell sx={{ color: '#e0e0e0' }} align="right">{item.quantity || 1}</TableCell>
+                        <TableCell sx={{ color: '#e0e0e0' }}>
+                          {item.required_departments && item.required_departments.length > 0 ? (
+                            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                              {item.required_departments.map((dept) => (
+                                <Chip
+                                  key={dept.id}
+                                  label={dept.department_name || dept.name}
+                                  size="small"
+                                  sx={{ bgcolor: '#334455', color: '#e0e0e0' }}
+                                />
+                              ))}
+                            </Box>
+                          ) : (
+                            <Typography color="text.secondary">-</Typography>
+                          )}
+                        </TableCell>
+                        <TableCell sx={{ color: item.notes ? '#e0e0e0' : '#666' }}>
+                          {item.notes || '-'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </Box>
+          )}
         </Box>
       );
     case 'Timeline':

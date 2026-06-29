@@ -230,6 +230,25 @@ function ensureProductRequiredDepartmentsTable(next) {
     )`, (err2) => next(err2));
   });
 }
+
+function ensureWorkOrderLineItemsTable(next) {
+  db.get(`SELECT name FROM sqlite_master WHERE type='table' AND name='work_order_line_items'`, [], (err, row) => {
+    if (err) return next(err);
+    if (row) return next();
+    db.run(`CREATE TABLE work_order_line_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      work_order_id INTEGER NOT NULL,
+      product_id INTEGER NOT NULL,
+      description TEXT,
+      quantity INTEGER DEFAULT 1,
+      notes TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME,
+      FOREIGN KEY(work_order_id) REFERENCES work_orders(id) ON DELETE CASCADE,
+      FOREIGN KEY(product_id) REFERENCES products(id)
+    )`, (err2) => next(err2));
+  });
+}
 db.exec(schema, (err) => {
   if (err) {
     console.error('Failed to apply schema:', err);
@@ -295,6 +314,12 @@ db.exec(schema, (err) => {
                       console.error('Failed to ensure product required departments table:', err11);
                       process.exit(1);
                     }
+
+                    ensureWorkOrderLineItemsTable((err12) => {
+                      if (err12) {
+                        console.error('Failed to ensure work order line items table:', err12);
+                        process.exit(1);
+                      }
 
                     // Define required users to ensure exist
                     const requiredUsers = [
@@ -625,6 +650,7 @@ db.exec(schema, (err) => {
       });
     });
   });
+});
 });
 });
 });

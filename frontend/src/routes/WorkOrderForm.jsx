@@ -11,7 +11,17 @@ import {
   Typography,
   Alert,
   Autocomplete,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  Chip,
+  IconButton,
 } from '@mui/material';
+import DeleteIcon from '@mui/icons-material/Delete';
 import LoadingState from '../components/LoadingState';
 import { authFetch } from '../api';
 
@@ -48,8 +58,14 @@ export default function WorkOrderForm() {
   const [values, setValues] = useState(defaultValues);
   const [customers, setCustomers] = useState([]);
   const [departments, setDepartments] = useState([]);
+  const [products, setProducts] = useState([]);
   const [customerInput, setCustomerInput] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [lineItems, setLineItems] = useState([]);
+  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [productQuantity, setProductQuantity] = useState('1');
+  const [productNotes, setProductNotes] = useState('');
+  const [selectedProductDepartments, setSelectedProductDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -67,6 +83,11 @@ export default function WorkOrderForm() {
       return res.json();
     });
 
+    const fetchProducts = authFetch('/api/products').then((res) => {
+      if (!res.ok) throw new Error('Unable to load products');
+      return res.json();
+    });
+
     const fetchWorkOrder = id
       ? authFetch(`/api/workorders/${id}`).then((res) => {
           if (!res.ok) throw new Error('Unable to load work order');
@@ -74,10 +95,11 @@ export default function WorkOrderForm() {
         })
       : Promise.resolve(null);
 
-    Promise.all([fetchCustomers, fetchDepartments, fetchWorkOrder])
-      .then(([customerData, departmentData, workOrderData]) => {
+    Promise.all([fetchCustomers, fetchDepartments, fetchProducts, fetchWorkOrder])
+      .then(([customerData, departmentData, productData, workOrderData]) => {
         setCustomers(customerData);
         setDepartments(departmentData.filter((dept) => dept.is_active !== 0));
+        setProducts(productData);
         if (workOrderData) {
           setValues({
             external_id: workOrderData.external_id || '',
@@ -93,6 +115,11 @@ export default function WorkOrderForm() {
             attachments: workOrderData.attachments || '',
             notes: workOrderData.notes || '',
           });
+
+          // Load line items if they exist
+          if (workOrderData.line_items && Array.isArray(workOrderData.line_items)) {
+            setLineItems(workOrderData.line_items);
+          }
 
           // pre-fill customer input / selection
           const found = customerData.find((c) => Number(c.id) === Number(workOrderData.customer_id));
@@ -115,6 +142,47 @@ export default function WorkOrderForm() {
 
   const handleChange = (field) => (event) => {
     setValues((current) => ({ ...current, [field]: event.target.value }));
+  };
+
+  const handleProductSelect = async (product) => {
+    setSelectedProduct(product);
+    if (product) {
+      try {
+        const res = await authFetch(`/api/products/${product.id}/required-departments`);
+        if (res.ok) {
+          const depts = await res.json();
+          setSelectedProductDepartments(depts);
+        }
+      } catch (err) {
+        console.error('Error fetching departments:', err);
+        setSelectedProductDepartments([]);
+      }
+    } else {
+      setSelectedProductDepartments([]);
+    }
+  };
+
+  const handleAddLineItem = () => {
+    if (!selectedProduct) {
+      setError('Please select a product');
+      return;
+    }
+    const newLineItem = {
+      product_id: selectedProduct.id,
+      product_name: selectedProduct.name,
+      quantity: Number(productQuantity) || 1,
+      notes: productNotes,
+      required_departments: selectedProductDepartments,
+    };
+    setLineItems([...lineItems, newLineItem]);
+    setSelectedProduct(null);
+    setProductQuantity('1');
+    setProductNotes('');
+    setSelectedProductDepartments([]);
+  };
+
+  const handleRemoveLineItem = (index) => {
+    setLineItems(lineItems.filter((_, i) => i !== index));
   };
 
   const handleSubmit = async (event) => {
@@ -162,6 +230,7 @@ export default function WorkOrderForm() {
       ...values,
       customer_id: Number(customerId),
       quantity: Number(values.quantity),
+      line_items: lineItems,
     };
 
     try {
@@ -381,6 +450,132 @@ export default function WorkOrderForm() {
                 />
               </Grid>
             </Grid>
+
+              {/* Product Line Items Section */}
+              <Grid item xs={12}>
+                <Typography variant="h6" sx={{ mb: 2, mt: 2 }}>
+                  Product Line Items
+                </Typography>
+                <Card sx={{ bgcolor: '#0f1419', p: 2, mb: 2 }}>
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} md={6}>
+                      <Autocomplete
+                        options={products}
+                        getOptionLabel={(option) => option.name || ''}
+                        value={selectedProduct}
+                        onChange={(_, value) => handleProductSelect(value)}
+                        renderInput={(params) => (
+                          <TextField
+                            {...params}
+                            label="Select Product"
+                            variant="filled"
+                            InputProps={{ ...params.InputProps, sx: { bgcolor: '#121d27' } }}
+                          />
+                        )}
+                      />
+                    </Grid>
+                    <Grid item xs={12} md={3}>
+                      <TextField
+                        label="Quantity"
+                        type="number"
+                        value={productQuantity}
+                        onChange={(e) => setProductQuantity(e.target.value)}
+                        fullWidth
+                        variant="filled"
+                        InputProps={{ sx: { bgcolor: '#121d27' } }}
+                      />
+                    </Grid>
+                    <Grid item xs={12} md={3}>
+                      <Button
+                        variant="contained"
+                        onClick={handleAddLineItem}
+                        fullWidth
+                        sx={{ height: '56px' }}
+                      >
+                        Add Product
+                      </Button>
+                    </Grid>
+                    <Grid item xs={12}>
+                      <TextField
+                        label="Notes (optional)"
+                        value={productNotes}
+                        onChange={(e) => setProductNotes(e.target.value)}
+                        fullWidth
+                        multiline
+                        rows={2}
+                        variant="filled"
+                        InputProps={{ sx: { bgcolor: '#121d27' } }}
+                      />
+                    </Grid>
+
+                    {selectedProduct && selectedProductDepartments.length > 0 && (
+                      <Grid item xs={12}>
+                        <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                          Required Departments for this Product:
+                        </Typography>
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                          {selectedProductDepartments.map((dept) => (
+                            <Chip
+                              key={dept.department_id}
+                              label={dept.department_name}
+                              color="primary"
+                              variant="outlined"
+                            />
+                          ))}
+                        </Box>
+                      </Grid>
+                    )}
+                  </Grid>
+                </Card>
+
+                {lineItems.length > 0 && (
+                  <TableContainer component={Paper} sx={{ bgcolor: '#1f2a38' }}>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow sx={{ bgcolor: '#0f1419' }}>
+                          <TableCell>Product</TableCell>
+                          <TableCell align="right">Qty</TableCell>
+                          <TableCell>Departments</TableCell>
+                          <TableCell align="center">Action</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {lineItems.map((item, index) => (
+                          <TableRow key={index}>
+                            <TableCell>{item.product_name}</TableCell>
+                            <TableCell align="right">{item.quantity}</TableCell>
+                            <TableCell>
+                              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                                {item.required_departments && item.required_departments.length > 0 ? (
+                                  item.required_departments.map((dept) => (
+                                    <Chip
+                                      key={dept.department_id}
+                                      label={dept.department_name}
+                                      size="small"
+                                      variant="outlined"
+                                    />
+                                  ))
+                                ) : (
+                                  <Typography variant="caption">None</Typography>
+                                )}
+                              </Box>
+                            </TableCell>
+                            <TableCell align="center">
+                              <IconButton
+                                size="small"
+                                onClick={() => handleRemoveLineItem(index)}
+                                color="error"
+                              >
+                                <DeleteIcon fontSize="small" />
+                              </IconButton>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                )}
+              </Grid>
 
             <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
               <Button variant="outlined" onClick={() => navigate('/work-orders')}>

@@ -30,6 +30,161 @@ const workOrderFieldList = `
   u.username AS customer_username
 `;
 
+// Helper: Get work order line items with product info and required departments
+function getWorkOrderLineItems(workOrderId, callback) {
+  db.all(
+    `SELECT 
+      woli.id, woli.work_order_id, woli.product_id, woli.description, woli.quantity, woli.notes,
+      p.name as product_name, p.category_id, pc.name as category_name,
+      p.proof_required, p.qc_required, p.barcode_required, p.default_turnaround_hours,
+      prd.id as dept_id, prd.department_id, d.name as department_name, d.color, d.icon
+     FROM work_order_line_items woli
+     LEFT JOIN products p ON woli.product_id = p.id
+     LEFT JOIN product_categories pc ON p.category_id = pc.id
+     LEFT JOIN product_required_departments prd ON p.id = prd.product_id
+     LEFT JOIN departments d ON prd.department_id = d.id
+     WHERE woli.work_order_id = ?
+     AND d.id NOT IN (SELECT id FROM departments WHERE name IN ('Delivery', 'Admin'))
+     ORDER BY woli.created_at ASC, prd.sort_order ASC`,
+    [workOrderId],
+    (err, rows) => {
+      if (err) return callback(err);
+      
+      // Group line items and their departments
+      const lineItemsMap = {};
+      rows.forEach(row => {
+        if (!lineItemsMap[row.id]) {
+          lineItemsMap[row.id] = {
+            id: row.id,
+            work_order_id: row.work_order_id,
+            product_id: row.product_id,
+            product_name: row.product_name,
+            description: row.description,
+            quantity: row.quantity,
+            notes: row.notes,
+            category_name: row.category_name,
+            proof_required: row.proof_required,
+            qc_required: row.qc_required,
+            barcode_required: row.barcode_required,
+            default_turnaround_hours: row.default_turnaround_hours,
+            required_departments: []
+          };
+        }
+        if (row.department_id) {
+          lineItemsMap[row.id].required_departments.push({
+            id: row.dept_id,
+            department_id: row.department_id,
+            department_name: row.department_name,
+            color: row.color,
+            icon: row.icon
+          });
+        }
+      });
+      
+      callback(null, Object.values(lineItemsMap));
+    }
+  );
+}
+
+// Helper: Get product required departments
+function getProductRequiredDepartments(productId, callback) {
+  db.all(
+    `SELECT d.id, d.name
+     FROM product_required_departments prd
+     LEFT JOIN departments d ON prd.department_id = d.id
+     WHERE prd.product_id = ? AND d.id NOT IN (SELECT id FROM departments WHERE name IN ('Delivery', 'Admin'))
+     ORDER BY prd.sort_order ASC`,
+    [productId],
+    callback
+  );
+}
+
+// Helper: Sync work_order_department_status based on line items
+function syncDepartmentStatusFromLineItems(workOrderId, callback) {
+  // Get all product line items
+  db.all(
+    `SELECT DISTINCT prd.department_id
+     FROM work_order_line_items woli
+     LEFT JOIN product_required_departments prd ON woli.product_id = prd.product_id
+     WHERE woli.work_order_id = ? AND prd.department_id IS NOT NULL`,
+    [workOrderId],
+    (err, requiredDepts) => {
+      if (err) return callback(err);
+      
+      if (!requiredDepts || requiredDepts.length === 0) {
+        return callback(null); // No line items or departments
+      }
+
+      // Delete old department statuses (except those already set by user)
+      db.run(
+        `DELETE FROM work_order_department_status 
+         WHERE work_order_id = ? AND status = 'Not Required'`,
+        [workOrderId],
+        (delErr) => {
+          if (delErr) return callback(delErr);
+
+          // Insert new department statuses
+          let index = 0;
+          const insertNext = () => {
+            if (index >= requiredDepts.length) return callback(null);
+            const dept = requiredDepts[index++];
+            db.run(
+              `INSERT OR IGNORE INTO work_order_department_status 
+               (work_order_id, department_id, status, created_at, updated_at)
+               VALUES (?, ?, 'Not Required', datetime('now'), datetime('now'))`,
+              [workOrderId, dept.department_id],
+              (insertErr) => {
+                if (insertErr) return callback(insertErr);
+                insertNext();
+              }
+            );
+          };
+          insertNext();
+        }
+      );
+    }
+  );
+}
+
+// Helper: Save work order line items and sync departments
+function saveWorkOrderLineItems(workOrderId, lineItems, callback) {
+  // Delete existing line items
+  db.run(
+    `DELETE FROM work_order_line_items WHERE work_order_id = ?`,
+    [workOrderId],
+    (delErr) => {
+      if (delErr) return callback(delErr);
+
+      // Insert new line items
+      let index = 0;
+      const insertNext = () => {
+        if (index >= lineItems.length) {
+          return syncDepartmentStatusFromLineItems(workOrderId, callback);
+        }
+
+        const item = lineItems[index++];
+        db.run(
+          `INSERT INTO work_order_line_items 
+           (work_order_id, product_id, description, quantity, notes, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+          [
+            workOrderId,
+            Number(item.product_id),
+            item.description || null,
+            Number(item.quantity) || 1,
+            item.notes || null,
+          ],
+          (insertErr) => {
+            if (insertErr) return callback(insertErr);
+            insertNext();
+          }
+        );
+      };
+      insertNext();
+    }
+  );
+}
+
 function parseOptionalNumber(value) {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
@@ -98,13 +253,22 @@ router.get('/:id', auth.requireAuth, (req, res) => {
         return res.status(404).json({ error: 'Work order not found' });
       }
 
-      res.json(row);
+      // Get line items
+      getWorkOrderLineItems(req.params.id, (err2, lineItems) => {
+        if (err2) {
+          console.error('LINE ITEMS ERROR:', err2);
+          return res.json(row); // Return work order without line items if there's an error
+        }
+        row.line_items = lineItems || [];
+        res.json(row);
+      });
     }
   );
 });
 
 router.post('/', auth.requireAuth, (req, res) => {
   const payload = req.body || {};
+  
   const errors = validateWorkOrder(payload);
   if (errors.length) return res.status(400).json({ error: errors.join('; ') });
 
@@ -128,6 +292,7 @@ router.post('/', auth.requireAuth, (req, res) => {
     routing_instructions,
     attachments,
     notes,
+    line_items,
   } = payload;
 
   db.run(
@@ -160,6 +325,32 @@ router.post('/', auth.requireAuth, (req, res) => {
         return res.status(500).json({ error: 'Failed to create work order' });
       }
       const newId = this.lastID;
+
+      // Save line items if provided
+      if (Array.isArray(line_items) && line_items.length > 0) {
+        return saveWorkOrderLineItems(newId, line_items, (itemErr) => {
+          if (itemErr) {
+            console.error('Failed to save line items:', itemErr);
+            return res.status(500).json({ error: 'Work order created but line items failed' });
+          }
+
+          db.get(
+            `SELECT ${workOrderFieldList}
+             FROM work_orders wo
+             LEFT JOIN users u ON wo.customer_id = u.id
+             WHERE wo.id = ?`,
+            [newId],
+            (err2, row) => {
+              if (err2) return res.status(201).json({ id: newId });
+              getWorkOrderLineItems(newId, (err3, lineItems) => {
+                if (!err3) row.line_items = lineItems || [];
+                res.status(201).json(row || { id: newId });
+              });
+            }
+          );
+        });
+      }
+
       db.get(
         `SELECT ${workOrderFieldList}
          FROM work_orders wo
@@ -168,6 +359,7 @@ router.post('/', auth.requireAuth, (req, res) => {
         [newId],
         (err2, row) => {
           if (err2) return res.status(201).json({ id: newId });
+          row.line_items = [];
           res.status(201).json(row || { id: newId });
         }
       );
@@ -178,6 +370,7 @@ router.post('/', auth.requireAuth, (req, res) => {
 router.put('/:id', auth.requireAuth, (req, res) => {
   const id = req.params.id;
   const payload = req.body || {};
+  
   const errors = validateWorkOrder(payload);
   if (errors.length) return res.status(400).json({ error: errors.join('; ') });
 
@@ -201,6 +394,7 @@ router.put('/:id', auth.requireAuth, (req, res) => {
     routing_instructions,
     attachments,
     notes,
+    line_items,
   } = payload;
 
   db.run(
@@ -252,6 +446,32 @@ router.put('/:id', auth.requireAuth, (req, res) => {
       if (err) return res.status(500).json({ error: 'Failed to update work order' });
       if (this.changes === 0) return res.status(404).json({ error: 'Work order not found' });
 
+      // Save line items if provided
+      if (Array.isArray(line_items)) {
+        return saveWorkOrderLineItems(id, line_items, (itemErr) => {
+          if (itemErr) {
+            console.error('Failed to save line items:', itemErr);
+            return res.status(500).json({ error: 'Work order updated but line items failed' });
+          }
+
+          db.get(
+            `SELECT ${workOrderFieldList}
+             FROM work_orders wo
+             LEFT JOIN users u ON wo.customer_id = u.id
+             WHERE wo.id = ?`,
+            [id],
+            (err2, row) => {
+              if (err2) return res.status(500).json({ error: 'Failed to load updated work order' });
+              if (!row) return res.status(404).json({ error: 'Work order not found after update' });
+              getWorkOrderLineItems(id, (err3, lineItems) => {
+                if (!err3) row.line_items = lineItems || [];
+                res.json(row);
+              });
+            }
+          );
+        });
+      }
+
       db.get(
         `SELECT ${workOrderFieldList}
          FROM work_orders wo
@@ -261,6 +481,7 @@ router.put('/:id', auth.requireAuth, (req, res) => {
         (err2, row) => {
           if (err2) return res.status(500).json({ error: 'Failed to load updated work order' });
           if (!row) return res.status(404).json({ error: 'Work order not found after update' });
+          row.line_items = [];
           res.json(row);
         }
       );

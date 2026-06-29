@@ -4,16 +4,19 @@ const db = require('../db');
 
 const router = express.Router();
 
-// Middleware: Require admin role for all routes
-router.use(auth.requireAuth, (req, res, next) => {
+// Middleware: Require authentication for all routes
+router.use(auth.requireAuth);
+
+// Middleware: Require admin role for write operations
+function requireAdmin(req, res, next) {
   if (req.user.role !== 'admin') {
     return res.status(403).json({ error: 'Admin access required' });
   }
   next();
-});
+}
 
 // GET /api/product-categories
-// Returns all product categories
+// Returns all product categories (readable by all authenticated users)
 router.get('/categories', (req, res) => {
   db.all(
     'SELECT * FROM product_categories ORDER BY sort_order ASC, name ASC',
@@ -141,9 +144,31 @@ router.get('/:id', (req, res) => {
   );
 });
 
+// GET /api/products/:id/required-departments
+// Get required departments for a product (for work order form)
+router.get('/:id/required-departments', (req, res) => {
+  const { id } = req.params;
+
+  db.all(
+    `SELECT prd.id, prd.department_id, d.id as department_id, d.name as department_name, d.color, d.icon, prd.sort_order
+     FROM product_required_departments prd
+     LEFT JOIN departments d ON prd.department_id = d.id
+     WHERE prd.product_id = ? AND d.name NOT IN ('Delivery', 'Admin')
+     ORDER BY prd.sort_order ASC`,
+    [id],
+    (err, departments) => {
+      if (err) {
+        console.error('Error fetching departments:', err);
+        return res.status(500).json({ error: 'Failed to fetch departments' });
+      }
+      res.json(departments || []);
+    }
+  );
+});
+
 // POST /api/products
-// Create a new product
-router.post('/', (req, res) => {
+// Create a new product (admin only)
+router.post('/', requireAdmin, (req, res) => {
   const {
     name,
     description,
@@ -204,8 +229,8 @@ router.post('/', (req, res) => {
 });
 
 // PUT /api/products/:id
-// Update a product
-router.put('/:id', (req, res) => {
+// Update a product (admin only)
+router.put('/:id', requireAdmin, (req, res) => {
   const { id } = req.params;
   const {
     name,
@@ -315,8 +340,8 @@ router.put('/:id', (req, res) => {
 });
 
 // DELETE /api/products/:id (soft delete)
-// Deactivate a product
-router.delete('/:id', (req, res) => {
+// Deactivate a product (admin only)
+router.delete('/:id', requireAdmin, (req, res) => {
   const { id } = req.params;
 
   db.run(

@@ -62,6 +62,19 @@ CREATE TABLE IF NOT EXISTS work_orders (
   FOREIGN KEY(assigned_user_id) REFERENCES users(id)
 );
 
+CREATE TABLE IF NOT EXISTS work_order_line_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  work_order_id INTEGER NOT NULL,
+  product_id INTEGER NOT NULL,
+  description TEXT,
+  quantity INTEGER DEFAULT 1,
+  notes TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME,
+  FOREIGN KEY(work_order_id) REFERENCES work_orders(id) ON DELETE CASCADE,
+  FOREIGN KEY(product_id) REFERENCES products(id)
+);
+
 CREATE TABLE IF NOT EXISTS production_board (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   work_order_id INTEGER NOT NULL,
