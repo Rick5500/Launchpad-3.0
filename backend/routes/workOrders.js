@@ -1,6 +1,7 @@
 const express = require('express');
 const auth = require('../auth');
 const db = require('../db');
+const { getPacketsForWorkOrder, syncDepartmentPackets } = require('../utils/departmentPackets');
 const router = express.Router();
 
 const workOrderFieldList = `
@@ -23,6 +24,8 @@ const workOrderFieldList = `
   wo.routing_instructions,
   wo.attachments,
   wo.notes,
+  wo.delivery_method,
+  wo.requested_delivery_time,
   wo.created_at,
   wo.updated_at,
   wo.customer_id,
@@ -99,47 +102,181 @@ function getProductRequiredDepartments(productId, callback) {
   );
 }
 
-// Helper: Sync work_order_department_status based on line items
-function syncDepartmentStatusFromLineItems(workOrderId, callback) {
-  // Get all product line items
+// Helper: Get department statuses for work order
+function getDepartmentStatuses(workOrderId, callback) {
   db.all(
-    `SELECT DISTINCT prd.department_id
-     FROM work_order_line_items woli
-     LEFT JOIN product_required_departments prd ON woli.product_id = prd.product_id
-     WHERE woli.work_order_id = ? AND prd.department_id IS NOT NULL`,
+    `SELECT 
+      wods.id, wods.work_order_id, wods.department_id, wods.status, wods.updated_at,
+      d.name as department_name, d.color, d.icon, d.sort_order
+     FROM work_order_department_status wods
+     LEFT JOIN departments d ON wods.department_id = d.id
+     WHERE wods.work_order_id = ?
+     ORDER BY d.sort_order ASC`,
     [workOrderId],
-    (err, requiredDepts) => {
-      if (err) return callback(err);
-      
-      if (!requiredDepts || requiredDepts.length === 0) {
-        return callback(null); // No line items or departments
+    callback
+  );
+}
+
+// Helper: Get QC and matrix state for work order
+function getMatrixState(workOrderId, callback) {
+  db.get(
+    `SELECT qc_status, delivery_type, is_completed, updated_at, created_at
+     FROM work_order_matrix_state
+     WHERE work_order_id = ?`,
+    [workOrderId],
+    callback
+  );
+}
+
+// Helper: Get latest barcode event for work order
+function getLatestBarcode(workOrderId, callback) {
+  db.get(
+    `SELECT scanned_value, event_time, location
+     FROM barcode_events
+     WHERE work_order_id = ?
+     ORDER BY event_time DESC
+     LIMIT 1`,
+    [workOrderId],
+    callback
+  );
+}
+
+function syncQCStatusFromDepartmentStatuses(workOrderId, callback) {
+  db.get(
+    `SELECT qc_status
+     FROM work_order_matrix_state
+     WHERE work_order_id = ?`,
+    [workOrderId],
+    (qcErr, qcRow) => {
+      if (qcErr) return callback(qcErr);
+
+      // Do not override manual QC workflow states.
+      if (qcRow && ['In QC', 'On Hold', 'Complete'].includes(qcRow.qc_status)) {
+        return callback(null);
       }
 
-      // Delete old department statuses (except those already set by user)
-      db.run(
-        `DELETE FROM work_order_department_status 
-         WHERE work_order_id = ? AND status = 'Not Required'`,
+      db.all(
+        `SELECT status
+         FROM work_order_department_status
+         WHERE work_order_id = ?
+           AND status != 'Not Required'`,
         [workOrderId],
-        (delErr) => {
-          if (delErr) return callback(delErr);
+        (deptErr, rows) => {
+          if (deptErr) return callback(deptErr);
 
-          // Insert new department statuses
-          let index = 0;
-          const insertNext = () => {
-            if (index >= requiredDepts.length) return callback(null);
-            const dept = requiredDepts[index++];
-            db.run(
-              `INSERT OR IGNORE INTO work_order_department_status 
-               (work_order_id, department_id, status, created_at, updated_at)
-               VALUES (?, ?, 'Not Required', datetime('now'), datetime('now'))`,
-              [workOrderId, dept.department_id],
-              (insertErr) => {
-                if (insertErr) return callback(insertErr);
-                insertNext();
-              }
-            );
-          };
-          insertNext();
+          const requiredStatuses = rows || [];
+          const allComplete = requiredStatuses.length > 0 && requiredStatuses.every((row) => row.status === 'Complete');
+          const nextQCStatus = allComplete ? 'Ready for QC' : 'Waiting';
+
+          db.run(
+            `INSERT INTO work_order_matrix_state (work_order_id, qc_status, delivery_status, updated_at)
+             VALUES (?, ?, 'Pending', datetime('now'))
+             ON CONFLICT(work_order_id) DO UPDATE SET qc_status = ?, updated_at = datetime('now')`,
+            [workOrderId, nextQCStatus, nextQCStatus],
+            callback
+          );
+        }
+      );
+    }
+  );
+}
+
+// Helper: Sync work_order_department_status based on line items
+function syncDepartmentStatusFromLineItems(workOrderId, callback) {
+  // First, ensure work_order_matrix_state exists with initial QC status and Pending delivery status
+  db.run(
+    `INSERT OR IGNORE INTO work_order_matrix_state (work_order_id, qc_status, delivery_status)
+     VALUES (?, 'Waiting', 'Pending')`,
+    [workOrderId],
+    (matrixErr) => {
+      if (matrixErr) return callback(matrixErr);
+
+      // Get all required departments from product line items
+      db.all(
+        `SELECT DISTINCT prd.department_id
+         FROM work_order_line_items woli
+         JOIN product_required_departments prd ON woli.product_id = prd.product_id
+         JOIN departments d ON d.id = prd.department_id
+         WHERE woli.work_order_id = ?
+           AND prd.department_id IS NOT NULL
+           AND d.name NOT IN ('Delivery', 'Will Call', 'Admin', 'QC', 'Quality Control')`,
+        [workOrderId],
+        (err, requiredDepts) => {
+          if (err) return callback(err);
+
+          const requiredDeptIds = new Set((requiredDepts || []).map((row) => Number(row.department_id)).filter(Number.isFinite));
+
+          // Load existing statuses so we can sync safely.
+          db.all(
+            `SELECT id, department_id, status
+             FROM work_order_department_status
+             WHERE work_order_id = ?`,
+            [workOrderId],
+            (existingErr, existingRows) => {
+              if (existingErr) return callback(existingErr);
+
+              const existingByDeptId = new Map((existingRows || []).map((row) => [Number(row.department_id), row]));
+              const tasks = [];
+
+              // Required departments should be active. Use In Progress as default for newly required departments.
+              requiredDeptIds.forEach((departmentId) => {
+                const existing = existingByDeptId.get(departmentId);
+                if (!existing) {
+                  tasks.push((next) => {
+                    db.run(
+                      `INSERT INTO work_order_department_status
+                       (work_order_id, department_id, status, created_at, updated_at)
+                       VALUES (?, ?, 'In Progress', datetime('now'), datetime('now'))`,
+                      [workOrderId, departmentId],
+                      next
+                    );
+                  });
+                  return;
+                }
+
+                if (existing.status === 'Not Required') {
+                  tasks.push((next) => {
+                    db.run(
+                      `UPDATE work_order_department_status
+                       SET status = 'In Progress', updated_at = datetime('now')
+                       WHERE id = ?`,
+                      [existing.id],
+                      next
+                    );
+                  });
+                }
+              });
+
+              // Departments no longer required are marked Not Required (not deleted) to preserve row history.
+              (existingRows || []).forEach((existing) => {
+                const departmentId = Number(existing.department_id);
+                if (!requiredDeptIds.has(departmentId) && existing.status !== 'Not Required') {
+                  tasks.push((next) => {
+                    db.run(
+                      `UPDATE work_order_department_status
+                       SET status = 'Not Required', updated_at = datetime('now')
+                       WHERE id = ?`,
+                      [existing.id],
+                      next
+                    );
+                  });
+                }
+              });
+
+              let index = 0;
+              const runNextTask = () => {
+                if (index >= tasks.length) {
+                  return syncQCStatusFromDepartmentStatuses(workOrderId, callback);
+                }
+                tasks[index++]((taskErr) => {
+                  if (taskErr) return callback(taskErr);
+                  runNextTask();
+                });
+              };
+
+              runNextTask();
+            }
+          );
         }
       );
     }
@@ -220,10 +357,29 @@ function validateWorkOrder(data) {
 }
 router.get('/', auth.requireAuth, (req, res) => {
   db.all(
-    `SELECT ${workOrderFieldList}
+    `SELECT 
+      wo.id,
+      wo.external_id,
+      wo.description,
+      wo.quantity,
+      wo.status,
+      wo.priority,
+      wo.due_date,
+      wo.delivery_method,
+      wo.requested_delivery_time,
+      wo.created_at,
+      wo.updated_at,
+      u.display_name AS customer_name,
+      u.username AS customer_username,
+      ms.qc_status,
+      ms.delivery_status,
+      ms.delivery_type,
+      ms.is_completed
      FROM work_orders wo
      LEFT JOIN users u ON wo.customer_id = u.id
-     ORDER BY wo.created_at DESC`,
+     LEFT JOIN work_order_matrix_state ms ON wo.id = ms.work_order_id
+     WHERE wo.status = 'open'
+     ORDER BY wo.due_date ASC, wo.created_at DESC`,
     [],
     (err, rows) => {
       if (err) {
@@ -231,7 +387,56 @@ router.get('/', auth.requireAuth, (req, res) => {
         return res.status(500).json({ error: err.message });
       }
 
-      res.json(rows);
+      if (!rows || rows.length === 0) {
+        return res.json([]);
+      }
+
+      // Get department statuses for all work orders
+      const workOrderIds = rows.map(r => r.id);
+      const placeholders = workOrderIds.map(() => '?').join(',');
+
+      const deptQuery = `
+        SELECT 
+          wods.work_order_id,
+          d.id as department_id,
+          d.name as department_name,
+          d.color,
+          wods.status as department_status
+        FROM work_order_department_status wods
+        JOIN departments d ON wods.department_id = d.id
+        WHERE wods.work_order_id IN (${placeholders})
+        AND d.name NOT IN ('Delivery', 'Admin')
+        ORDER BY d.sort_order ASC
+      `;
+
+      db.all(deptQuery, workOrderIds, (err2, deptRows) => {
+        if (err2) {
+          console.error('DEPARTMENT STATUS ERROR:', err2);
+          return res.status(500).json({ error: 'Failed to load department statuses' });
+        }
+
+        // Build department map for each work order
+        const deptMap = {};
+        (deptRows || []).forEach(row => {
+          if (!deptMap[row.work_order_id]) {
+            deptMap[row.work_order_id] = [];
+          }
+          deptMap[row.work_order_id].push({
+            id: row.department_id,
+            name: row.department_name,
+            color: row.color,
+            status: row.department_status,
+          });
+        });
+
+        // Combine results
+        const result = rows.map(wo => ({
+          ...wo,
+          department_statuses: deptMap[wo.id] || [],
+        }));
+
+        res.json(result);
+      });
     }
   );
 });
@@ -253,17 +458,102 @@ router.get('/:id', auth.requireAuth, (req, res) => {
         return res.status(404).json({ error: 'Work order not found' });
       }
 
+      // Fetch line items, department statuses, matrix state, barcode, and packets in parallel
+      let completed = 0;
+      const response = { ...row };
+      const errors = [];
+
+      const checkComplete = () => {
+        completed++;
+        if (completed === 5) {
+          if (errors.length > 0) {
+            console.error('Errors fetching work order details:', errors);
+          }
+          res.json(response);
+        }
+      };
+
       // Get line items
       getWorkOrderLineItems(req.params.id, (err2, lineItems) => {
         if (err2) {
-          console.error('LINE ITEMS ERROR:', err2);
-          return res.json(row); // Return work order without line items if there's an error
+          errors.push(err2.message);
+        } else {
+          response.line_items = lineItems || [];
         }
-        row.line_items = lineItems || [];
-        res.json(row);
+        checkComplete();
+      });
+
+      // Get department statuses
+      getDepartmentStatuses(req.params.id, (err2, deptStatuses) => {
+        if (err2) {
+          errors.push(err2.message);
+        } else {
+          response.department_statuses = deptStatuses || [];
+        }
+        checkComplete();
+      });
+
+      // Get QC and matrix state
+      getMatrixState(req.params.id, (err2, matrixState) => {
+        if (err2) {
+          errors.push(err2.message);
+        } else {
+          response.matrix_state = matrixState || {};
+        }
+        checkComplete();
+      });
+
+      // Get latest barcode
+      getLatestBarcode(req.params.id, (err2, barcode) => {
+        if (err2) {
+          errors.push(err2.message);
+        } else {
+          response.latest_barcode = barcode || null;
+        }
+        checkComplete();
+      });
+
+      // Get department packets
+      getPacketsForWorkOrder(req.params.id, (err2, packets) => {
+        if (err2) {
+          errors.push(err2.message);
+        } else {
+          response.department_packets = packets || [];
+        }
+        checkComplete();
       });
     }
   );
+});
+
+router.get('/:id/packets', auth.requireAuth, (req, res) => {
+  getPacketsForWorkOrder(req.params.id, (err, rows) => {
+    if (err) {
+      console.error('WORK ORDER PACKETS LIST ERROR:', err);
+      return res.status(500).json({ error: 'Failed to load packets' });
+    }
+    res.json(rows || []);
+  });
+});
+
+router.post('/:id/packets/sync', auth.requireAuth, async (req, res) => {
+  try {
+    const summary = await syncDepartmentPackets(req.params.id);
+    getPacketsForWorkOrder(req.params.id, (err, rows) => {
+      if (err) {
+        console.error('WORK ORDER PACKETS SYNC LIST ERROR:', err);
+        return res.status(500).json({ error: 'Packets synced but failed to load packets' });
+      }
+      res.json({
+        summary,
+        packets: rows || [],
+      });
+    });
+  } catch (err) {
+    console.error('WORK ORDER PACKETS SYNC ERROR:', err);
+    const status = String(err.message || '').includes('not found') ? 404 : 500;
+    res.status(status).json({ error: err.message || 'Failed to sync packets' });
+  }
 });
 
 router.post('/', auth.requireAuth, (req, res) => {
@@ -292,13 +582,15 @@ router.post('/', auth.requireAuth, (req, res) => {
     routing_instructions,
     attachments,
     notes,
+    delivery_method,
+    requested_delivery_time,
     line_items,
   } = payload;
 
   db.run(
     `INSERT INTO work_orders
-      (external_id, customer_id, description, quantity, status, department, stage_id, priority, assigned_department_id, assigned_user_id, estimated_hours, actual_hours, specifications, start_date, due_date, production_line, routing_instructions, attachments, notes)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      (external_id, customer_id, description, quantity, status, department, stage_id, priority, assigned_department_id, assigned_user_id, estimated_hours, actual_hours, specifications, start_date, due_date, production_line, routing_instructions, attachments, notes, delivery_method, requested_delivery_time)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       external_id || null,
       Number(customer_id),
@@ -319,12 +611,34 @@ router.post('/', auth.requireAuth, (req, res) => {
       routing_instructions || null,
       attachments || null,
       notes || null,
+      delivery_method || 'delivery',
+      requested_delivery_time || null,
     ],
     function (err) {
       if (err) {
         return res.status(500).json({ error: 'Failed to create work order' });
       }
       const newId = this.lastID;
+
+      const loadAndRespond = () => {
+        db.get(
+          `SELECT ${workOrderFieldList}
+           FROM work_orders wo
+           LEFT JOIN users u ON wo.customer_id = u.id
+           WHERE wo.id = ?`,
+          [newId],
+          (err2, row) => {
+            if (err2) return res.status(201).json({ id: newId });
+            getWorkOrderLineItems(newId, (err3, lineItemsData) => {
+              if (!err3) row.line_items = lineItemsData || [];
+              getPacketsForWorkOrder(newId, (err4, packets) => {
+                if (!err4) row.department_packets = packets || [];
+                res.status(201).json(row || { id: newId });
+              });
+            });
+          }
+        );
+      };
 
       // Save line items if provided
       if (Array.isArray(line_items) && line_items.length > 0) {
@@ -334,35 +648,21 @@ router.post('/', auth.requireAuth, (req, res) => {
             return res.status(500).json({ error: 'Work order created but line items failed' });
           }
 
-          db.get(
-            `SELECT ${workOrderFieldList}
-             FROM work_orders wo
-             LEFT JOIN users u ON wo.customer_id = u.id
-             WHERE wo.id = ?`,
-            [newId],
-            (err2, row) => {
-              if (err2) return res.status(201).json({ id: newId });
-              getWorkOrderLineItems(newId, (err3, lineItems) => {
-                if (!err3) row.line_items = lineItems || [];
-                res.status(201).json(row || { id: newId });
-              });
-            }
-          );
+          syncDepartmentPackets(newId)
+            .then(loadAndRespond)
+            .catch((packetErr) => {
+              console.error('Failed to sync department packets:', packetErr);
+              res.status(500).json({ error: 'Work order created but packet sync failed' });
+            });
         });
       }
 
-      db.get(
-        `SELECT ${workOrderFieldList}
-         FROM work_orders wo
-         LEFT JOIN users u ON wo.customer_id = u.id
-         WHERE wo.id = ?`,
-        [newId],
-        (err2, row) => {
-          if (err2) return res.status(201).json({ id: newId });
-          row.line_items = [];
-          res.status(201).json(row || { id: newId });
-        }
-      );
+      syncDepartmentPackets(newId)
+        .then(loadAndRespond)
+        .catch((packetErr) => {
+          console.error('Failed to sync department packets:', packetErr);
+          res.status(500).json({ error: 'Work order created but packet sync failed' });
+        });
     }
   );
 });
@@ -394,6 +694,8 @@ router.put('/:id', auth.requireAuth, (req, res) => {
     routing_instructions,
     attachments,
     notes,
+    delivery_method,
+    requested_delivery_time,
     line_items,
   } = payload;
 
@@ -418,6 +720,8 @@ router.put('/:id', auth.requireAuth, (req, res) => {
       routing_instructions = ?,
       attachments = ?,
       notes = ?,
+      delivery_method = ?,
+      requested_delivery_time = ?,
       updated_at = datetime('now')
      WHERE id = ?`,
     [
@@ -440,11 +744,34 @@ router.put('/:id', auth.requireAuth, (req, res) => {
       routing_instructions || null,
       attachments || null,
       notes || null,
+      delivery_method || 'delivery',
+      requested_delivery_time || null,
       id,
     ],
     function (err) {
       if (err) return res.status(500).json({ error: 'Failed to update work order' });
       if (this.changes === 0) return res.status(404).json({ error: 'Work order not found' });
+      
+      const loadAndRespond = () => {
+        db.get(
+          `SELECT ${workOrderFieldList}
+           FROM work_orders wo
+           LEFT JOIN users u ON wo.customer_id = u.id
+           WHERE wo.id = ?`,
+          [id],
+          (err2, row) => {
+            if (err2) return res.status(500).json({ error: 'Failed to load updated work order' });
+            if (!row) return res.status(404).json({ error: 'Work order not found after update' });
+            getWorkOrderLineItems(id, (err3, lineItemsData) => {
+              if (!err3) row.line_items = lineItemsData || [];
+              getPacketsForWorkOrder(id, (err4, packets) => {
+                if (!err4) row.department_packets = packets || [];
+                res.json(row);
+              });
+            });
+          }
+        );
+      };
 
       // Save line items if provided
       if (Array.isArray(line_items)) {
@@ -454,37 +781,21 @@ router.put('/:id', auth.requireAuth, (req, res) => {
             return res.status(500).json({ error: 'Work order updated but line items failed' });
           }
 
-          db.get(
-            `SELECT ${workOrderFieldList}
-             FROM work_orders wo
-             LEFT JOIN users u ON wo.customer_id = u.id
-             WHERE wo.id = ?`,
-            [id],
-            (err2, row) => {
-              if (err2) return res.status(500).json({ error: 'Failed to load updated work order' });
-              if (!row) return res.status(404).json({ error: 'Work order not found after update' });
-              getWorkOrderLineItems(id, (err3, lineItems) => {
-                if (!err3) row.line_items = lineItems || [];
-                res.json(row);
-              });
-            }
-          );
+          syncDepartmentPackets(id)
+            .then(loadAndRespond)
+            .catch((packetErr) => {
+              console.error('Failed to sync department packets:', packetErr);
+              res.status(500).json({ error: 'Work order updated but packet sync failed' });
+            });
         });
       }
 
-      db.get(
-        `SELECT ${workOrderFieldList}
-         FROM work_orders wo
-         LEFT JOIN users u ON wo.customer_id = u.id
-         WHERE wo.id = ?`,
-        [id],
-        (err2, row) => {
-          if (err2) return res.status(500).json({ error: 'Failed to load updated work order' });
-          if (!row) return res.status(404).json({ error: 'Work order not found after update' });
-          row.line_items = [];
-          res.json(row);
-        }
-      );
+      syncDepartmentPackets(id)
+        .then(loadAndRespond)
+        .catch((packetErr) => {
+          console.error('Failed to sync department packets:', packetErr);
+          res.status(500).json({ error: 'Work order updated but packet sync failed' });
+        });
     }
   );
 });

@@ -37,6 +37,8 @@ const defaultValues = {
   specifications: '',
   start_date: '',
   due_date: '',
+  delivery_method: 'delivery',
+  requested_delivery_time: '',
   production_line: '',
   routing_instructions: '',
   attachments: '',
@@ -110,6 +112,8 @@ export default function WorkOrderForm() {
             specifications: workOrderData.specifications || '',
             start_date: formatDateInput(workOrderData.start_date),
             due_date: formatDateInput(workOrderData.due_date),
+            delivery_method: workOrderData.delivery_method || 'delivery',
+            requested_delivery_time: formatDateInput(workOrderData.requested_delivery_time),
             production_line: workOrderData.production_line || '',
             routing_instructions: workOrderData.routing_instructions || '',
             attachments: workOrderData.attachments || '',
@@ -387,6 +391,32 @@ export default function WorkOrderForm() {
                   type="date"
                   value={values.due_date}
                   onChange={handleChange('due_date')}
+                  fullWidth
+                  InputLabelProps={{ shrink: true }}
+                  variant="filled"
+                  InputProps={{ sx: { bgcolor: '#121d27' } }}
+                />
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <TextField
+                  label="Delivery Method"
+                  select
+                  value={values.delivery_method}
+                  onChange={handleChange('delivery_method')}
+                  fullWidth
+                  variant="filled"
+                  InputProps={{ sx: { bgcolor: '#121d27' } }}
+                >
+                  <MenuItem value="delivery">Delivery</MenuItem>
+                  <MenuItem value="will_call">Will Call</MenuItem>
+                </TextField>
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <TextField
+                  label="Requested Delivery/Pickup Date & Time"
+                  type="datetime-local"
+                  value={values.requested_delivery_time}
+                  onChange={handleChange('requested_delivery_time')}
                   fullWidth
                   InputLabelProps={{ shrink: true }}
                   variant="filled"

@@ -10,6 +10,7 @@ import DepartmentsAdmin from './routes/DepartmentsAdmin';
 import AdminProducts from './routes/AdminProducts';
 import ProductionBoard from './routes/ProductionBoard';
 import OperationsMatrix from './routes/OperationsMatrix';
+import Delivery from './routes/Delivery';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -109,7 +110,7 @@ function AppRoutes() {
         <Route path="work-orders/:id/edit" element={<ProtectedRoute><WorkOrderForm /></ProtectedRoute>} />
         <Route path="production-board" element={<ProtectedRoute><OperationsMatrix /></ProtectedRoute>} />
         <Route path="customers" element={<ProtectedRoute><PlaceholderPage title="Customers" /></ProtectedRoute>} />
-        <Route path="delivery" element={<ProtectedRoute><PlaceholderPage title="Delivery" /></ProtectedRoute>} />
+        <Route path="delivery" element={<ProtectedRoute><Delivery /></ProtectedRoute>} />
         <Route path="reports" element={<ProtectedRoute allowedRoles={['manager', 'admin']}><PlaceholderPage title="Reports" /></ProtectedRoute>} />
         <Route path="admin" element={<ProtectedRoute allowedRoles={['admin']}><PlaceholderPage title="Admin" /></ProtectedRoute>} />
         <Route path="admin/departments" element={<ProtectedRoute allowedRoles={['admin']}><DepartmentsAdmin /></ProtectedRoute>} />

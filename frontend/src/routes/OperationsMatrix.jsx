@@ -16,6 +16,11 @@ import {
   Tabs,
   Tab,
   Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { authFetch } from '../api';
@@ -58,6 +63,10 @@ export default function OperationsMatrix() {
   const [anchorEl, setAnchorEl] = useState(null);
   const [selectedWO, setSelectedWO] = useState(null);
   const [selectedDept, setSelectedDept] = useState(null);
+  // Delivery completion dialog state
+  const [deliveryDialogOpen, setDeliveryDialogOpen] = useState(false);
+  const [deliveryDialogWO, setDeliveryDialogWO] = useState(null);
+  const [markingDeliveryComplete, setMarkingDeliveryComplete] = useState(false);
 
   // Fetch departments on mount
   useEffect(() => {
@@ -146,6 +155,45 @@ export default function OperationsMatrix() {
     navigate(`/workorders/${workOrderId}`);
   };
 
+  const handleDeliveryComplete = async (wo) => {
+    setDeliveryDialogWO(wo);
+    setDeliveryDialogOpen(true);
+  };
+
+  const handleConfirmDeliveryComplete = async () => {
+    if (!deliveryDialogWO) return;
+
+    setMarkingDeliveryComplete(true);
+    try {
+      const response = await authFetch(`/api/matrix/work-orders/${deliveryDialogWO.id}/delivery-complete`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        setError(errorData.error || 'Failed to mark delivery complete');
+        setDeliveryDialogOpen(false);
+        return;
+      }
+
+      setDeliveryDialogOpen(false);
+      setDeliveryDialogWO(null);
+      loadWorkOrders();
+    } catch (err) {
+      setError(err.message || 'Failed to mark delivery complete');
+      setDeliveryDialogOpen(false);
+    } finally {
+      setMarkingDeliveryComplete(false);
+    }
+  };
+
+  const handleCancelDeliveryDialog = () => {
+    setDeliveryDialogOpen(false);
+    setDeliveryDialogWO(null);
+    setMarkingDeliveryComplete(false);
+  };
+
   const getDueStatus = (dueDate) => {
     if (!dueDate) return 'normal';
     const now = new Date();
@@ -159,13 +207,13 @@ export default function OperationsMatrix() {
   };
 
   const dueStatusColors = {
-    normal: '#ffffff',
-    urgent: '#FFF3E0',
-    overdue: '#FFEBEE',
+    normal: '#1f2a38',
+    urgent: '#2a2416',
+    overdue: '#2a1f1f',
   };
 
   const dueStatusBorders = {
-    normal: '#e0e0e0',
+    normal: '#334455',
     urgent: '#FB8C00',
     overdue: '#EF5350',
   };
@@ -251,14 +299,63 @@ export default function OperationsMatrix() {
   };
 
   const DeliveryCell = ({ wo }) => {
-    const deliveryStatus = wo.qc_status === 'Complete'
-      ? (wo.delivery_type === 'will_call' ? 'Will Call' : 'Delivery')
-      : '—';
-    const bgColor = wo.qc_status === 'Complete' ? '#66BB6A' : '#BDBDBD';
-    const textColor = '#FFFFFF';
+    const isQCComplete = wo.qc_status === 'Complete';
+    const deliveryStatus = wo.delivery_status || 'Pending';
+    const deliveryMethod = wo.delivery_method === 'will_call' ? 'Will Call' : 'Delivery';
+    
+    const handleDeliveryClick = async (e) => {
+      e.stopPropagation();
+      if (!isQCComplete) {
+        setError('Cannot mark delivery complete until QC is complete');
+        return;
+      }
+      
+      if (deliveryStatus === 'Complete') {
+        setError('Delivery already marked as complete');
+        return;
+      }
+
+      if (deliveryStatus === 'Ready') {
+        handleDeliveryComplete(wo);
+      }
+    };
+
+    // Determine colors and states based on delivery_status
+    let bgColor = '#BDBDBD';
+    let textColor = '#757575';
+    let cursor = 'not-allowed';
+    let opacity = 0.5;
+    let displayText = `Pending ${deliveryMethod}`;
+
+    if (deliveryStatus === 'Pending') {
+      // Before QC complete - show pending state
+      bgColor = '#BDBDBD';
+      textColor = '#757575';
+      cursor = 'not-allowed';
+      opacity = 0.5;
+      displayText = `Pending ${deliveryMethod}`;
+    } else if (deliveryStatus === 'Ready') {
+      // QC complete, delivery ready for marking
+      bgColor = '#2196F3';
+      textColor = '#FFFFFF';
+      cursor = 'pointer';
+      opacity = 1;
+      displayText = `Ready for ${deliveryMethod}`;
+    } else if (deliveryStatus === 'Complete') {
+      // Delivery marked complete
+      bgColor = '#66BB6A';
+      textColor = '#FFFFFF';
+      cursor = 'not-allowed';
+      opacity = 1;
+      displayText = `✓ ${deliveryMethod}`;
+    }
 
     return (
-      <TableCell align="center" sx={{ padding: '8px 4px' }}>
+      <TableCell 
+        align="center" 
+        onClick={handleDeliveryClick}
+        sx={{ padding: '8px 4px' }}
+      >
         <Box
           sx={{
             backgroundColor: bgColor,
@@ -270,9 +367,12 @@ export default function OperationsMatrix() {
             whiteSpace: 'nowrap',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
+            cursor,
+            opacity,
+            '&:hover': deliveryStatus === 'Ready' ? { backgroundColor: '#1976D2', opacity: 1 } : {},
           }}
         >
-          {deliveryStatus}
+          {displayText}
         </Box>
       </TableCell>
     );
@@ -309,20 +409,20 @@ export default function OperationsMatrix() {
           {workOrders.length === 0 ? (
             <Alert severity="info">No work orders to display</Alert>
           ) : (
-            <TableContainer component={Paper} sx={{ overflowX: 'auto' }}>
-              <Table stickyHeader size="small">
+            <TableContainer component={Paper} sx={{ overflowX: 'auto', backgroundColor: '#0f1822' }}>
+              <Table stickyHeader size="small" sx={{ backgroundColor: '#0f1822' }}>
                 <TableHead>
-                  <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
-                    <TableCell sx={{ fontWeight: 'bold', minWidth: '100px' }}>Work Order</TableCell>
-                    <TableCell sx={{ fontWeight: 'bold', minWidth: '120px' }}>Customer</TableCell>
-                    <TableCell sx={{ fontWeight: 'bold', minWidth: '140px' }}>Due Date & Time</TableCell>
+                  <TableRow sx={{ backgroundColor: '#1f2a38' }}>
+                    <TableCell sx={{ fontWeight: 'bold', minWidth: '100px', color: '#ccc', backgroundColor: '#1f2a38' }}>Work Order</TableCell>
+                    <TableCell sx={{ fontWeight: 'bold', minWidth: '120px', color: '#ccc', backgroundColor: '#1f2a38' }}>Customer</TableCell>
+                    <TableCell sx={{ fontWeight: 'bold', minWidth: '140px', color: '#ccc', backgroundColor: '#1f2a38' }}>Due Date & Time</TableCell>
                     {displayDepartments.map(dept => (
-                      <TableCell key={dept.id} sx={{ fontWeight: 'bold', minWidth: '100px' }}>
+                      <TableCell key={dept.id} sx={{ fontWeight: 'bold', minWidth: '100px', color: '#ccc', backgroundColor: '#1f2a38' }}>
                         {dept.name}
                       </TableCell>
                     ))}
-                    <TableCell sx={{ fontWeight: 'bold', minWidth: '80px' }}>QC</TableCell>
-                    <TableCell sx={{ fontWeight: 'bold', minWidth: '100px' }}>Delivery</TableCell>
+                    <TableCell sx={{ fontWeight: 'bold', minWidth: '80px', color: '#ccc', backgroundColor: '#1f2a38' }}>QC</TableCell>
+                    <TableCell sx={{ fontWeight: 'bold', minWidth: '100px', color: '#ccc', backgroundColor: '#1f2a38' }}>Delivery / Will Call</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -336,14 +436,14 @@ export default function OperationsMatrix() {
                           cursor: 'pointer',
                           backgroundColor: dueStatusColors[dueStatus],
                           borderLeft: `4px solid ${dueStatusBorders[dueStatus]}`,
-                          '&:hover': { backgroundColor: 'rgba(0, 0, 0, 0.04)' },
+                          '&:hover': { backgroundColor: '#334455' },
                         }}
                       >
-                        <TableCell sx={{ fontWeight: 500 }}>
+                        <TableCell sx={{ fontWeight: 500, color: '#eee' }}>
                           {wo.external_id || `#${wo.id}`}
                         </TableCell>
-                        <TableCell>{wo.customer_name || '—'}</TableCell>
-                        <TableCell>{formatDate(wo.due_date)}</TableCell>
+                        <TableCell sx={{ color: '#ccc' }}>{wo.customer_name || '—'}</TableCell>
+                        <TableCell sx={{ color: '#ccc' }}>{formatDate(wo.due_date)}</TableCell>
                         {displayDepartments.map(dept => (
                           <StatusCell key={`${wo.id}-${dept.id}`} wo={wo} dept={dept} />
                         ))}
@@ -376,6 +476,59 @@ export default function OperationsMatrix() {
               </MenuItem>
             ))}
       </Menu>
+
+      <Dialog
+        open={deliveryDialogOpen}
+        onClose={handleCancelDeliveryDialog}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle sx={{ fontWeight: 'bold' }}>
+          Mark Delivery Complete
+        </DialogTitle>
+        <DialogContent sx={{ mt: 2 }}>
+          {deliveryDialogWO && (
+            <Box>
+              <Box sx={{ mb: 2 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                  <span style={{ fontWeight: 'bold' }}>Work Order:</span>
+                  <span>#{deliveryDialogWO.external_id || deliveryDialogWO.id}</span>
+                </Box>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                  <span style={{ fontWeight: 'bold' }}>Customer:</span>
+                  <span>{deliveryDialogWO.customer_name || '—'}</span>
+                </Box>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ fontWeight: 'bold' }}>Type:</span>
+                  <span>
+                    {deliveryDialogWO.delivery_method === 'will_call' ? 'Will Call' : 'Delivery'}
+                  </span>
+                </Box>
+              </Box>
+              <Box sx={{ p: 1.5, backgroundColor: '#f5f5f5', borderRadius: 1, color: '#333' }}>
+                Mark this {deliveryDialogWO.delivery_method === 'will_call' ? 'will call' : 'delivery'} as complete? 
+                This will move the work order to the Completed tab.
+              </Box>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button
+            onClick={handleCancelDeliveryDialog}
+            disabled={markingDeliveryComplete}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleConfirmDeliveryComplete}
+            variant="contained"
+            color="success"
+            disabled={markingDeliveryComplete}
+          >
+            {markingDeliveryComplete ? 'Marking Complete...' : 'Mark Complete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

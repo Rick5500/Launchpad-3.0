@@ -72,17 +72,23 @@ export default function HomeDashboard() {
 
   const departmentTabs = useMemo(() => {
     const names = new Set(['All']);
-    const activeNames = departments.map((dept) => dept.name);
-    activeNames.forEach((name) => names.add(name));
-    workOrders.forEach((workOrder) => {
-      if (workOrder.department) names.add(workOrder.department);
+    departments.forEach((dept) => {
+      names.add(dept.name);
     });
     return Array.from(names);
-  }, [departments, workOrders]);
+  }, [departments]);
 
   const filteredOrders = useMemo(() => {
-    if (activeTab === 'All') return workOrders;
-    return workOrders.filter((order) => order.department === activeTab);
+    // Filter to show only active orders (not completed)
+    const activeOrders = workOrders.filter(order => order.delivery_status !== 'Complete');
+    
+    if (activeTab === 'All') return activeOrders;
+    return activeOrders.filter((order) => {
+      if (order.department_statuses && order.department_statuses.length > 0) {
+        return order.department_statuses.some((dept) => dept.name === activeTab && dept.status !== 'Not Required');
+      }
+      return false;
+    });
   }, [activeTab, workOrders]);
 
   if (loading) {
@@ -104,7 +110,7 @@ export default function HomeDashboard() {
 
       <Grid container spacing={3}>
         {metricCards.map((card) => (
-          <Grid key={card.key} xs={12} sm={6} md={4}>
+          <Grid item key={card.key} xs={12} sm={6} md={4}>
             <Card sx={{ minHeight: 130, bgcolor: '#1f2a38' }}>
               <CardContent>
                 <Typography variant="subtitle2" color="text.secondary" gutterBottom>
@@ -186,8 +192,8 @@ export default function HomeDashboard() {
                     <TableRow>
                       <TableCell sx={{ color: '#90caf9' }}>WO #</TableCell>
                       <TableCell sx={{ color: '#90caf9' }}>Customer</TableCell>
-                      <TableCell sx={{ color: '#90caf9' }}>Department</TableCell>
-                      <TableCell sx={{ color: '#90caf9' }}>Status</TableCell>
+                      <TableCell sx={{ color: '#90caf9' }}>Dept Status</TableCell>
+                      <TableCell sx={{ color: '#90caf9' }}>QC Status</TableCell>
                       <TableCell sx={{ color: '#90caf9' }}>Due Date</TableCell>
                       <TableCell sx={{ color: '#90caf9' }}>Qty</TableCell>
                     </TableRow>
@@ -198,8 +204,17 @@ export default function HomeDashboard() {
                         <TableRow key={order.id} sx={{ '&:hover': { bgcolor: '#1a2531' } }}>
                           <TableCell>{order.external_id || `WO-${order.id}`}</TableCell>
                           <TableCell>{order.customer_name || 'Unknown'}</TableCell>
-                          <TableCell>{order.department || 'General'}</TableCell>
-                          <TableCell>{order.status}</TableCell>
+                          <TableCell>
+                            {order.department_statuses && order.department_statuses.length > 0 ? (
+                              order.department_statuses
+                                .filter((dept) => dept.status !== 'Not Required')
+                                .map((dept) => dept.name)
+                                .join(', ') || '—'
+                            ) : (
+                              '—'
+                            )}
+                          </TableCell>
+                          <TableCell>{order.qc_status || 'Not Required'}</TableCell>
                           <TableCell>{order.due_date ? formatter.format(new Date(order.due_date)) : '-'}</TableCell>
                           <TableCell>{order.quantity}</TableCell>
                         </TableRow>
@@ -224,18 +239,32 @@ export default function HomeDashboard() {
               <Card sx={{ bgcolor: '#1f2a38' }}>
                 <CardContent>
                   <Typography variant="h6" gutterBottom>
-                    Department Summary
+                    Department Activity
                   </Typography>
                   <Box sx={{ display: 'grid', gap: 1 }}>
                     {summary?.departmentSummary?.length ? (
                       summary.departmentSummary.map((dept) => (
-                        <Box key={dept.department} sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <Typography>{dept.department}</Typography>
-                          <Typography color="text.secondary">{dept.count}</Typography>
+                        <Box key={dept.name} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 1, bgcolor: '#14202b', borderRadius: 1 }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            {dept.color && (
+                              <Box
+                                sx={{
+                                  width: 12,
+                                  height: 12,
+                                  borderRadius: '2px',
+                                  backgroundColor: dept.color,
+                                }}
+                              />
+                            )}
+                            <Typography variant="body2">{dept.name}</Typography>
+                          </Box>
+                          <Typography variant="body2" fontWeight="bold" sx={{ color: '#4caf50' }}>
+                            {dept.count}
+                          </Typography>
                         </Box>
                       ))
                     ) : (
-                      <Typography color="text.secondary">No department data yet.</Typography>
+                      <Typography color="text.secondary">No department activity yet.</Typography>
                     )}
                   </Box>
                 </CardContent>

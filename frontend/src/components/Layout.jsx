@@ -18,7 +18,7 @@ const drawerWidth = 280;
 const navItems = [
   { title: 'Dashboard', route: '/', icon: <HomeIcon />, allowedRoles: ['employee', 'manager', 'admin'] },
   { title: 'Work Orders', route: '/work-orders', icon: <AssignmentIcon />, allowedRoles: ['employee', 'manager', 'admin'] },
-  { title: 'Production Board', route: '/production-board', icon: <BuildIcon />, allowedRoles: ['employee', 'manager', 'admin'] },
+  { title: 'Operations Matrix', route: '/production-board', icon: <BuildIcon />, allowedRoles: ['employee', 'manager', 'admin'] },
   { title: 'Customers', route: '/customers', icon: <PeopleIcon />, allowedRoles: ['employee', 'manager', 'admin'] },
   { title: 'Delivery', route: '/delivery', icon: <LocalShippingIcon />, allowedRoles: ['employee', 'manager', 'admin'] },
   { title: 'Reports', route: '/reports', icon: <BarChartIcon />, allowedRoles: ['manager', 'admin'] },

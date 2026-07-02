@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS work_orders (
   routing_instructions TEXT,
   attachments TEXT,
   notes TEXT,
+  delivery_method TEXT DEFAULT 'delivery',
+  requested_delivery_time DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME,
   FOREIGN KEY(customer_id) REFERENCES users(id),
@@ -183,4 +185,21 @@ CREATE TABLE IF NOT EXISTS product_required_departments (
   FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE,
   FOREIGN KEY(department_id) REFERENCES departments(id),
   UNIQUE(product_id, department_id)
+);
+
+CREATE TABLE IF NOT EXISTS work_order_department_packets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  work_order_id INTEGER NOT NULL,
+  department_id INTEGER NOT NULL,
+  packet_number TEXT NOT NULL,
+  status TEXT DEFAULT 'In Progress',
+  barcode_value TEXT,
+  printed_at DATETIME,
+  received_in_qc_at DATETIME,
+  completed_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(work_order_id) REFERENCES work_orders(id) ON DELETE CASCADE,
+  FOREIGN KEY(department_id) REFERENCES departments(id),
+  UNIQUE(work_order_id, department_id)
 );

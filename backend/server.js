@@ -25,6 +25,7 @@ const barcodeRouter = require('./routes/barcode');
 const usersRouter = require('./routes/users');
 const matrixRouter = require('./routes/matrix');
 const productsRouter = require('./routes/products');
+const packetsRouter = require('./routes/packets');
 
 
 // Health check
@@ -60,6 +61,7 @@ app.use('/api/barcode', barcodeRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/matrix', matrixRouter);
 app.use('/api/products', productsRouter);
+app.use('/api/packets', packetsRouter);
 
 // Admin settings endpoint (admin only)
 app.get('/api/admin/settings', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
@@ -78,6 +80,51 @@ app.get('/api/customer', auth.requireAuth, (req, res) => res.json({ message: 'cu
 // Delivery / will-call rules placeholder
 app.get('/api/delivery/rules', auth.requireAuth, (req, res) => res.json({ message: 'delivery rules (placeholder)' }));
 
+// Database migrations
+function initializeDatabase() {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS work_order_department_packets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      work_order_id INTEGER NOT NULL,
+      department_id INTEGER NOT NULL,
+      packet_number TEXT NOT NULL,
+      status TEXT DEFAULT 'In Progress',
+      barcode_value TEXT,
+      printed_at DATETIME,
+      received_in_qc_at DATETIME,
+      completed_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(work_order_id) REFERENCES work_orders(id) ON DELETE CASCADE,
+      FOREIGN KEY(department_id) REFERENCES departments(id),
+      UNIQUE(work_order_id, department_id)
+    )
+  `, (err) => {
+    if (err) {
+      console.error('Error ensuring work_order_department_packets table:', err.message);
+    }
+  });
+
+  // Add delivery_status column if it doesn't exist
+  db.run(`
+    ALTER TABLE work_order_matrix_state 
+    ADD COLUMN delivery_status TEXT DEFAULT 'Pending' CHECK(delivery_status IN ('Pending', 'Ready', 'Complete'))
+  `, (err) => {
+    if (err) {
+      // Column probably already exists - this is expected
+      if (!err.message.includes('duplicate column')) {
+        console.log('Info: delivery_status column migration - column likely already exists');
+      }
+    } else {
+      console.log('✓ Added delivery_status column to work_order_matrix_state');
+    }
+  });
+}
+
+// Initialize database before starting server
+initializeDatabase();
+
+// Start server
 app.listen(port, () => {
   console.log(`Launchpad backend listening on port ${port}`);
 });
