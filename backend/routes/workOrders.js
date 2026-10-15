@@ -3,6 +3,7 @@ const auth = require('../auth');
 const db = require('../db');
 const { WORK_ORDER_STATUSES } = require('../statuses');
 const barcodeEvents = require('../barcodeEvents');
+const notifications = require('../notifications');
 const router = express.Router();
 
 const staffRoles = auth.requireRole('admin', 'operator');
@@ -240,8 +241,18 @@ router.post('/', auth.requireAuth, staffRoles, (req, res) => {
          WHERE wo.id = ?`,
         [newId],
         (err2, row) => {
-          if (err2) return res.status(201).json({ id: newId });
-          res.status(201).json(row || { id: newId });
+          const created = row || {
+            id: newId,
+            status,
+            priority: priority || 'Normal',
+            customer_id: Number(customer_id),
+            external_id: external_id || null,
+          };
+          notifications.notifyWorkOrderCreated(created, (notifyErr) => {
+            if (notifyErr) console.error('WORK ORDER NOTIFICATION ERROR:', notifyErr);
+            if (err2) return res.status(201).json({ id: newId });
+            res.status(201).json(row || { id: newId });
+          });
         }
       );
     }
@@ -277,65 +288,77 @@ router.put('/:id', auth.requireAuth, staffRoles, (req, res) => {
     notes,
   } = payload;
 
-  db.run(
-    `UPDATE work_orders SET
-      external_id = ?,
-      customer_id = ?,
-      description = ?,
-      quantity = ?,
-      status = ?,
-      department = ?,
-      stage_id = ?,
-      priority = ?,
-      assigned_department_id = ?,
-      assigned_user_id = ?,
-      estimated_hours = ?,
-      actual_hours = ?,
-      specifications = ?,
-      start_date = ?,
-      due_date = ?,
-      production_line = ?,
-      routing_instructions = ?,
-      attachments = ?,
-      notes = ?,
-      updated_at = datetime('now')
-     WHERE id = ?`,
-    [
-      external_id || null,
-      Number(customer_id),
-      description,
-      Number(quantity),
-      status,
-      department,
-      parseOptionalNumber(stage_id),
-      priority || 'Normal',
-      parseOptionalNumber(assigned_department_id),
-      parseOptionalNumber(assigned_user_id),
-      parseOptionalNumber(estimated_hours),
-      parseOptionalNumber(actual_hours),
-      specifications || null,
-      start_date || null,
-      due_date || null,
-      production_line || null,
-      routing_instructions || null,
-      attachments || null,
-      notes || null,
-      id,
-    ],
-    function (err) {
-      if (err) return res.status(500).json({ error: 'Failed to update work order' });
-      if (this.changes === 0) return res.status(404).json({ error: 'Work order not found' });
+  db.get(
+    `SELECT id, status, priority, customer_id, external_id FROM work_orders WHERE id = ?`,
+    [id],
+    (lookupErr, previous) => {
+      if (lookupErr) return res.status(500).json({ error: 'Failed to update work order' });
+      if (!previous) return res.status(404).json({ error: 'Work order not found' });
 
-      db.get(
-        `SELECT ${workOrderFieldList}
-         FROM work_orders wo
-         LEFT JOIN users u ON wo.customer_id = u.id
-         WHERE wo.id = ?`,
-        [id],
-        (err2, row) => {
-          if (err2) return res.status(500).json({ error: 'Failed to load updated work order' });
-          if (!row) return res.status(404).json({ error: 'Work order not found after update' });
-          res.json(row);
+      db.run(
+        `UPDATE work_orders SET
+          external_id = ?,
+          customer_id = ?,
+          description = ?,
+          quantity = ?,
+          status = ?,
+          department = ?,
+          stage_id = ?,
+          priority = ?,
+          assigned_department_id = ?,
+          assigned_user_id = ?,
+          estimated_hours = ?,
+          actual_hours = ?,
+          specifications = ?,
+          start_date = ?,
+          due_date = ?,
+          production_line = ?,
+          routing_instructions = ?,
+          attachments = ?,
+          notes = ?,
+          updated_at = datetime('now')
+         WHERE id = ?`,
+        [
+          external_id || null,
+          Number(customer_id),
+          description,
+          Number(quantity),
+          status,
+          department,
+          parseOptionalNumber(stage_id),
+          priority || 'Normal',
+          parseOptionalNumber(assigned_department_id),
+          parseOptionalNumber(assigned_user_id),
+          parseOptionalNumber(estimated_hours),
+          parseOptionalNumber(actual_hours),
+          specifications || null,
+          start_date || null,
+          due_date || null,
+          production_line || null,
+          routing_instructions || null,
+          attachments || null,
+          notes || null,
+          id,
+        ],
+        function (err) {
+          if (err) return res.status(500).json({ error: 'Failed to update work order' });
+          if (this.changes === 0) return res.status(404).json({ error: 'Work order not found' });
+
+          db.get(
+            `SELECT ${workOrderFieldList}
+             FROM work_orders wo
+             LEFT JOIN users u ON wo.customer_id = u.id
+             WHERE wo.id = ?`,
+            [id],
+            (err2, row) => {
+              if (err2) return res.status(500).json({ error: 'Failed to load updated work order' });
+              if (!row) return res.status(404).json({ error: 'Work order not found after update' });
+              notifications.notifyWorkOrderUpdated(previous, row, (notifyErr) => {
+                if (notifyErr) console.error('WORK ORDER NOTIFICATION ERROR:', notifyErr);
+                res.json(row);
+              });
+            }
+          );
         }
       );
     }

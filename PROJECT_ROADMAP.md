@@ -28,7 +28,7 @@ The architecture is intentionally modular so the backend can later add route mod
 5. Production board view and status tracking.
 6. Barcode event logging and tracking.
 7. Delivery / will-call due-time rules.
-8. Reporting, notifications, and role-specific UI flows.
+8. Reporting, notifications, and role-specific UI flows. **Done.** Staff reports with CSV export, in-app notifications, and a notification bell are in place. Customers cannot open reports and only see notifications for their own work orders and deliveries.
 
 ## Module Status
 - `frontend/`: Vite + React scaffold complete, login screen in place.
@@ -36,6 +36,7 @@ The architecture is intentionally modular so the backend can later add route mod
 - `database/`: SQLite schema defined, DB init script available.
 - `assets/`: placeholder folder added for static assets.
 - `docs/`: requirements and roadmap notes captured.
+- Reporting and notifications: admin and operator reports, CSV export, SQLite notifications, and the top-bar bell are implemented.
 
 ## Coding Standards
 - Keep source files tracked in Git and avoid committing generated output.
@@ -49,3 +50,4 @@ The architecture is intentionally modular so the backend can later add route mod
 - **v0.1.0**: Initial project scaffold created for Launchpad 3.0.
 - **v0.1.1**: Added backend auth scaffolding and login screen.
 - **v0.1.2**: Migrated frontend to Vite + React and added `/health` backend endpoint.
+- **v0.8.0**: Added staff reporting with CSV export and in-app delivery and work-order notifications. Email delivery is stubbed and off by default.

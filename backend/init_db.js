@@ -234,6 +234,51 @@ async function seedDeliveries() {
   }
 }
 
+async function ensureNotifications() {
+  await run(`CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT,
+    customer_id INTEGER,
+    work_order_id INTEGER,
+    delivery_id INTEGER,
+    dedupe_key TEXT NOT NULL UNIQUE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(customer_id) REFERENCES users(id),
+    FOREIGN KEY(work_order_id) REFERENCES work_orders(id),
+    FOREIGN KEY(delivery_id) REFERENCES deliveries(id)
+  )`);
+  await ensureColumns('notifications', [
+    { name: 'type', definition: 'TEXT' },
+    { name: 'title', definition: 'TEXT' },
+    { name: 'body', definition: 'TEXT' },
+    { name: 'customer_id', definition: 'INTEGER' },
+    { name: 'work_order_id', definition: 'INTEGER' },
+    { name: 'delivery_id', definition: 'INTEGER' },
+    { name: 'dedupe_key', definition: 'TEXT' },
+    { name: 'created_at', definition: 'DATETIME' },
+  ]);
+  await run('CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_dedupe_key ON notifications(dedupe_key)');
+  await run('CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at)');
+  await run('CREATE INDEX IF NOT EXISTS idx_notifications_customer_id ON notifications(customer_id)');
+
+  await run(`CREATE TABLE IF NOT EXISTS notification_reads (
+    notification_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    read_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (notification_id, user_id),
+    FOREIGN KEY(notification_id) REFERENCES notifications(id),
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  )`);
+  await ensureColumns('notification_reads', [
+    { name: 'notification_id', definition: 'INTEGER' },
+    { name: 'user_id', definition: 'INTEGER' },
+    { name: 'read_at', definition: 'DATETIME' },
+  ]);
+  await run('CREATE INDEX IF NOT EXISTS idx_notification_reads_user ON notification_reads(user_id)');
+}
+
 async function normalizeLegacyWorkOrderStatuses() {
   const result = await run(
     `UPDATE work_orders
@@ -272,6 +317,7 @@ async function main() {
   await ensureColumns('deliveries', [
     { name: 'updated_at', definition: 'DATETIME' },
   ]);
+  await ensureNotifications();
   await seedAdmin();
   await seedCustomers();
   await seedDepartments();

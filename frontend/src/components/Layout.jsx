@@ -1,6 +1,6 @@
 import React from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
-import { Box, Drawer, List, ListItemButton, ListItemIcon, ListItemText, Toolbar, Divider, AppBar, Typography, IconButton, Avatar, Button } from '@mui/material';
+import { Box, Drawer, List, ListItemButton, ListItemIcon, ListItemText, Toolbar, Divider, AppBar, Typography, Avatar, Button } from '@mui/material';
 import HomeIcon from '@mui/icons-material/Home';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import BuildIcon from '@mui/icons-material/Build';
@@ -11,6 +11,7 @@ import BarChartIcon from '@mui/icons-material/BarChart';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import LogoutIcon from '@mui/icons-material/Logout';
 import BusinessIcon from '@mui/icons-material/Business';
+import NotificationBell from './NotificationBell';
 
 const drawerWidth = 280;
 
@@ -39,6 +40,7 @@ export default function Layout({ user, onLogout }) {
             Launchpad 3.0
           </Typography>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <NotificationBell user={user} />
             <Typography>{user?.display_name || user?.username || 'User'}</Typography>
             <Avatar>{initials}</Avatar>
             <Button color="inherit" startIcon={<LogoutIcon />} onClick={onLogout}>
