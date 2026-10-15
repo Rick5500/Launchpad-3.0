@@ -1,46 +1,156 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Box, Drawer, List, ListItemButton, ListItemIcon, ListItemText, Toolbar, AppBar, Typography, Avatar, Button } from '@mui/material';
-import HomeIcon from '@mui/icons-material/Home';
-import AssignmentIcon from '@mui/icons-material/Assignment';
-import BuildIcon from '@mui/icons-material/Build';
-import PeopleIcon from '@mui/icons-material/People';
-import LocalShippingIcon from '@mui/icons-material/LocalShipping';
-import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner';
-import BarChartIcon from '@mui/icons-material/BarChart';
-import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
-import LogoutIcon from '@mui/icons-material/Logout';
-import BusinessIcon from '@mui/icons-material/Business';
+import {
+  Box,
+  Drawer,
+  List,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
+  Toolbar,
+  AppBar,
+  Typography,
+  Avatar,
+  Button,
+  IconButton,
+  useMediaQuery,
+} from '@mui/material';
+import { useTheme } from '@mui/material/styles';
+import MenuIcon from '@mui/icons-material/Menu';
+import DashboardIcon from '@mui/icons-material/Dashboard';
 import NoteAddIcon from '@mui/icons-material/NoteAdd';
+import SearchIcon from '@mui/icons-material/Search';
+import BarChartIcon from '@mui/icons-material/BarChart';
+import PeopleIcon from '@mui/icons-material/People';
+import BusinessIcon from '@mui/icons-material/Business';
+import DesignServicesIcon from '@mui/icons-material/DesignServices';
+import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
+import SettingsIcon from '@mui/icons-material/Settings';
+import NotificationsIcon from '@mui/icons-material/Notifications';
+import HistoryIcon from '@mui/icons-material/History';
+import QrCode2Icon from '@mui/icons-material/QrCode2';
+import LogoutIcon from '@mui/icons-material/Logout';
+import AssignmentIcon from '@mui/icons-material/Assignment';
+import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import { brand } from '../brand';
 import NotificationBell from './NotificationBell';
 
-const drawerWidth = 260;
+const drawerWidth = 240;
 
-const navItems = [
-  { title: 'Place Order', route: '/order', icon: <NoteAddIcon />, roles: ['customer'] },
-  { title: 'Dashboard', route: '/', icon: <HomeIcon />, roles: ['admin', 'operator'] },
-  { title: 'Work Orders', route: '/work-orders', icon: <AssignmentIcon />, roles: ['admin', 'operator', 'customer'] },
-  { title: 'Production Board', route: '/production-board', icon: <BuildIcon />, roles: ['admin', 'operator'] },
-  { title: 'Scan', route: '/scan', icon: <QrCodeScannerIcon />, roles: ['admin', 'operator'] },
-  { title: 'Customers', route: '/customers', icon: <PeopleIcon />, roles: ['admin'] },
-  { title: 'Delivery', route: '/delivery', icon: <LocalShippingIcon />, roles: ['admin', 'operator', 'customer'] },
+const staffNav = [
+  { title: 'Admin Board', route: '/', icon: <DashboardIcon />, roles: ['admin', 'operator'] },
+  { title: 'Create Order', route: '/order', icon: <NoteAddIcon />, roles: ['admin', 'operator'] },
+  { title: 'Search Orders', route: '/search', icon: <SearchIcon />, roles: ['admin'] },
   { title: 'Reports', route: '/reports', icon: <BarChartIcon />, roles: ['admin', 'operator'] },
-  { title: 'Admin', route: '/admin', icon: <AdminPanelSettingsIcon />, roles: ['admin'] },
+  { title: 'Customers', route: '/customers', icon: <PeopleIcon />, roles: ['admin'] },
   { title: 'Departments', route: '/admin/departments', icon: <BusinessIcon />, roles: ['admin'] },
+  { title: 'Services', route: '/services', icon: <DesignServicesIcon />, roles: ['admin'] },
+  { title: 'Users', route: '/users', icon: <ManageAccountsIcon />, roles: ['admin'] },
+  { title: 'System Settings', route: '/settings', icon: <SettingsIcon />, roles: ['admin'] },
+  { title: 'Notifications', route: '/notifications', icon: <NotificationsIcon />, roles: ['admin', 'operator'] },
+  { title: 'Activity Log', route: '/activity-log', icon: <HistoryIcon />, roles: ['admin'] },
+  { title: 'Barcode Settings', route: '/barcode-settings', icon: <QrCode2Icon />, roles: ['admin'] },
+];
+
+const customerNav = [
+  { title: 'Place Order', route: '/order', icon: <NoteAddIcon />, roles: ['customer'] },
+  { title: 'Work Orders', route: '/work-orders', icon: <AssignmentIcon />, roles: ['customer'] },
+  { title: 'Delivery', route: '/delivery', icon: <LocalShippingIcon />, roles: ['customer'] },
+  { title: 'Notifications', route: '/notifications', icon: <NotificationsIcon />, roles: ['customer'] },
 ];
 
 function isActive(route, pathname) {
   if (route === '/') return pathname === '/';
-  if (route === '/admin') return pathname === '/admin';
   return pathname === route || pathname.startsWith(`${route}/`);
+}
+
+function pageTitle(pathname) {
+  if (pathname === '/') return 'Admin Board';
+  if (/^\/work-orders\/[^/]+\/print$/.test(pathname)) return 'Print Work Order';
+  const titles = [
+    ['/order', 'Create Order'],
+    ['/search', 'Search Orders'],
+    ['/reports', 'Reports'],
+    ['/customers', 'Customers'],
+    ['/admin/departments', 'Departments'],
+    ['/services', 'Services'],
+    ['/users', 'Users'],
+    ['/settings', 'System Settings'],
+    ['/notifications', 'Notifications'],
+    ['/activity-log', 'Activity Log'],
+    ['/barcode-settings', 'Barcode Settings'],
+    ['/scan', 'Scan'],
+    ['/production-board', 'Production Board'],
+    ['/delivery', 'Delivery'],
+    ['/work-orders', 'Work Orders'],
+    ['/orders', 'Order'],
+  ];
+  const match = titles.find(([route]) => pathname === route || pathname.startsWith(`${route}/`));
+  return match ? match[1] : 'LaunchPad 3.0';
 }
 
 export default function Layout({ user, onLogout }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const [mobileOpen, setMobileOpen] = useState(false);
   const initials = (user?.display_name || user?.username || 'U').charAt(0).toUpperCase();
-  const visibleNavItems = navItems.filter((item) => !item.roles || item.roles.includes(user?.role));
+  const welcomeName = user?.display_name || user?.username || 'User';
+  const items = (user?.role === 'customer' ? customerNav : staffNav)
+    .filter((item) => !item.roles || item.roles.includes(user?.role));
+
+  function go(route) {
+    navigate(route);
+    if (isMobile) setMobileOpen(false);
+  }
+
+  const drawer = (
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <Box sx={{ px: 2, py: 2 }}>
+        <Box
+          component="img"
+          src="/logo.png"
+          alt="LaunchPad 3.0"
+          sx={{ width: '100%', height: 'auto', bgcolor: '#fff', borderRadius: 1, p: 0.5 }}
+        />
+      </Box>
+      <List sx={{ px: 1, flex: 1, overflow: 'auto' }}>
+        {items.map((item) => {
+          const active = isActive(item.route, location.pathname);
+          return (
+            <ListItemButton
+              key={item.title}
+              onClick={() => go(item.route)}
+              sx={{
+                color: '#fff',
+                borderRadius: 1,
+                mb: 0.5,
+                bgcolor: active ? brand.orange : 'transparent',
+                '&:hover': { bgcolor: active ? brand.orangeDark : 'rgba(255,255,255,0.08)' },
+              }}
+            >
+              <ListItemIcon sx={{ color: '#fff', minWidth: 40 }}>{item.icon}</ListItemIcon>
+              <ListItemText primary={item.title} primaryTypographyProps={{ fontSize: 14, fontWeight: active ? 700 : 500 }} />
+            </ListItemButton>
+          );
+        })}
+      </List>
+      <List sx={{ px: 1, pb: 1 }}>
+        <ListItemButton
+          onClick={onLogout}
+          sx={{
+            color: '#fff',
+            borderRadius: 1,
+            '&:hover': { bgcolor: 'rgba(255,255,255,0.08)' },
+          }}
+        >
+          <ListItemIcon sx={{ color: '#fff', minWidth: 40 }}><LogoutIcon /></ListItemIcon>
+          <ListItemText primary="Log Out" primaryTypographyProps={{ fontSize: 14 }} />
+        </ListItemButton>
+      </List>
+    </Box>
+  );
 
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: brand.page }}>
@@ -48,76 +158,77 @@ export default function Layout({ user, onLogout }) {
         position="fixed"
         elevation={0}
         sx={{
-          width: `calc(100% - ${drawerWidth}px)`,
-          ml: `${drawerWidth}px`,
+          width: { md: `calc(100% - ${drawerWidth}px)` },
+          ml: { md: `${drawerWidth}px` },
           bgcolor: '#fff',
           color: brand.navy,
           borderBottom: `1px solid ${brand.border}`,
         }}
       >
-        <Toolbar sx={{ justifyContent: 'space-between' }}>
-          <Typography variant="h6" noWrap sx={{ fontWeight: 700 }}>
-            LaunchPad 3.0
-          </Typography>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+        <Toolbar sx={{ justifyContent: 'space-between', gap: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+            {isMobile && (
+              <IconButton aria-label="Open navigation" edge="start" onClick={() => setMobileOpen(true)} sx={{ color: brand.navy }}>
+                <MenuIcon />
+              </IconButton>
+            )}
+            <Typography variant="h6" noWrap sx={{ fontWeight: 700 }}>
+              {pageTitle(location.pathname)}
+            </Typography>
+          </Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 0.5, sm: 1.5 } }}>
             <NotificationBell user={user} />
-            <Typography>{user?.display_name || user?.username || 'User'}</Typography>
-            <Avatar sx={{ bgcolor: brand.navy }}>{initials}</Avatar>
-            <Button color="inherit" startIcon={<LogoutIcon />} onClick={onLogout}>
+            <Typography sx={{ display: { xs: 'none', sm: 'block' }, fontSize: 14 }}>
+              Welcome, {welcomeName}
+            </Typography>
+            <Avatar sx={{ bgcolor: brand.navy, width: 34, height: 34, fontSize: 15 }}>{initials}</Avatar>
+            <Button color="inherit" startIcon={<LogoutIcon />} onClick={onLogout} sx={{ display: { xs: 'none', sm: 'inline-flex' } }}>
               Log Out
             </Button>
           </Box>
         </Toolbar>
       </AppBar>
 
-      <Drawer
-        variant="permanent"
+      <Box component="nav" sx={{ width: { md: drawerWidth }, flexShrink: { md: 0 } }}>
+        <Drawer
+          variant={isMobile ? 'temporary' : 'permanent'}
+          open={isMobile ? mobileOpen : true}
+          onClose={() => setMobileOpen(false)}
+          ModalProps={{ keepMounted: true }}
+          sx={{
+            '& .MuiDrawer-paper': {
+              width: drawerWidth,
+              boxSizing: 'border-box',
+              bgcolor: brand.navyDark,
+              color: '#ffffff',
+              borderRight: 'none',
+            },
+          }}
+        >
+          {drawer}
+        </Drawer>
+      </Box>
+
+      <Box
+        component="main"
         sx={{
-          width: drawerWidth,
-          flexShrink: 0,
-          '& .MuiDrawer-paper': {
-            width: drawerWidth,
-            boxSizing: 'border-box',
-            bgcolor: brand.navyDark,
-            color: '#ffffff',
-            borderRight: 'none',
-          },
+          flexGrow: 1,
+          minWidth: 0,
+          bgcolor: brand.page,
+          px: { xs: 1.5, md: 2.5 },
+          pb: 2,
+          display: 'flex',
+          flexDirection: 'column',
         }}
       >
-        <Box sx={{ px: 2, py: 2 }}>
-          <Box
-            component="img"
-            src="/logo.png"
-            alt="LaunchPad 3.0"
-            sx={{ width: '100%', height: 'auto', bgcolor: '#fff', borderRadius: 1, p: 0.5 }}
-          />
-        </Box>
-        <List sx={{ px: 1 }}>
-          {visibleNavItems.map((item) => {
-            const active = isActive(item.route, location.pathname);
-            return (
-              <ListItemButton
-                key={item.title}
-                onClick={() => navigate(item.route)}
-                sx={{
-                  color: '#fff',
-                  borderRadius: 1,
-                  mb: 0.5,
-                  bgcolor: active ? brand.orange : 'transparent',
-                  '&:hover': { bgcolor: active ? brand.orangeDark : 'rgba(255,255,255,0.08)' },
-                }}
-              >
-                <ListItemIcon sx={{ color: '#fff', minWidth: 40 }}>{item.icon}</ListItemIcon>
-                <ListItemText primary={item.title} />
-              </ListItemButton>
-            );
-          })}
-        </List>
-      </Drawer>
-
-      <Box component="main" sx={{ flexGrow: 1, bgcolor: brand.page, p: 3, width: `calc(100% - ${drawerWidth}px)` }}>
         <Toolbar />
-        <Outlet />
+        <Box sx={{ flex: 1 }}>
+          <Outlet />
+        </Box>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', pt: 2, color: brand.muted, fontSize: 12 }}>
+          <span>© 2026 Accent Imaging, Inc. All rights reserved.</span>
+          <span>LaunchPad 3.0</span>
+        </Box>
       </Box>
     </Box>
   );

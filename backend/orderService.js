@@ -5,6 +5,7 @@ const {
   validateOrderDue,
 } = require('./deliveryRules');
 const { BUSY_TIMEOUT_MS, BUSY_ATTEMPTS, isBusyError, delay, backoffMs } = require('./sqliteBusy');
+const activityLog = require('./activityLog');
 
 let transactionQueue = Promise.resolve();
 
@@ -680,6 +681,18 @@ async function createOrder(user, body, now = new Date()) {
         `INSERT INTO production_history (work_order_id, department, status, scanned_by, user_id, notes)
          VALUES (?, 'Submitted', 'Submitted', 'System Auto', ?, 'Order Created')`,
         [workOrder.lastID, Number(user.userId || user.id)]
+      );
+
+      const queueName = department ? department.name : service.department_name;
+      await tx.run(
+        activityLog.INSERT_SQL,
+        activityLog.bindParams(activityLog.createdEntry({
+          actorId: Number(user.userId || user.id),
+          workOrderId: workOrder.lastID,
+          externalId,
+          department: queueName,
+          orderNumber,
+        }))
       );
 
       createdWorkOrders.push(workOrder.lastID);

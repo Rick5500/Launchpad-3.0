@@ -421,4 +421,6 @@ module.exports = {
   orderWindowSummary,
   validateOrderDue,
   clockLabel,
+  zonedParts,
+  zonedTimeToUtc,
 };

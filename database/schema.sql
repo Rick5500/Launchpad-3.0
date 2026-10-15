@@ -117,7 +117,9 @@ CREATE TABLE IF NOT EXISTS work_orders (
   service_id INTEGER,
   next_department TEXT,
   requires_approval INTEGER DEFAULT 0,
-  approval_status TEXT, -- null, pending, approved, rejected (phase 4)
+  approval_status TEXT, -- null, pending, approved, rejected
+  approval_by INTEGER, -- user who approved or rejected a pending request
+  approval_at DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME,
   FOREIGN KEY(customer_id) REFERENCES users(id),
@@ -187,6 +189,8 @@ CREATE TABLE IF NOT EXISTS barcode_events (
   location TEXT,
   event_time DATETIME DEFAULT CURRENT_TIMESTAMP,
   stage_id INTEGER, -- production stage applied by a configured scan location, if any
+  from_department TEXT, -- department the work order was in when the scan was recorded
+  to_department TEXT, -- department the scan moved it to, when the location names a department
   FOREIGN KEY(work_order_id) REFERENCES work_orders(id),
   FOREIGN KEY(operator_id) REFERENCES users(id),
   FOREIGN KEY(stage_id) REFERENCES production_stages(id)

@@ -411,6 +411,8 @@ async function main() {
   ]);
   await ensureColumns('barcode_events', [
     { name: 'stage_id', definition: 'INTEGER' },
+    { name: 'from_department', definition: 'TEXT' },
+    { name: 'to_department', definition: 'TEXT' },
   ]);
   await ensureColumns('deliveries', [
     { name: 'updated_at', definition: 'DATETIME' },
@@ -431,6 +433,8 @@ async function main() {
     { name: 'next_department', definition: 'TEXT' },
     { name: 'requires_approval', definition: 'INTEGER DEFAULT 0' },
     { name: 'approval_status', definition: 'TEXT' },
+    { name: 'approval_by', definition: 'INTEGER' },
+    { name: 'approval_at', definition: 'DATETIME' },
   ]);
   await run('CREATE INDEX IF NOT EXISTS idx_work_orders_order_id ON work_orders(order_id)');
   await run('CREATE INDEX IF NOT EXISTS idx_work_orders_service_id ON work_orders(service_id)');

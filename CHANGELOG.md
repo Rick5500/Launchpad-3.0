@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Admin Board at `/` for admin and operator, with department tabs, stat cards, a paginated active work order table, department queue summary, recent activity, the last 10 scans, pending approvals, and system alerts
+- `GET /api/admin-board`, `GET /api/admin-board/work-orders`, `GET /api/admin-board/activity`, and `GET /api/admin-board/approvals` for admin and operator. Customers receive HTTP 403
+- Admin-only `POST /api/admin-board/approvals/:id` to approve or reject a pending request, recording `approval_by`, `approval_at`, and an activity row
+- Activity rows when a work order is created, moved to another department, or completed, including a department move when a barcode location matches a department name
+- `barcode_events.from_department` and `barcode_events.to_department`, filled in when a scan is recorded
+- Placeholder pages for Search Orders, Services, Users, System Settings, Activity Log, and Barcode Settings, and a print-work-order placeholder for the next phase
 - Customer order intake: `orders`, `services`, `order_line_items`, `order_files`, `delivery_methods`, and a daily `order_sequences` counter (`YYYYMMDD-NNN`, work orders suffixed `-A`, `-B`, `-C`)
 - `POST /api/orders`, `GET /api/orders`, and `GET /api/orders/:id` for admin, operator, and customer, with customers limited to their own orders
 - Multipart uploads at `POST /api/uploads` with type and size limits, random stored names under `UPLOAD_DIR`, and authenticated download and delete
@@ -44,6 +50,10 @@ All notable changes to this project will be documented in this file.
 - `CHANGELOG.md` file
 
 ### Changed
+- Admin and operator land on the Admin Board instead of the earlier home dashboard. Customers still open the order form
+- The staff sidebar follows the admin mockup. Operators see only Admin Board, Create Order, Reports, and Notifications
+- A barcode scan whose location names a department moves that work order. Scanning into Complete also marks it completed. Other locations keep the existing production-stage map
+- Editing a work order's department updates `next_department` from the department route when that department exists
 - The due-soon window defaults to 1 hour. `DUE_SOON_HOURS` defaults to 1, and `DELIVERY_DUE_SOON_MINUTES` defaults to 60. When the minutes setting is unset, notifications use the delivery-list window
 - The Reports navigation item opens the reports page for admin and operator. Customers are still blocked from that route and from the report APIs
 - `init_db.js` creates the notification tables when they are missing, including on a database created before this change

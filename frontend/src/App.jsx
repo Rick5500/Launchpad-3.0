@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider, CssBaseline, Box, Typography, TextField, Button, CircularProgress, Alert } from '@mui/material';
-import HomeDashboard from './routes/HomeDashboard';
+import AdminBoard from './routes/AdminBoard';
 import PlaceholderPage from './routes/PlaceholderPage';
 import WorkOrdersList from './routes/WorkOrdersList';
 import WorkOrderDetail from './routes/WorkOrderDetail';
@@ -97,7 +97,7 @@ function LoginScreen() {
 function HomeOrOrder() {
   const { user } = useAuth();
   if (user?.role === 'customer') return <Navigate to="/order" replace />;
-  return <HomeDashboard />;
+  return <AdminBoard />;
 }
 
 function AppRoutes() {
@@ -128,6 +128,13 @@ function AppRoutes() {
         <Route path="delivery" element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><Deliveries /></ProtectedRoute>} />
         <Route path="reports" element={<ProtectedRoute roles={['admin', 'operator']}><Reports /></ProtectedRoute>} />
         <Route path="notifications" element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><Notifications /></ProtectedRoute>} />
+        <Route path="search" element={<ProtectedRoute roles={['admin']}><PlaceholderPage title="Search Orders" /></ProtectedRoute>} />
+        <Route path="services" element={<ProtectedRoute roles={['admin']}><PlaceholderPage title="Services" /></ProtectedRoute>} />
+        <Route path="users" element={<ProtectedRoute roles={['admin']}><PlaceholderPage title="Users" /></ProtectedRoute>} />
+        <Route path="settings" element={<ProtectedRoute roles={['admin']}><PlaceholderPage title="System Settings" /></ProtectedRoute>} />
+        <Route path="activity-log" element={<ProtectedRoute roles={['admin']}><PlaceholderPage title="Activity Log" /></ProtectedRoute>} />
+        <Route path="barcode-settings" element={<ProtectedRoute roles={['admin']}><PlaceholderPage title="Barcode Settings" /></ProtectedRoute>} />
+        <Route path="work-orders/:id/print" element={<ProtectedRoute roles={['admin', 'operator']}><PlaceholderPage title="Print Work Order" detail="The printable work order, including a Code 128 barcode, is coming in the next phase." /></ProtectedRoute>} />
         <Route path="admin" element={<ProtectedRoute roles={['admin']}><PlaceholderPage title="Admin" /></ProtectedRoute>} />
         <Route path="admin/departments" element={<ProtectedRoute roles={['admin']}><DepartmentsAdmin /></ProtectedRoute>} />
       </Route>

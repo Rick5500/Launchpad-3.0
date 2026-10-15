@@ -356,7 +356,16 @@ export default function CustomerOrderForm() {
   const locked = Boolean(result);
 
   return (
-    <CustomerShell title="Customer Order Form" welcome={welcomeText(user)} onLogout={logout}>
+    <CustomerShell
+      title={isStaff ? 'Create Order' : 'Customer Order Form'}
+      welcome={welcomeText(user)}
+      onLogout={logout}
+      extra={isStaff ? (
+        <Button color="inherit" onClick={() => navigate('/')}>
+          Admin Board
+        </Button>
+      ) : null}
+    >
       <GlobalStyles
         styles={{
           '@media print': {
