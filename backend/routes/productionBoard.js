@@ -1,13 +1,16 @@
 const express = require('express');
 const auth = require('../auth');
 const db = require('../db');
+const { FINISHED_WORK_ORDER_STATUSES, sqlStringList } = require('../statuses');
 const router = express.Router();
+
+router.use(auth.requireAuth, auth.requireRole('admin', 'operator'));
 
 function serializeBoardResponse(res, stages, workOrders, metrics) {
   res.json({ stages, workOrders, metrics });
 }
 
-router.get('/', auth.requireAuth, (req, res) => {
+router.get('/', (req, res) => {
   const basePath = req.baseUrl || '';
   const isStagesEndpoint = basePath.includes('production-stages');
 
@@ -72,7 +75,7 @@ router.get('/', auth.requireAuth, (req, res) => {
                 if (err4) return res.status(500).json({ error: 'Failed to load rush order count' });
 
                 db.get(
-                  `SELECT COUNT(*) AS count FROM work_orders WHERE due_date IS NOT NULL AND date(due_date) < date('now') AND lower(status) != 'completed'`,
+                  `SELECT COUNT(*) AS count FROM work_orders WHERE due_date IS NOT NULL AND date(due_date) < date('now') AND lower(status) NOT IN (${sqlStringList(FINISHED_WORK_ORDER_STATUSES)})`,
                   [],
                   (err5, lateRow) => {
                     if (err5) return res.status(500).json({ error: 'Failed to load late order count' });

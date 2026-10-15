@@ -124,6 +124,13 @@ export function AuthProvider({ children }) {
   );
 
   const logout = useCallback(() => {
+    const token = localStorage.getItem('lp_token');
+    if (token) {
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    }
     clearStoredAuth('');
     setUser(null);
     setIsAuthenticated(false);

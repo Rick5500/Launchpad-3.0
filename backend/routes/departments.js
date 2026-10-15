@@ -14,6 +14,18 @@ function parseSortOrder(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function isUniqueConstraint(err) {
+  return Boolean(err && /UNIQUE constraint failed/i.test(err.message || ''));
+}
+
+function respondDepartmentWriteError(res, err, action) {
+  console.error(`DEPARTMENTS ${action.toUpperCase()} ERROR:`, err);
+  if (isUniqueConstraint(err)) {
+    return res.status(409).json({ error: 'A department with that name already exists' });
+  }
+  return res.status(500).json({ error: `Failed to ${action} department` });
+}
+
 router.get('/', auth.requireAuth, (req, res) => {
   db.all(
     `SELECT id, name, description, color, icon, sort_order, is_active, created_at, updated_at
@@ -35,17 +47,17 @@ router.get('/:id', auth.requireAuth, (req, res) => {
      WHERE id = ?`,
     [id],
     (err, row) => {
-if (err) {
-  console.error('DEPARTMENTS LOAD ERROR:', err);
-  return res.status(500).json({ error: err.message });
-}
+      if (err) {
+        console.error('DEPARTMENTS LOAD ERROR:', err);
+        return res.status(500).json({ error: 'Failed to load department' });
+      }
       if (!row) return res.status(404).json({ error: 'Department not found' });
       res.json(row);
     }
   );
 });
 
-router.post('/', auth.requireAuth, (req, res) => {
+router.post('/', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
   const payload = req.body || {};
   const name = String(payload.name || '').trim();
   if (!name) return res.status(400).json({ error: 'name is required' });
@@ -61,10 +73,7 @@ router.post('/', auth.requireAuth, (req, res) => {
      VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
     [name, description, color, icon, sortOrder, isActive],
     function (err) {
-      if (err) {
-        console.error('DEPARTMENTS ERROR:', err);
-        return res.status(500).json({ error: err.message });
-      }
+      if (err) return respondDepartmentWriteError(res, err, 'create');
 
       const newId = this.lastID;
       db.get('SELECT * FROM departments WHERE id = ?', [newId], (err2, row) => {
@@ -75,7 +84,7 @@ router.post('/', auth.requireAuth, (req, res) => {
   );
 });
 
-router.put('/:id', auth.requireAuth, (req, res) => {
+router.put('/:id', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
   const id = req.params.id;
   const payload = req.body || {};
   const name = String(payload.name || '').trim();
@@ -93,7 +102,7 @@ router.put('/:id', auth.requireAuth, (req, res) => {
      WHERE id = ?`,
     [name, description, color, icon, sortOrder, isActive, id],
     function (err) {
-      if (err) return res.status(500).json({ error: 'Failed to update department' });
+      if (err) return respondDepartmentWriteError(res, err, 'update');
       if (this.changes === 0) return res.status(404).json({ error: 'Department not found' });
       db.get('SELECT * FROM departments WHERE id = ?', [id], (err2, row) => {
         if (err2) return res.status(500).json({ error: 'Failed to load updated department' });
@@ -103,7 +112,7 @@ router.put('/:id', auth.requireAuth, (req, res) => {
   );
 });
 
-router.delete('/:id', auth.requireAuth, (req, res) => {
+router.delete('/:id', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
   const id = req.params.id;
   db.run(
     `UPDATE departments SET is_active = 0, updated_at = datetime('now') WHERE id = ?`,

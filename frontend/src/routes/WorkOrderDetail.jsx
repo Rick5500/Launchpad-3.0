@@ -5,6 +5,7 @@ import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
 import SectionCard from '../components/SectionCard';
 import { authFetch } from '../api';
+import { useAuth } from '../context/AuthContext';
 
 const tabs = ['Overview', 'Specifications', 'Attachments', 'Activity History', 'Routing', 'Notes'];
 
@@ -55,6 +56,8 @@ function getTabContent(tab, workOrder) {
 export default function WorkOrderDetail() {
   const navigate = useNavigate();
   const { id } = useParams();
+  const { user } = useAuth();
+  const canManageOrders = user?.role === 'admin' || user?.role === 'operator';
 
   const [workOrder, setWorkOrder] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -88,9 +91,11 @@ export default function WorkOrderDetail() {
             Detailed information for work order {workOrder.external_id || `#${workOrder.id}`}
           </Typography>
         </Box>
-        <Button variant="contained" onClick={() => navigate(`/work-orders/${id}/edit`)}>
-          Edit Work Order
-        </Button>
+        {canManageOrders && (
+          <Button variant="contained" onClick={() => navigate(`/work-orders/${id}/edit`)}>
+            Edit Work Order
+          </Button>
+        )}
       </Box>
 
       <Box sx={{ mt: 2, mb: 3 }}>

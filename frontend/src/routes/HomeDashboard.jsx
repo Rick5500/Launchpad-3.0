@@ -18,6 +18,7 @@ import {
   Divider,
 } from '@mui/material';
 import { authFetch } from '../api';
+import { useAuth } from '../context/AuthContext';
 
 const metricCards = [
   { key: 'totalWorkOrders', label: 'Total Work Orders' },
@@ -30,6 +31,8 @@ const metricCards = [
 const formatter = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
 export default function HomeDashboard() {
+  const { user } = useAuth();
+  const isCustomer = user?.role === 'customer';
   const [summary, setSummary] = useState(null);
   const [workOrders, setWorkOrders] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -38,16 +41,53 @@ export default function HomeDashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
+
+    const loadWorkOrders = authFetch('/api/workorders').then((res) => {
+      if (!res.ok) throw new Error('Unable to load work orders');
+      return res.json();
+    });
+
+    if (isCustomer) {
+      loadWorkOrders
+        .then((workOrdersData) => {
+          if (cancelled) return;
+          const list = workOrdersData || [];
+          const active = list.filter((order) => order.status === 'open' || order.status === 'in-progress').length;
+          const counts = new Map();
+          list.forEach((order) => {
+            const name = order.department || 'General';
+            counts.set(name, (counts.get(name) || 0) + 1);
+          });
+          setSummary({
+            totalWorkOrders: list.length,
+            activeWorkOrders: active,
+            departmentSummary: Array.from(counts, ([department, count]) => ({ department, count })),
+          });
+          setWorkOrders(list);
+          setDepartments([]);
+          setProductionMetrics(null);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setSummary({});
+          setWorkOrders([]);
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
     Promise.all([
       authFetch('/api/dashboard').then((res) => {
         if (!res.ok) throw new Error('Unable to load dashboard summary');
         return res.json();
       }),
-      authFetch('/api/workorders').then((res) => {
-        if (!res.ok) throw new Error('Unable to load work orders');
-        return res.json();
-      }),
+      loadWorkOrders,
       authFetch('/api/departments').then((res) => {
         if (!res.ok) throw new Error('Unable to load departments');
         return res.json();
@@ -58,17 +98,25 @@ export default function HomeDashboard() {
       }),
     ])
       .then(([summaryData, workOrdersData, departmentData, boardData]) => {
+        if (cancelled) return;
         setSummary(summaryData);
         setWorkOrders(workOrdersData);
         setDepartments((departmentData || []).filter((dept) => dept.is_active !== 0));
         setProductionMetrics(boardData?.metrics || null);
       })
       .catch(() => {
+        if (cancelled) return;
         setSummary({});
         setWorkOrders([]);
       })
-      .finally(() => setLoading(false));
-  }, []);
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isCustomer]);
 
   const departmentTabs = useMemo(() => {
     const names = new Set(['All']);
@@ -96,14 +144,16 @@ export default function HomeDashboard() {
   return (
     <Box sx={{ p: 3 }}>
       <Typography variant="h4" gutterBottom>
-        Home Dashboard
+        {isCustomer ? 'My Work Orders' : 'Home Dashboard'}
       </Typography>
       <Typography variant="body1" color="text.secondary" gutterBottom>
-        Real-time insights across work orders, production, delivery, and department performance.
+        {isCustomer
+          ? 'Work orders assigned to your account.'
+          : 'Real-time insights across work orders, production, delivery, and department performance.'}
       </Typography>
 
       <Grid container spacing={3}>
-        {metricCards.map((card) => (
+        {(isCustomer ? metricCards.filter((card) => card.key === 'totalWorkOrders' || card.key === 'activeWorkOrders') : metricCards).map((card) => (
           <Grid key={card.key} xs={12} sm={6} md={4}>
             <Card sx={{ minHeight: 130, bgcolor: '#1f2a38' }}>
               <CardContent>
@@ -120,6 +170,7 @@ export default function HomeDashboard() {
       </Grid>
 
       <Grid container spacing={3} sx={{ mt: 3 }}>
+        {!isCustomer && (
         <Grid item xs={12}>
           <Card sx={{ bgcolor: '#1f2a38' }}>
             <CardContent>
@@ -155,14 +206,15 @@ export default function HomeDashboard() {
             </CardContent>
           </Card>
         </Grid>
-        <Grid item xs={12} md={8}>
+        )}
+        <Grid item xs={12} md={isCustomer ? 12 : 8}>
           <Card sx={{ bgcolor: '#1f2a38' }}>
             <CardContent>
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
                 <Box>
-                  <Typography variant="h6">Active Work Orders</Typography>
+                  <Typography variant="h6">{isCustomer ? 'Your Work Orders' : 'Active Work Orders'}</Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Current work order activity by department.
+                    {isCustomer ? 'Orders linked to your customer account.' : 'Current work order activity by department.'}
                   </Typography>
                 </Box>
                 <Tabs
@@ -218,6 +270,7 @@ export default function HomeDashboard() {
           </Card>
         </Grid>
 
+        {!isCustomer && (
         <Grid item xs={12} md={4}>
           <Grid container spacing={3}>
             <Grid item xs={12}>
@@ -280,6 +333,7 @@ export default function HomeDashboard() {
             </Grid>
           </Grid>
         </Grid>
+        )}
       </Grid>
     </Box>
   );

@@ -1,16 +1,19 @@
 const express = require('express');
 const auth = require('../auth');
 const db = require('../db');
+const { ACTIVE_WORK_ORDER_STATUSES, sqlStringList } = require('../statuses');
 const router = express.Router();
 
-router.get('/', auth.requireAuth, (req, res) => {
+router.use(auth.requireAuth, auth.requireRole('admin', 'operator'));
+
+router.get('/', (req, res) => {
   const summary = {};
 
   db.get('SELECT COUNT(*) AS count FROM work_orders', [], (err, row) => {
     if (err) return res.status(500).json({ error: 'Failed to load dashboard summary' });
     summary.totalWorkOrders = row.count;
 
-    db.get("SELECT COUNT(*) AS count FROM work_orders WHERE status IN ('open','in-progress')", [], (err, row) => {
+    db.get(`SELECT COUNT(*) AS count FROM work_orders WHERE status IN (${sqlStringList(ACTIVE_WORK_ORDER_STATUSES)})`, [], (err, row) => {
       if (err) return res.status(500).json({ error: 'Failed to load active work orders' });
       summary.activeWorkOrders = row.count;
 
@@ -22,7 +25,7 @@ router.get('/', auth.requireAuth, (req, res) => {
           if (err) return res.status(500).json({ error: 'Failed to load customers count' });
           summary.customers = row.count;
 
-          db.get("SELECT COUNT(*) AS count FROM deliveries WHERE status != 'complete'", [], (err, row) => {
+          db.get("SELECT COUNT(*) AS count FROM deliveries WHERE lower(status) != 'complete'", [], (err, row) => {
             if (err) return res.status(500).json({ error: 'Failed to load deliveries count' });
             summary.pendingDeliveries = row.count;
 

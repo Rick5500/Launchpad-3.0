@@ -3,7 +3,9 @@ const auth = require('../auth');
 const db = require('../db');
 const router = express.Router();
 
-router.get('/', auth.requireAuth, (req, res) => {
+router.use(auth.requireAuth, auth.requireRole('admin', 'operator'));
+
+router.get('/', (req, res) => {
   db.all(
     `SELECT pb.id, wo.external_id, pb.lane, pb.position, pb.status, pb.updated_at
      FROM production_board pb
