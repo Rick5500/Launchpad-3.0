@@ -45,12 +45,12 @@ function closeDb() {
   });
 }
 
-async function ensureColumns(columns) {
-  const rows = await all('PRAGMA table_info(work_orders)');
+async function ensureColumns(table, columns) {
+  const rows = await all(`PRAGMA table_info(${table})`);
   const existingColumns = new Set(rows.map((row) => row.name));
   for (const column of columns) {
     if (existingColumns.has(column.name)) continue;
-    await run(`ALTER TABLE work_orders ADD COLUMN ${column.name} ${column.definition}`);
+    await run(`ALTER TABLE ${table} ADD COLUMN ${column.name} ${column.definition}`);
   }
 }
 
@@ -236,7 +236,7 @@ async function seedDeliveries() {
 
 async function main() {
   await exec(schema);
-  await ensureColumns([
+  await ensureColumns('work_orders', [
     { name: 'department', definition: "TEXT DEFAULT 'General'" },
     { name: 'specifications', definition: 'TEXT' },
     { name: 'start_date', definition: 'DATETIME' },
@@ -247,13 +247,19 @@ async function main() {
   ]);
   await ensureDepartmentsTable();
   await ensureProductionStagesTable();
-  await ensureColumns([
+  await ensureColumns('work_orders', [
     { name: 'stage_id', definition: 'INTEGER' },
     { name: 'priority', definition: "TEXT DEFAULT 'Normal'" },
     { name: 'assigned_department_id', definition: 'INTEGER' },
     { name: 'assigned_user_id', definition: 'INTEGER' },
     { name: 'estimated_hours', definition: 'REAL' },
     { name: 'actual_hours', definition: 'REAL' },
+  ]);
+  await ensureColumns('barcode_events', [
+    { name: 'stage_id', definition: 'INTEGER' },
+  ]);
+  await ensureColumns('deliveries', [
+    { name: 'updated_at', definition: 'DATETIME' },
   ]);
   await seedAdmin();
   await seedCustomers();
