@@ -4,6 +4,15 @@ const {
   businessToday,
   validateOrderDue,
 } = require('./deliveryRules');
+const { BUSY_TIMEOUT_MS, BUSY_ATTEMPTS, isBusyError, delay, backoffMs } = require('./sqliteBusy');
+
+let transactionQueue = Promise.resolve();
+
+function enqueueTransaction(task) {
+  const run = transactionQueue.then(task, task);
+  transactionQueue = run.then(() => {}, () => {});
+  return run;
+}
 
 const CUSTOMER_FORBIDDEN_FIELDS = [
   'status',
@@ -54,42 +63,66 @@ function allOn(conn, sql, params = []) {
   });
 }
 
-function withTransaction(fn) {
-  const conn = new sqlite3.Database(db.filePath);
-  conn.configure('busyTimeout', 8000);
+function openTransactionConnection() {
+  return new Promise((resolve, reject) => {
+    const conn = new sqlite3.Database(db.filePath, (openErr) => {
+      if (openErr) {
+        reject(openErr);
+        return;
+      }
+      conn.configure('busyTimeout', BUSY_TIMEOUT_MS);
+      conn.run(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`, (pragmaErr) => {
+        if (pragmaErr) {
+          conn.close(() => reject(pragmaErr));
+          return;
+        }
+        resolve(conn);
+      });
+    });
+  });
+}
+
+async function withTransactionOnce(fn) {
+  const conn = await openTransactionConnection();
   const tx = {
     run: (sql, params) => runOn(conn, sql, params),
     get: (sql, params) => getOn(conn, sql, params),
     all: (sql, params) => allOn(conn, sql, params),
   };
-
   const close = () => new Promise((resolve) => conn.close(() => resolve()));
 
-  return new Promise((resolve, reject) => {
-    conn.run('BEGIN IMMEDIATE', (beginErr) => {
-      if (beginErr) {
-        close().then(() => reject(beginErr));
-        return;
+  try {
+    await tx.run('BEGIN IMMEDIATE');
+  } catch (beginErr) {
+    await close();
+    throw beginErr;
+  }
+
+  try {
+    const result = await fn(tx);
+    await tx.run('COMMIT');
+    await close();
+    return result;
+  } catch (err) {
+    try { await tx.run('ROLLBACK'); } catch (rollbackErr) { /* already aborted */ }
+    await close();
+    throw err;
+  }
+}
+
+function withTransaction(fn) {
+  return enqueueTransaction(async () => {
+    let lastErr;
+    for (let attempt = 0; attempt < BUSY_ATTEMPTS; attempt += 1) {
+      try {
+        return await withTransactionOnce(fn);
+      } catch (err) {
+        lastErr = err;
+        if (!isBusyError(err) || attempt + 1 >= BUSY_ATTEMPTS) throw err;
+        await delay(backoffMs(attempt));
       }
-      fn(tx)
-        .then(async (result) => {
-          try {
-            await tx.run('COMMIT');
-          } catch (commitErr) {
-            try { await tx.run('ROLLBACK'); } catch (rollbackErr) { /* connection is closing */ }
-            await close();
-            reject(commitErr);
-            return;
-          }
-          await close();
-          resolve(result);
-        })
-        .catch(async (err) => {
-          try { await tx.run('ROLLBACK'); } catch (rollbackErr) { /* already closed or aborted */ }
-          await close();
-          reject(err);
-        });
-    });
+    }
+    throw lastErr;
   });
 }
 
@@ -245,6 +278,8 @@ function parseLineItems(body, serviceIds) {
       }
     } else if (serviceIds.length === 1) {
       serviceId = serviceIds[0];
+    } else {
+      throw new OrderError(`line item ${index + 1} must include a service when more than one service is selected`);
     }
     const fileIds = [];
     if (item.file_ids != null) {
@@ -860,7 +895,16 @@ function specificationLines(items, notes) {
   }));
 }
 
-async function loadWorkOrderContext(row) {
+function customerHistory(entry) {
+  return {
+    id: entry.id,
+    department: entry.department,
+    status: entry.status,
+    event_time: entry.event_time,
+  };
+}
+
+async function loadWorkOrderContext(row, viewer) {
   const lineItems = await allOn(
     db,
     `SELECT id, line_number, description, size, quantity, media, color, binding_finish,
@@ -894,7 +938,7 @@ async function loadWorkOrderContext(row) {
       laminate: Boolean(item.laminate),
     })),
     files: files.map(publicFile),
-    production_history: history,
+    production_history: viewer && viewer.role === 'customer' ? history.map(customerHistory) : history,
     routing: {
       department: row.department || null,
       current_status: row.status || null,

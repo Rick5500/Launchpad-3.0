@@ -13,6 +13,7 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import BusinessIcon from '@mui/icons-material/Business';
 import NoteAddIcon from '@mui/icons-material/NoteAdd';
 import { brand } from '../brand';
+import NotificationBell from './NotificationBell';
 
 const drawerWidth = 260;
 
@@ -59,6 +60,7 @@ export default function Layout({ user, onLogout }) {
             LaunchPad 3.0
           </Typography>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <NotificationBell user={user} />
             <Typography>{user?.display_name || user?.username || 'User'}</Typography>
             <Avatar sx={{ bgcolor: brand.navy }}>{initials}</Avatar>
             <Button color="inherit" startIcon={<LogoutIcon />} onClick={onLogout}>

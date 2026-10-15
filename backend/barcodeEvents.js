@@ -343,6 +343,7 @@ module.exports = {
   MAX_LOCATION_LENGTH,
   locationStageEntries,
   parseEventTime,
+  parseRangeBound,
   parseListQuery,
   resolveWorkOrder,
   recordScan,

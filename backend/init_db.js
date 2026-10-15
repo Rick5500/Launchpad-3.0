@@ -332,6 +332,51 @@ async function seedDeliveries() {
   }
 }
 
+async function ensureNotifications() {
+  await run(`CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT,
+    customer_id INTEGER,
+    work_order_id INTEGER,
+    delivery_id INTEGER,
+    dedupe_key TEXT NOT NULL UNIQUE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(customer_id) REFERENCES users(id),
+    FOREIGN KEY(work_order_id) REFERENCES work_orders(id),
+    FOREIGN KEY(delivery_id) REFERENCES deliveries(id)
+  )`);
+  await ensureColumns('notifications', [
+    { name: 'type', definition: 'TEXT' },
+    { name: 'title', definition: 'TEXT' },
+    { name: 'body', definition: 'TEXT' },
+    { name: 'customer_id', definition: 'INTEGER' },
+    { name: 'work_order_id', definition: 'INTEGER' },
+    { name: 'delivery_id', definition: 'INTEGER' },
+    { name: 'dedupe_key', definition: 'TEXT' },
+    { name: 'created_at', definition: 'DATETIME' },
+  ]);
+  await run('CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_dedupe_key ON notifications(dedupe_key)');
+  await run('CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at)');
+  await run('CREATE INDEX IF NOT EXISTS idx_notifications_customer_id ON notifications(customer_id)');
+
+  await run(`CREATE TABLE IF NOT EXISTS notification_reads (
+    notification_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    read_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (notification_id, user_id),
+    FOREIGN KEY(notification_id) REFERENCES notifications(id),
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  )`);
+  await ensureColumns('notification_reads', [
+    { name: 'notification_id', definition: 'INTEGER' },
+    { name: 'user_id', definition: 'INTEGER' },
+    { name: 'read_at', definition: 'DATETIME' },
+  ]);
+  await run('CREATE INDEX IF NOT EXISTS idx_notification_reads_user ON notification_reads(user_id)');
+}
+
 async function normalizeLegacyWorkOrderStatuses() {
   const result = await run(
     `UPDATE work_orders
@@ -390,6 +435,7 @@ async function main() {
   await run('CREATE INDEX IF NOT EXISTS idx_work_orders_order_id ON work_orders(order_id)');
   await run('CREATE INDEX IF NOT EXISTS idx_work_orders_service_id ON work_orders(service_id)');
   await run('CREATE INDEX IF NOT EXISTS idx_deliveries_order_id ON deliveries(order_id)');
+  await ensureNotifications();
   await seedAdmin();
   await seedCustomers();
   await seedDepartments();
@@ -402,7 +448,26 @@ async function main() {
   await seedProductionBoard();
   await seedDeliveries();
   await normalizeLegacyWorkOrderStatuses();
+  await ensureExternalIdUniqueIndex();
   console.log('Database initialization complete.');
+}
+
+async function ensureExternalIdUniqueIndex() {
+  const duplicate = await get(
+    `SELECT external_id
+     FROM work_orders
+     WHERE external_id IS NOT NULL
+     GROUP BY external_id
+     HAVING COUNT(*) > 1
+     LIMIT 1`
+  );
+  if (duplicate) {
+    console.warn(
+      `Skipping unique index on work_orders.external_id because duplicate values exist (example: ${duplicate.external_id})`
+    );
+    return;
+  }
+  await run('CREATE UNIQUE INDEX IF NOT EXISTS idx_work_orders_external_id ON work_orders(external_id)');
 }
 
 main()

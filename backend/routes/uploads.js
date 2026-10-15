@@ -10,6 +10,7 @@ const {
   uploadMiddleware,
   uploadErrorMessage,
 } = require('../fileStore');
+const { maxUnattachedUploads, countUnattachedUploads } = require('../uploadMaintenance');
 
 const router = express.Router();
 const uploadRoles = auth.requireRole('admin', 'operator', 'customer');
@@ -82,6 +83,15 @@ router.post('/', auth.requireAuth, uploadRoles, (req, res) => {
         );
         if (!customer) throw Object.assign(new Error('customer_id must be an existing customer'), { status: 400 });
         customerId = customer.id;
+      }
+
+      const waiting = await countUnattachedUploads(Number(req.user.userId));
+      const limit = maxUnattachedUploads();
+      if (waiting + files.length > limit) {
+        removeUploaded(files);
+        return res.status(400).json({
+          error: `You can have at most ${limit} files waiting to be attached to an order`,
+        });
       }
 
       const saved = [];
@@ -171,6 +181,9 @@ router.delete('/:id', auth.requireAuth, uploadRoles, async (req, res) => {
     );
     if (!file || !(await canAccessFile(req.user, file))) {
       return res.status(404).json({ error: 'File not found' });
+    }
+    if (req.user.role === 'customer' && file.order_id) {
+      return res.status(403).json({ error: 'Files attached to an order cannot be deleted' });
     }
     await run('DELETE FROM order_files WHERE id = ?', [id]);
     const fullPath = safeStoredPath(file.stored_name);

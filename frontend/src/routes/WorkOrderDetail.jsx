@@ -113,7 +113,7 @@ function AttachmentList({ files, legacy }) {
   );
 }
 
-function RoutingPanel({ workOrder }) {
+function RoutingPanel({ workOrder, hideInternal }) {
   const routing = workOrder.routing || {};
   const history = workOrder.production_history || [];
   return (
@@ -143,8 +143,8 @@ function RoutingPanel({ workOrder }) {
                 <TableCell>Department</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell>Date / Time</TableCell>
-                <TableCell>Scanned By</TableCell>
-                <TableCell>Notes</TableCell>
+                {!hideInternal && <TableCell>Scanned By</TableCell>}
+                {!hideInternal && <TableCell>Notes</TableCell>}
               </TableRow>
             </TableHead>
             <TableBody>
@@ -153,8 +153,8 @@ function RoutingPanel({ workOrder }) {
                   <TableCell>{row.department || '—'}</TableCell>
                   <TableCell>{row.status || '—'}</TableCell>
                   <TableCell>{formatStamp(row.event_time)}</TableCell>
-                  <TableCell>{row.scanned_by || '—'}</TableCell>
-                  <TableCell>{row.notes || '—'}</TableCell>
+                  {!hideInternal && <TableCell>{row.scanned_by || '—'}</TableCell>}
+                  {!hideInternal && <TableCell>{row.notes || '—'}</TableCell>}
                 </TableRow>
               ))}
             </TableBody>
@@ -165,7 +165,7 @@ function RoutingPanel({ workOrder }) {
   );
 }
 
-function getTabContent(tab, workOrder, scanState) {
+function getTabContent(tab, workOrder, scanState, hideInternal) {
   switch (tab) {
     case 'Overview':
       return (
@@ -204,7 +204,7 @@ function getTabContent(tab, workOrder, scanState) {
     case 'Scan History':
       return <ScanHistory events={scanState.events} loading={scanState.loading} error={scanState.error} />;
     case 'Routing':
-      return <RoutingPanel workOrder={workOrder} />;
+      return <RoutingPanel workOrder={workOrder} hideInternal={hideInternal} />;
     case 'Notes':
       return <Typography sx={{ whiteSpace: 'pre-wrap' }}>{workOrder.notes || 'No notes on this work order.'}</Typography>;
     default:
@@ -305,7 +305,7 @@ export default function WorkOrderDetail() {
             ))}
           </Tabs>
           <Divider sx={{ borderColor: '#e2e8f0', my: 2 }} />
-          {getTabContent(activeTab, workOrder, { events, loading: eventsLoading, error: eventsError })}
+          {getTabContent(activeTab, workOrder, { events, loading: eventsLoading, error: eventsError }, user?.role === 'customer')}
         </CardContent>
       </Card>
     </Box>

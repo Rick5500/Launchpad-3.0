@@ -13,6 +13,8 @@ import BarcodeScan from './routes/BarcodeScan';
 import Deliveries from './routes/Deliveries';
 import CustomerOrderForm from './routes/CustomerOrderForm';
 import OrderDetail from './routes/OrderDetail';
+import Reports from './routes/Reports';
+import Notifications from './routes/Notifications';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -124,7 +126,8 @@ function AppRoutes() {
         <Route path="scan" element={<ProtectedRoute roles={['admin', 'operator']}><BarcodeScan /></ProtectedRoute>} />
         <Route path="customers" element={<ProtectedRoute roles={['admin']}><Customers /></ProtectedRoute>} />
         <Route path="delivery" element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><Deliveries /></ProtectedRoute>} />
-        <Route path="reports" element={<ProtectedRoute roles={['admin', 'operator']}><PlaceholderPage title="Reports" /></ProtectedRoute>} />
+        <Route path="reports" element={<ProtectedRoute roles={['admin', 'operator']}><Reports /></ProtectedRoute>} />
+        <Route path="notifications" element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><Notifications /></ProtectedRoute>} />
         <Route path="admin" element={<ProtectedRoute roles={['admin']}><PlaceholderPage title="Admin" /></ProtectedRoute>} />
         <Route path="admin/departments" element={<ProtectedRoute roles={['admin']}><DepartmentsAdmin /></ProtectedRoute>} />
       </Route>

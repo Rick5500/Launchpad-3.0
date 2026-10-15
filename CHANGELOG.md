@@ -11,6 +11,14 @@ All notable changes to this project will be documented in this file.
 - Customer Order Form at `/order`, with a success panel, and order specs, files, and routing on the work order detail page
 - Seeded print-shop services and the Large Format, Planroom, Archive File, Quality, Dispatch, and Complete departments
 - Tables reserved for later phases: `production_history`, `activity_log`, `system_settings`, `notification_settings`, and `system_alerts`
+- Staff reports for work orders by status, department, and stage; completed throughput by day or week; overdue and due-today deliveries; barcode scans by operator and location; and average completed time in each production stage
+- `format=csv` on each report, and a Reports page at `/reports` with from/to filters
+- In-app notifications in SQLite (`notifications`, `notification_reads`) for overdue deliveries, deliveries due within `DELIVERY_DUE_SOON_MINUTES`, work orders put on hold, completed work orders, and rush work orders created
+- `GET /api/notifications`, `POST /api/notifications/:id/read`, and `POST /api/notifications/read-all`, with unread counts and paging
+- A top-bar notification bell with an unread badge and a `/notifications` page, polling about every 45 seconds. The customer order form shell shows the same bell
+- An unref'd in-process scheduler that checks delivery due times and skips events that were already notified
+- A stub email interface that stays off unless `EMAIL_NOTIFICATIONS` is enabled and never sends mail
+- A per-user limit on unattached uploads (`MAX_UNATTACHED_UPLOADS`) and an unref'd sweep that deletes unattached uploads older than `UPLOAD_ORPHAN_HOURS`
 - Barcode scan logging on `POST /api/barcode`, writing `scanned_value`, resolved `work_order_id`, session `operator_id`, `location`, and `event_time` to `barcode_events`
 - `GET /api/barcode/events` with work order, operator, date-range, limit, and offset filters
 - `GET /api/workorders/:id/events` for one work order's scan history
@@ -36,6 +44,9 @@ All notable changes to this project will be documented in this file.
 - `CHANGELOG.md` file
 
 ### Changed
+- The due-soon window defaults to 1 hour. `DUE_SOON_HOURS` defaults to 1, and `DELIVERY_DUE_SOON_MINUTES` defaults to 60. When the minutes setting is unset, notifications use the delivery-list window
+- The Reports navigation item opens the reports page for admin and operator. Customers are still blocked from that route and from the report APIs
+- `init_db.js` creates the notification tables when they are missing, including on a database created before this change
 - Removed the placeholder `POST /api/barcode` and `GET /api/delivery/rules` handlers from `server.js`
 - `GET /api/delivery` now returns `{ deliveries, total, limit, offset, evaluated_at }` with work order fields and timing flags. Customers still only see their own work orders
 - Delivery due times follow `backend/deliveryRules.js`. Cutoff times, timezone, and the due-soon window are environment settings
@@ -52,6 +63,11 @@ All notable changes to this project will be documented in this file.
 - Added "New Work Order" button on work order list page
 
 ### Fixed
+- Simultaneous `POST /api/orders` calls no longer fail with `SQLITE_BUSY`. Order numbers stay unique, and a rolled-back create does not leave a gap
+- A line item with no `service_id` on a multi-service order is rejected instead of being left off the work orders
+- Customers can delete an uploaded file only before it is attached to a submitted order
+- Customer work order detail shows production history as department, status, and timestamps. Internal fields such as `scanned_by` stay on the staff response
+- `work_orders.external_id` gets a unique index when existing values are already unique. Init logs a warning and continues when duplicates are present
 - Legacy work order status `complete` is normalized to `completed` on save and by an idempotent database init migration. Lists, detail, and the dashboard treat `complete` and `completed` as the same finished status
 - `PUT /api/workorders/:id/priority` requires a positive integer id
 - Database init no longer exits before departments, stages, and sample data are seeded, and it always exits after each independent seed step

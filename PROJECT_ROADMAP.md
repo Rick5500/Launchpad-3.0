@@ -28,7 +28,7 @@ The architecture is intentionally modular so the backend can later add route mod
 5. Production board view and status tracking.
 6. Barcode event logging and tracking.
 7. Delivery / will-call due-time rules.
-8. Reporting, notifications, and role-specific UI flows.
+8. Reporting, notifications, and role-specific UI flows. **Done.** Staff reports with CSV export, in-app notifications, and a notification bell are in place. Customers cannot open reports and only see notifications for their own work orders and deliveries.
 9. Phase 1 order intake: customer order form, order numbers, services, line items, and file uploads. Done in this phase.
 10. Phase 2 Admin Board.
 11. Phase 3 printable work order.
@@ -44,7 +44,7 @@ Tabbed department queues with counts, stat cards, an active work orders table wi
 A print/PDF view of the work order with a Code 128 barcode of the work order number (`external_id`), production history (`production_history` plus barcode scans), scan instructions, and the spec block already returned by work order detail. Scanning stays on `POST /api/barcode`.
 
 ## Phase 4 — Admin pages (not built)
-Services, Users, System Settings (`system_settings`), notification settings (`notification_settings`, seeded disabled — no mail is sent), Activity Log, Barcode Settings, Search Orders, the Reports menu, and a pending-approvals queue for requests such as archive file retrieval. Delivery methods are already a table so the method list can be edited without a schema change.
+Services, Users, System Settings (`system_settings`), notification settings (`notification_settings`, seeded disabled — no mail is sent), Activity Log, Barcode Settings, Search Orders, and a pending-approvals queue for requests such as archive file retrieval. Staff reports and in-app notifications from milestone 8 are already available; this phase is the admin screen for the older notification settings rows. Delivery methods are already a table so the method list can be edited without a schema change.
 
 ## Module Status
 - `frontend/`: Vite + React scaffold complete, login screen in place.
@@ -52,6 +52,7 @@ Services, Users, System Settings (`system_settings`), notification settings (`no
 - `database/`: SQLite schema defined, DB init script available.
 - `assets/`: placeholder folder added for static assets.
 - `docs/`: requirements and roadmap notes captured.
+- Reporting and notifications: admin and operator reports, CSV export, SQLite notifications, and the top-bar bell are implemented.
 
 ## Coding Standards
 - Keep source files tracked in Git and avoid committing generated output.
@@ -65,3 +66,4 @@ Services, Users, System Settings (`system_settings`), notification settings (`no
 - **v0.1.0**: Initial project scaffold created for Launchpad 3.0.
 - **v0.1.1**: Added backend auth scaffolding and login screen.
 - **v0.1.2**: Migrated frontend to Vite + React and added `/health` backend endpoint.
+- **v0.8.0**: Added staff reporting with CSV export and in-app delivery and work-order notifications. Email delivery is stubbed and off by default.

@@ -160,6 +160,8 @@ function baseEnv(databaseFile) {
     DELIVERY_WINDOW_START: '09:00',
     DELIVERY_WINDOW_END: '14:00',
     DELIVERY_SLOT_MINUTES: '15',
+    MAX_UNATTACHED_UPLOADS: '8',
+    UPLOAD_ORPHAN_HOURS: '24',
     PORT: String(port),
     NODE_ENV: 'test',
   };
@@ -291,8 +293,89 @@ async function migrateOldDatabase() {
   }
   const route = await check.get(`SELECT next_department FROM departments WHERE name = 'Large Format'`);
   assert(route && route.next_department === 'Quality', 'Large Format should route to Quality');
+  const externalIndex = await check.get(
+    `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_work_orders_external_id'`
+  );
+  assert(externalIndex, 'unique external_id index should be created when existing values are unique');
+  const notifications = await check.get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'notifications'`);
+  assert(notifications, 'notifications table should be created on an older database');
   await check.close();
   console.log('PASS older database migration, twice');
+}
+
+async function migrateDuplicateExternalIds() {
+  const dupDb = path.join(tmp, 'dup.db');
+  const db = openDb(dupDb);
+  await db.exec(OLD_SCHEMA);
+  await db.run(`INSERT INTO work_orders (external_id, description, quantity, status) VALUES ('DUP-1', 'one', 1, 'open')`);
+  await db.run(`INSERT INTO work_orders (external_id, description, quantity, status) VALUES ('DUP-1', 'two', 1, 'open')`);
+  await db.close();
+
+  const result = await initDatabase(dupDb);
+  assert(/Skipping unique index on work_orders.external_id/.test(`${result.out}\n${result.err}`), 'duplicate external ids should log a warning and continue');
+  const check = openDb(dupDb);
+  const index = await check.get(
+    `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_work_orders_external_id'`
+  );
+  assert(!index, 'unique external_id index should be skipped when duplicates exist');
+  const dupes = await check.get(`SELECT COUNT(*) AS count FROM work_orders WHERE external_id = 'DUP-1'`);
+  assert(dupes.count === 2, 'duplicate work orders should be left in place');
+  await check.close();
+  console.log('PASS duplicate external_id index skip');
+}
+
+async function checkOrphanSweep() {
+  const sqliteDb = openDb(freshDb);
+  const customer = await sqliteDb.get(`SELECT id FROM users WHERE role = 'customer' LIMIT 1`);
+  assert(customer, 'seeded customer should exist before the sweep check');
+  const order = await sqliteDb.run(
+    `INSERT INTO orders (
+      order_number, customer_id, company, contact_name, phone, email, delivery_method, due_date, due_time
+    ) VALUES ('19990101-001', ?, 'Sweep Co', 'Sweep', '919-555-0100', 'sweep@example.com', 'Accent Truck', '1999-01-04', '09:00')`,
+    [customer.id]
+  );
+  const oldName = `${'a'.repeat(32)}.pdf`;
+  const keepName = `${'b'.repeat(32)}.pdf`;
+  const attachedName = `${'c'.repeat(32)}.pdf`;
+  fs.writeFileSync(path.join(uploadDir, oldName), 'old');
+  fs.writeFileSync(path.join(uploadDir, keepName), 'keep');
+  fs.writeFileSync(path.join(uploadDir, attachedName), 'attached');
+  await sqliteDb.run(
+    `INSERT INTO order_files (original_name, stored_name, size_bytes, uploaded_at)
+     VALUES ('old.pdf', ?, 3, datetime('now', '-48 hours'))`,
+    [oldName]
+  );
+  await sqliteDb.run(
+    `INSERT INTO order_files (original_name, stored_name, size_bytes, uploaded_at)
+     VALUES ('keep.pdf', ?, 4, datetime('now'))`,
+    [keepName]
+  );
+  await sqliteDb.run(
+    `INSERT INTO order_files (order_id, original_name, stored_name, size_bytes, uploaded_at)
+     VALUES (?, 'attached.pdf', ?, 8, datetime('now', '-48 hours'))`,
+    [order.lastID, attachedName]
+  );
+  await sqliteDb.close();
+
+  process.env.DATABASE_FILE = freshDb;
+  process.env.UPLOAD_DIR = uploadDir;
+  process.env.UPLOAD_ORPHAN_HOURS = '24';
+  const { sweepOrphanUploads } = require('../uploadMaintenance');
+  const shared = require('../db');
+  await sweepOrphanUploads();
+  await new Promise((resolve, reject) => shared.close((err) => (err ? reject(err) : resolve())));
+
+  const after = openDb(freshDb);
+  const oldRow = await after.get('SELECT id FROM order_files WHERE stored_name = ?', [oldName]);
+  const keepRow = await after.get('SELECT id FROM order_files WHERE stored_name = ?', [keepName]);
+  const attachedRow = await after.get('SELECT id FROM order_files WHERE stored_name = ?', [attachedName]);
+  assert(!oldRow, 'old unattached upload should be swept');
+  assert(keepRow, 'recent unattached upload should remain');
+  assert(attachedRow, 'old attached upload should remain');
+  assert(!fs.existsSync(path.join(uploadDir, oldName)), 'swept file should be removed from disk');
+  assert(fs.existsSync(path.join(uploadDir, attachedName)), 'attached file should stay on disk');
+  await after.close();
+  console.log('PASS orphan upload sweep');
 }
 
 async function initFreshTwice() {
@@ -301,10 +384,14 @@ async function initFreshTwice() {
   assert(/Admin user already exists/.test(second.out), 'second init should keep the existing admin');
   assert(!/Generated admin password/.test(second.out), 'second init should not print a new admin password');
   const db = openDb(freshDb);
-  const services = await db.get('SELECT COUNT(*) AS count FROM services');
+    const services = await db.get('SELECT COUNT(*) AS count FROM services');
   assert(services.count === 7, 'fresh init twice should leave 7 services');
   const methods = await db.get(`SELECT COUNT(*) AS count FROM delivery_methods`);
   assert(methods.count === 6, 'delivery methods should be seeded once');
+  const externalIndex = await db.get(
+    `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_work_orders_external_id'`
+  );
+  assert(externalIndex, 'fresh database should have a unique external_id index');
   await db.close();
   console.log('PASS fresh init_db twice');
 }
@@ -588,9 +675,40 @@ async function runApiChecks() {
     });
     assert(oversized.status === 413, `oversized file should be 413, got ${oversized.status} ${oversized.text}`);
 
+    const extraIds = [];
+    let quotaBlocked = null;
+    for (let i = 0; i < 6; i += 1) {
+      const extra = await request({
+        method: 'POST',
+        path: '/api/uploads',
+        token: customerToken,
+        ...multipartBody([{ name: `extra-${i}.pdf`, type: 'application/pdf', data: Buffer.from('%PDF-1.4 extra') }]),
+      });
+      if (extra.status === 201) extraIds.push(extra.json.files[0].id);
+      else {
+        quotaBlocked = extra;
+        break;
+      }
+    }
+    assert(extraIds.length === 3, `expected 3 uploads before the unattached quota, got ${extraIds.length}`);
+    assert(quotaBlocked && quotaBlocked.status === 400 && /waiting to be attached/.test(quotaBlocked.json.error), `quota should reject the next upload: ${quotaBlocked && quotaBlocked.text}`);
+    const removedWaiting = await request({ method: 'DELETE', path: `/api/uploads/${extraIds[0]}`, token: customerToken });
+    assert(removedWaiting.status === 200, `customer should delete an unattached file: ${removedWaiting.text}`);
+
     const namesOnDisk = fs.readdirSync(uploadDir);
     assert(namesOnDisk.every((name) => /^[a-f0-9]{32}\.[a-z0-9]+$/.test(name)), `upload names should be random: ${namesOnDisk.join(', ')}`);
     assert(!namesOnDisk.some((name) => name.includes('passwd') || name.includes('..')), 'disk names must not use the client filename');
+
+    const missingService = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({
+        service_ids: [byName['Large Format'].id, byName['Small Format'].id],
+        line_items: [{ description: 'No service chosen', quantity: '1' }],
+      }),
+    });
+    assert(missingService.status === 400 && /must include a service/.test(missingService.json.error), `line item without a service should be 400, got ${missingService.status} ${missingService.text}`);
 
     const serviceIds = [byName['Signs & Graphics'].id, byName['Small Format'].id, byName['Large Format'].id];
     const created = await request({
@@ -665,19 +783,38 @@ async function runApiChecks() {
     const specMap = Object.fromEntries(spec.fields.map((field) => [field.label, field.value]));
     assert(specMap.Size === '24x36' && specMap.Media === 'Bond' && specMap.Mounting === 'No' && specMap.Lamination === 'No', 'spec fields should match the line item');
     assert((detail.json.files || []).some((file) => file.original_name === 'passwd.pdf'), 'line item file should show on the work order');
-    assert((detail.json.production_history || []).some((row) => row.notes === 'Order Created'), 'production history should start with order created');
+    const customerHistory = detail.json.production_history || [];
+    assert(customerHistory.some((row) => row.department === 'Submitted' && row.status === 'Submitted' && row.event_time), 'customer history should include department, status, and time');
+    assert(customerHistory.every((row) => Object.keys(row).sort().join(',') === 'department,event_time,id,status'), 'customer history should hide scanned_by and notes');
+    const staffDetail = await request({ method: 'GET', path: `/api/workorders/${bySuffix.A.id}`, token: adminToken });
+    assert(staffDetail.status === 200, `staff work order detail failed: ${staffDetail.text}`);
+    assert((staffDetail.json.production_history || []).some((row) => row.scanned_by === 'System Auto' && row.notes === 'Order Created'), 'staff history should keep scanned_by and notes');
     assert(!detail.text.includes(uploadDir), 'API must not reveal the upload directory');
 
     const ownDownload = await request({ method: 'GET', path: `/api/uploads/${uploaded.id}/download`, token: customerToken });
     assert(ownDownload.status === 200 && ownDownload.buffer.includes(Buffer.from('%PDF-1.4')), 'owner should download the file');
+    const deleteAttached = await request({ method: 'DELETE', path: `/api/uploads/${uploaded.id}`, token: customerToken });
+    assert(deleteAttached.status === 403, `customer should not delete a file attached to an order, got ${deleteAttached.status} ${deleteAttached.text}`);
+    const stillThere = await request({ method: 'GET', path: `/api/uploads/${uploaded.id}/download`, token: customerToken });
+    assert(stillThere.status === 200, 'attached file should remain downloadable');
 
     const secondOrder = await request({
       method: 'POST',
       path: '/api/orders',
       token: customerToken,
-      json: orderBody({ due_time: '09:00', service_ids: [byName['Scanning'].id] }),
+      json: orderBody({
+        due_time: '09:00',
+        service_ids: [byName['Scanning'].id],
+        line_items: [{ description: 'Scan set', quantity: '2' }],
+      }),
     });
     assert(secondOrder.status === 201 && secondOrder.json.order_number === `${todayKey}-042`, `second order number was ${secondOrder.json && secondOrder.json.order_number}`);
+    const assumed = await request({
+      method: 'GET',
+      path: `/api/workorders/${secondOrder.json.work_orders[0].id}`,
+      token: customerToken,
+    });
+    assert(assumed.status === 200 && (assumed.json.line_items || []).some((item) => item.description === 'Scan set'), 'a single-service order should assume the line item service');
 
     const willCall = await request({
       method: 'POST',
@@ -737,14 +874,57 @@ async function runApiChecks() {
     });
     assert(customerCannotSeeAdminOrder.status === 404, 'first customer should not see the other company order');
 
+    const concurrent = await Promise.all([
+      ...Array.from({ length: 12 }, () => request({
+        method: 'POST',
+        path: '/api/orders',
+        token: customerToken,
+        json: orderBody({
+          service_ids: [byName['Large Format'].id],
+          line_items: [{ description: 'Concurrent set', quantity: '1' }],
+        }),
+      })),
+      request({
+        method: 'PUT',
+        path: `/api/workorders/${bySuffix.A.id}/priority`,
+        token: adminToken,
+        json: { priority: 'High' },
+      }),
+    ]);
+    const priorityUpdate = concurrent[concurrent.length - 1];
+    const createdTogether = concurrent.slice(0, 12);
+    assert(priorityUpdate.status === 200, `priority update during order creates failed: ${priorityUpdate.status} ${priorityUpdate.text}`);
+    assert(
+      createdTogether.every((row) => row.status === 201),
+      `12 simultaneous orders should all return 201: ${createdTogether.map((row) => `${row.status} ${row.text}`).join(' | ')}`
+    );
+    const numbers = createdTogether.map((row) => row.json.order_number);
+    assert(new Set(numbers).size === 12, `concurrent order numbers must be unique: ${numbers.join(', ')}`);
+    const expectedNumbers = [];
+    for (let n = 46; n <= 57; n += 1) expectedNumbers.push(`${todayKey}-${String(n).padStart(3, '0')}`);
+    const sortedNumbers = numbers.slice().sort();
+    assert(
+      sortedNumbers.join(',') === expectedNumbers.join(','),
+      `concurrent orders should take the next numbers without gaps: expected ${expectedNumbers.join(',')} got ${sortedNumbers.join(',')}`
+    );
+
+    const customerReports = await request({ method: 'GET', path: '/api/reports/work-orders/status', token: customerToken });
+    assert(customerReports.status === 403, `customers should not open reports, got ${customerReports.status}`);
+    const adminReports = await request({ method: 'GET', path: '/api/reports/work-orders/status', token: adminToken });
+    assert(adminReports.status === 200 && Array.isArray(adminReports.json.rows), `admin status report failed: ${adminReports.status} ${adminReports.text}`);
+    const customerNotes = await request({ method: 'GET', path: '/api/notifications', token: customerToken });
+    assert(customerNotes.status === 200 && typeof customerNotes.json.unread_count === 'number', `customer notifications failed: ${customerNotes.status} ${customerNotes.text}`);
+    const adminNotes = await request({ method: 'GET', path: '/api/notifications', token: adminToken });
+    assert(adminNotes.status === 200 && typeof adminNotes.json.unread_count === 'number', `admin notifications failed: ${adminNotes.status} ${adminNotes.text}`);
+
     const sequence = openDb(freshDb);
     const today = await sequence.get('SELECT last_number FROM order_sequences WHERE order_date = ?', [todayKey]);
     const oldDay = await sequence.get(`SELECT last_number FROM order_sequences WHERE order_date = '19990101'`);
-    assert(today.last_number === 45, `today's sequence should be 45 after five orders, got ${today && today.last_number}`);
+    assert(today.last_number === 57, `today's sequence should be 57 after 17 orders, got ${today && today.last_number}`);
     assert(oldDay.last_number === 7, 'another day sequence must stay untouched');
     await sequence.close();
 
-    console.log('PASS order API, roles, sequence, uploads, and customer isolation');
+    console.log('PASS order API, roles, sequence, concurrency, uploads, reports, and customer isolation');
   } finally {
     server.stop();
   }
@@ -754,7 +934,9 @@ async function main() {
   fs.mkdirSync(uploadDir, { recursive: true });
   console.log(`Temp workspace ${tmp}`);
   await migrateOldDatabase();
+  await migrateDuplicateExternalIds();
   await initFreshTwice();
+  await checkOrphanSweep();
   await runApiChecks();
   console.log('All phase 1 checks passed.');
 }

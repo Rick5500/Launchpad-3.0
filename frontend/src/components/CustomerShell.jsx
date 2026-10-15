@@ -3,9 +3,12 @@ import { Box, Button, Typography } from '@mui/material';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { useNavigate } from 'react-router-dom';
 import { brand } from '../brand';
+import { useAuth } from '../context/AuthContext';
+import NotificationBell from './NotificationBell';
 
 export default function CustomerShell({ title, welcome, children, onLogout, extra }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: brand.page, color: brand.text }}>
@@ -34,11 +37,12 @@ export default function CustomerShell({ title, welcome, children, onLogout, extr
             <Typography sx={{ opacity: 0.92, fontSize: 15 }}>{welcome}</Typography>
           )}
         </Box>
-        <Box sx={{ display: 'flex', justifyContent: { xs: 'center', md: 'flex-end' }, gap: 1, flexWrap: 'wrap' }}>
+        <Box sx={{ display: 'flex', justifyContent: { xs: 'center', md: 'flex-end' }, gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
           <Button color="inherit" onClick={() => navigate('/work-orders')}>
             Work Orders
           </Button>
           {extra}
+          <NotificationBell user={user} />
           <Button color="inherit" startIcon={<LogoutIcon />} onClick={onLogout}>
             Log Out
           </Button>

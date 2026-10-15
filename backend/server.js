@@ -37,6 +37,10 @@ const departmentsRouter = require('./routes/departments');
 const ordersRouter = require('./routes/orders');
 const uploadsRouter = require('./routes/uploads');
 const { ensureUploadDir } = require('./fileStore');
+const { startOrphanSweep } = require('./uploadMaintenance');
+const reportsRouter = require('./routes/reports');
+const notificationsRouter = require('./routes/notifications');
+const notificationScheduler = require('./notificationScheduler');
 
 
 // Health check
@@ -121,6 +125,8 @@ app.use('/api/barcode', barcodeRouter);
 app.use('/api/departments', departmentsRouter);
 app.use('/api/orders', ordersRouter);
 app.use('/api/uploads', uploadsRouter);
+app.use('/api/reports', reportsRouter);
+app.use('/api/notifications', notificationsRouter);
 
 try {
   ensureUploadDir();
@@ -136,4 +142,6 @@ app.get('/api/customer', auth.requireAuth, (req, res) => res.json({ message: 'cu
 
 app.listen(port, () => {
   console.log(`Launchpad backend listening on port ${port}`);
+  notificationScheduler.start();
+  startOrphanSweep();
 });
