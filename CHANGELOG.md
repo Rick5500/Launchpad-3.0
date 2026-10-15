@@ -14,6 +14,9 @@ All notable changes to this project will be documented in this file.
 - `GET /api/delivery/rules` with cutoff rules and a computed due time for will-call and carrier deliveries
 - Overdue, due-today, and due-soon flags on delivery records
 - Operator scan page and a deliveries page with overdue / due-today highlighting and a will-call badge
+- Admin password reset: `PUT /api/customers/:id/password` returns the new password once, and the Customers page can set or generate it
+- `GET /api/customers/lookup` for admin and operator, returning only `id`, `username`, and `display_name`
+- Optional `TRUST_PROXY` so the login rate limit uses the client IP behind a reverse proxy
 - Role checks via `requireRole` for admin, operator, and customer access
 - Bcrypt password hashing, with a one-time upgrade from legacy SHA-256 hashes on successful login
 - Session expiry (`SESSION_TTL_HOURS`, default 8 hours), periodic session cleanup, and `POST /api/auth/logout`
@@ -30,6 +33,8 @@ All notable changes to this project will be documented in this file.
 - Removed the placeholder `POST /api/barcode` and `GET /api/delivery/rules` handlers from `server.js`
 - `GET /api/delivery` now returns `{ deliveries, total, limit, offset, evaluated_at }` with work order fields and timing flags. Customers still only see their own work orders
 - Delivery due times follow `backend/deliveryRules.js`. Cutoff times, timezone, and the due-soon window are environment settings
+- Operators can select an existing customer on the work order form. New customers must still be created by an administrator
+- A password supplied to `POST /api/customers` must be at least 8 characters
 - `INIT_ADMIN_PASSWORD` is no longer optional with a hardcoded fallback. When it is unset, database init generates a random admin password and prints it once
 - Seeded customer accounts no longer use published passwords
 - Customer, department, work order, dashboard, and production board routes enforce roles. Customers only receive their own work orders, and their home page does not call the staff dashboard or production board
@@ -41,6 +46,8 @@ All notable changes to this project will be documented in this file.
 - Added "New Work Order" button on work order list page
 
 ### Fixed
+- Legacy work order status `complete` is normalized to `completed` on save and by an idempotent database init migration. Lists, detail, and the dashboard treat `complete` and `completed` as the same finished status
+- `PUT /api/workorders/:id/priority` requires a positive integer id
 - Database init no longer exits before departments, stages, and sample data are seeded, and it always exits after each independent seed step
 - Sample production board and delivery rows reference real work order ids
 - Removed the unused `addColumnIfMissing` helper

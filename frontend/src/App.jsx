@@ -7,6 +7,7 @@ import WorkOrdersList from './routes/WorkOrdersList';
 import WorkOrderDetail from './routes/WorkOrderDetail';
 import WorkOrderForm from './routes/WorkOrderForm';
 import DepartmentsAdmin from './routes/DepartmentsAdmin';
+import Customers from './routes/Customers';
 import ProductionBoard from './routes/ProductionBoard';
 import BarcodeScan from './routes/BarcodeScan';
 import Deliveries from './routes/Deliveries';
@@ -105,7 +106,7 @@ function AppRoutes() {
         <Route path="work-orders/:id/edit" element={<ProtectedRoute roles={['admin', 'operator']}><WorkOrderForm /></ProtectedRoute>} />
         <Route path="production-board" element={<ProtectedRoute roles={['admin', 'operator']}><ProductionBoard /></ProtectedRoute>} />
         <Route path="scan" element={<ProtectedRoute roles={['admin', 'operator']}><BarcodeScan /></ProtectedRoute>} />
-        <Route path="customers" element={<ProtectedRoute roles={['admin']}><PlaceholderPage title="Customers" /></ProtectedRoute>} />
+        <Route path="customers" element={<ProtectedRoute roles={['admin']}><Customers /></ProtectedRoute>} />
         <Route path="delivery" element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><Deliveries /></ProtectedRoute>} />
         <Route path="reports" element={<ProtectedRoute roles={['admin', 'operator']}><PlaceholderPage title="Reports" /></ProtectedRoute>} />
         <Route path="admin" element={<ProtectedRoute roles={['admin']}><PlaceholderPage title="Admin" /></ProtectedRoute>} />

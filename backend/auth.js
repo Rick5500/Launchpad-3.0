@@ -89,6 +89,16 @@ function clearSession(token) {
   }
 }
 
+function clearSessionsForUser(userId) {
+  const target = Number(userId);
+  if (!Number.isInteger(target)) return;
+  for (const [token, session] of sessions) {
+    if (Number(session.userId) === target) {
+      sessions.delete(token);
+    }
+  }
+}
+
 function cleanupExpired() {
   const now = Date.now();
   for (const [token, session] of sessions) {
@@ -140,6 +150,15 @@ function recordLoginFailure(ip, username) {
 
 function clearLoginFailures(ip, username) {
   loginAttempts.delete(loginKey(ip, username));
+}
+
+function clearLoginFailuresForUsername(username) {
+  const suffix = `\n${String(username || '').trim().toLowerCase()}`;
+  for (const key of loginAttempts.keys()) {
+    if (key.endsWith(suffix)) {
+      loginAttempts.delete(key);
+    }
+  }
 }
 
 function login(username, password, cb) {
@@ -223,10 +242,12 @@ module.exports = {
   hashPassword,
   getUserByToken,
   clearSession,
+  clearSessionsForUser,
   requireAuth,
   requireRole,
   checkLoginRateLimit,
   recordLoginFailure,
   clearLoginFailures,
+  clearLoginFailuresForUsername,
   SESSION_EXPIRED_MESSAGE,
 };

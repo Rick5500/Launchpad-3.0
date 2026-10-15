@@ -19,6 +19,7 @@ import {
 } from '@mui/material';
 import { authFetch } from '../api';
 import { useAuth } from '../context/AuthContext';
+import { canonicalWorkOrderStatus, isActiveWorkOrderStatus, isFinishedWorkOrderStatus } from '../workOrderStatus';
 
 const metricCards = [
   { key: 'totalWorkOrders', label: 'Total Work Orders' },
@@ -54,7 +55,7 @@ export default function HomeDashboard() {
         .then((workOrdersData) => {
           if (cancelled) return;
           const list = workOrdersData || [];
-          const active = list.filter((order) => order.status === 'open' || order.status === 'in-progress').length;
+          const active = list.filter((order) => isActiveWorkOrderStatus(order.status)).length;
           const counts = new Map();
           list.forEach((order) => {
             const name = order.department || 'General';
@@ -129,9 +130,12 @@ export default function HomeDashboard() {
   }, [departments, workOrders]);
 
   const filteredOrders = useMemo(() => {
-    if (activeTab === 'All') return workOrders;
-    return workOrders.filter((order) => order.department === activeTab);
-  }, [activeTab, workOrders]);
+    const visible = isCustomer
+      ? workOrders
+      : workOrders.filter((order) => !isFinishedWorkOrderStatus(order.status));
+    if (activeTab === 'All') return visible;
+    return visible.filter((order) => order.department === activeTab);
+  }, [activeTab, isCustomer, workOrders]);
 
   if (loading) {
     return (
@@ -251,7 +255,7 @@ export default function HomeDashboard() {
                           <TableCell>{order.external_id || `WO-${order.id}`}</TableCell>
                           <TableCell>{order.customer_name || 'Unknown'}</TableCell>
                           <TableCell>{order.department || 'General'}</TableCell>
-                          <TableCell>{order.status}</TableCell>
+                          <TableCell>{canonicalWorkOrderStatus(order.status) || '-'}</TableCell>
                           <TableCell>{order.due_date ? formatter.format(new Date(order.due_date)) : '-'}</TableCell>
                           <TableCell>{order.quantity}</TableCell>
                         </TableRow>

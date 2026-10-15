@@ -20,7 +20,9 @@ function parsePositiveInteger(value) {
 }
 
 function normalizeWorkOrderStatus(status) {
-  return String(status || '').trim().toLowerCase();
+  const normalized = String(status || '').trim().toLowerCase();
+  if (normalized === 'complete') return 'completed';
+  return normalized;
 }
 
 const workOrderFieldList = `
@@ -370,7 +372,9 @@ router.put('/:id/stage', auth.requireAuth, staffRoles, (req, res) => {
 });
 
 router.put('/:id/priority', auth.requireAuth, staffRoles, (req, res) => {
-  const id = req.params.id;
+  const id = parsePositiveInteger(req.params.id);
+  if (!id) return res.status(400).json({ error: 'id must be a positive integer' });
+
   const priority = String(req.body?.priority || 'Normal').trim();
   if (!['Low', 'Normal', 'High', 'Rush'].includes(priority)) {
     return res.status(400).json({ error: 'priority must be Low, Normal, High, or Rush' });

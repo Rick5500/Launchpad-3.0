@@ -20,6 +20,7 @@ import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
 import { authFetch } from '../api';
 import { useAuth } from '../context/AuthContext';
+import { canonicalWorkOrderStatus } from '../workOrderStatus';
 
 export default function WorkOrdersList() {
   const { user } = useAuth();
@@ -97,7 +98,7 @@ export default function WorkOrdersList() {
                       <TableCell>{order.description}</TableCell>
                       <TableCell>{order.customer_name}</TableCell>
                       <TableCell>{order.department}</TableCell>
-                      <TableCell>{order.status}</TableCell>
+                      <TableCell>{canonicalWorkOrderStatus(order.status) || '-'}</TableCell>
                       <TableCell>{order.due_date || '-'}</TableCell>
                       <TableCell>
                         <Tooltip title="View details">
