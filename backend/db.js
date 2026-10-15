@@ -21,6 +21,7 @@ function wrapBusy(methodName) {
         return;
       }
       if (callback) callback.apply(this, arguments);
+      else if (err) db.emit('error', err);
     });
 
     return invoke(0);
