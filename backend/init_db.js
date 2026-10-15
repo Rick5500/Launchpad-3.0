@@ -234,6 +234,17 @@ async function seedDeliveries() {
   }
 }
 
+async function normalizeLegacyWorkOrderStatuses() {
+  const result = await run(
+    `UPDATE work_orders
+     SET status = 'completed', updated_at = datetime('now')
+     WHERE lower(trim(status)) = 'complete'`
+  );
+  if (result.changes > 0) {
+    console.log(`Normalized ${result.changes} legacy work order status value(s) from complete to completed`);
+  }
+}
+
 async function main() {
   await exec(schema);
   await ensureColumns([
@@ -262,6 +273,7 @@ async function main() {
   await seedSampleOrders();
   await seedProductionBoard();
   await seedDeliveries();
+  await normalizeLegacyWorkOrderStatuses();
   console.log('Database initialization complete.');
 }
 

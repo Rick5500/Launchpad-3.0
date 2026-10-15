@@ -4,6 +4,18 @@ const cors = require('cors');
 const path = require('path');
 
 const app = express();
+
+function trustProxySetting(raw) {
+  if (raw == null) return false;
+  const value = String(raw).trim();
+  if (!value || value === 'false' || value === '0' || value === 'no' || value === 'off') return false;
+  if (value === 'true' || value === 'yes' || value === 'on') return true;
+  if (/^\d+$/.test(value)) return Number(value);
+  return value;
+}
+
+app.set('trust proxy', trustProxySetting(process.env.TRUST_PROXY));
+
 app.use(cors({
   origin: ['http://localhost:5173', 'http://localhost:5174'],
   credentials: true

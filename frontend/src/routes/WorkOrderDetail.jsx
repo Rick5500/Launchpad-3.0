@@ -6,6 +6,7 @@ import ErrorState from '../components/ErrorState';
 import SectionCard from '../components/SectionCard';
 import { authFetch } from '../api';
 import { useAuth } from '../context/AuthContext';
+import { canonicalWorkOrderStatus } from '../workOrderStatus';
 
 const tabs = ['Overview', 'Specifications', 'Attachments', 'Activity History', 'Routing', 'Notes'];
 
@@ -20,7 +21,7 @@ function getTabContent(tab, workOrder) {
           <Grid container spacing={2}>
             {Object.entries({
               'Work Order': workOrder.external_id,
-              'Status': workOrder.status,
+              'Status': canonicalWorkOrderStatus(workOrder.status),
               'Department': workOrder.department,
               'Quantity': workOrder.quantity,
               'Due Date': workOrder.due_date,
@@ -99,7 +100,7 @@ export default function WorkOrderDetail() {
       </Box>
 
       <Box sx={{ mt: 2, mb: 3 }}>
-        <Chip label={workOrder.status} color="primary" sx={{ mr: 1 }} />
+        <Chip label={canonicalWorkOrderStatus(workOrder.status) || '-'} color="primary" sx={{ mr: 1 }} />
         <Chip label={workOrder.department} sx={{ mr: 1 }} />
         <Chip label={`Qty: ${workOrder.quantity}`} />
       </Box>

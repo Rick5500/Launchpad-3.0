@@ -15,12 +15,24 @@ import {
 import LoadingState from '../components/LoadingState';
 import { authFetch } from '../api';
 import { useAuth } from '../context/AuthContext';
+import { canonicalWorkOrderStatus } from '../workOrderStatus';
 
 const statusOptions = ['open', 'in-progress', 'completed', 'on-hold'];
+const OPERATOR_CUSTOMER_MESSAGE = 'New customers must be created by an administrator.';
 
 function normalizeStatus(status) {
-  if (status === 'complete') return 'completed';
-  return status || 'open';
+  return canonicalWorkOrderStatus(status) || 'open';
+}
+
+function findCustomer(customers, name) {
+  const needle = String(name || '').trim().toLowerCase();
+  if (!needle) return null;
+  return customers.find((customer) => {
+    if (!customer) return false;
+    const displayName = (customer.display_name || '').toLowerCase();
+    const username = (customer.username || '').toLowerCase();
+    return displayName === needle || username === needle;
+  }) || null;
 }
 
 const defaultValues = {
@@ -53,6 +65,7 @@ export default function WorkOrderForm() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
+  const isOperator = user?.role === 'operator';
   const [values, setValues] = useState(defaultValues);
   const [customers, setCustomers] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -63,11 +76,13 @@ export default function WorkOrderForm() {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [issuedLogin, setIssuedLogin] = useState(null);
+  const [customerTouched, setCustomerTouched] = useState(false);
 
   useEffect(() => {
     setLoading(true);
-    const fetchCustomers = isAdmin
-      ? authFetch('/api/customers').then((res) => {
+    const customerUrl = isAdmin ? '/api/customers' : '/api/customers/lookup';
+    const fetchCustomers = (isAdmin || isOperator)
+      ? authFetch(customerUrl).then((res) => {
           if (!res.ok) throw new Error('Unable to load customers');
           return res.json();
         })
@@ -123,7 +138,7 @@ export default function WorkOrderForm() {
       })
       .catch((err) => setError(err.message || 'Unable to load form data'))
       .finally(() => setLoading(false));
-  }, [id, isAdmin]);
+  }, [id, isAdmin, isOperator]);
 
   const handleChange = (field) => (event) => {
     setValues((current) => ({ ...current, [field]: event.target.value }));
@@ -172,12 +187,14 @@ export default function WorkOrderForm() {
         return;
       }
     } else {
-      customerId = Number(values.customer_id);
-      if (!Number.isInteger(customerId) || customerId <= 0) {
-        setError('A valid customer id is required. Ask an administrator to create the customer account.');
+      const existing = findCustomer(customers, customerInput);
+      if (!existing) {
+        setCustomerTouched(true);
+        setError(`No matching customer. ${OPERATOR_CUSTOMER_MESSAGE}`);
         setSaving(false);
         return;
       }
+      customerId = existing.id;
     }
 
     const payload = {
@@ -248,50 +265,45 @@ export default function WorkOrderForm() {
                 />
               </Grid>
               <Grid item xs={12} md={6}>
-                {isAdmin ? (
-                  <Autocomplete
-                    freeSolo
-                    options={customers}
-                    getOptionLabel={(option) => (typeof option === 'string' ? option : option.display_name || option.username || '')}
-                    value={selectedCustomer}
-                    inputValue={customerInput}
-                    onInputChange={(_, newInput) => {
-                      setCustomerInput(newInput);
-                    }}
-                    onChange={(_, newValue) => {
-                      if (typeof newValue === 'string') {
-                        setSelectedCustomer(null);
-                        setCustomerInput(newValue);
-                      } else if (newValue && newValue.inputValue) {
-                        setSelectedCustomer(null);
-                        setCustomerInput(newValue.inputValue);
-                      } else {
-                        setSelectedCustomer(newValue);
-                        setCustomerInput(newValue ? newValue.display_name || newValue.username || '' : '');
-                      }
-                    }}
-                    renderInput={(params) => (
-                      <TextField
-                        {...params}
-                        label="Customer"
-                        fullWidth
-                        variant="filled"
-                        InputProps={{ ...params.InputProps, sx: { bgcolor: '#121d27' } }}
-                      />
-                    )}
-                  />
-                ) : (
-                  <TextField
-                    label="Customer ID"
-                    value={values.customer_id}
-                    onChange={handleChange('customer_id')}
-                    type="number"
-                    fullWidth
-                    variant="filled"
-                    helperText="Customer accounts are managed by an administrator."
-                    InputProps={{ sx: { bgcolor: '#121d27' } }}
-                  />
-                )}
+                <Autocomplete
+                  freeSolo={isAdmin}
+                  options={customers}
+                  getOptionLabel={(option) => (typeof option === 'string' ? option : option.display_name || option.username || '')}
+                  isOptionEqualToValue={(option, value) => option.id === value.id}
+                  value={selectedCustomer}
+                  inputValue={customerInput}
+                  onInputChange={(_, newInput) => {
+                    setCustomerInput(newInput);
+                  }}
+                  onChange={(_, newValue) => {
+                    if (typeof newValue === 'string') {
+                      setSelectedCustomer(isAdmin ? null : findCustomer(customers, newValue));
+                      setCustomerInput(newValue);
+                    } else if (newValue && newValue.inputValue) {
+                      setSelectedCustomer(null);
+                      setCustomerInput(newValue.inputValue);
+                    } else {
+                      setSelectedCustomer(newValue);
+                      setCustomerInput(newValue ? newValue.display_name || newValue.username || '' : '');
+                    }
+                  }}
+                  onBlur={() => setCustomerTouched(true)}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Customer"
+                      fullWidth
+                      variant="filled"
+                      error={!isAdmin && customerTouched && Boolean(customerInput.trim()) && !findCustomer(customers, customerInput)}
+                      helperText={isAdmin
+                        ? 'Choose an existing customer or type a new name to create one.'
+                        : customers.length
+                          ? `Select an existing customer. ${OPERATOR_CUSTOMER_MESSAGE}`
+                          : `No customers are available. ${OPERATOR_CUSTOMER_MESSAGE}`}
+                      InputProps={{ ...params.InputProps, sx: { bgcolor: '#121d27' } }}
+                    />
+                  )}
+                />
               </Grid>
               <Grid item xs={12} md={6}>
                 <TextField

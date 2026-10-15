@@ -6,10 +6,29 @@ const db = require('../db');
 
 const router = express.Router();
 const BCRYPT_ROUNDS = 10;
+const MIN_PASSWORD_LENGTH = 8;
 
 function generatePassword() {
   return crypto.randomBytes(18).toString('base64url');
 }
+
+// Read-only directory for staff who create work orders. No role, timestamps, or secrets.
+router.get('/lookup', auth.requireAuth, auth.requireRole('admin', 'operator'), (req, res) => {
+  db.all(
+    `SELECT id, username, display_name
+     FROM users
+     WHERE role = 'customer'
+     ORDER BY display_name ASC`,
+    [],
+    (err, rows) => {
+      if (err) {
+        console.error('CUSTOMERS LOOKUP ERROR:', err);
+        return res.status(500).json({ error: 'Failed to load customers' });
+      }
+      res.json(rows);
+    }
+  );
+});
 
 router.get('/', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
   db.all(
@@ -37,6 +56,9 @@ router.post('/', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
 
   const suppliedPassword = typeof req.body?.password === 'string' ? req.body.password : '';
   const generated = suppliedPassword.length === 0;
+  if (!generated && suppliedPassword.length < MIN_PASSWORD_LENGTH) {
+    return res.status(400).json({ error: `password must be at least ${MIN_PASSWORD_LENGTH} characters` });
+  }
   const password = generated ? generatePassword() : suppliedPassword;
   const baseName = username && String(username).trim()
     ? String(username).trim()
