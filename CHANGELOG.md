@@ -37,6 +37,7 @@ All notable changes to this project will be documented in this file.
 - `CHANGELOG.md` file
 
 ### Changed
+- The due-soon window defaults to 1 hour. `DUE_SOON_HOURS` defaults to 1, and `DELIVERY_DUE_SOON_MINUTES` defaults to 60. When the minutes setting is unset, notifications use the delivery-list window
 - The Reports navigation item opens the reports page for admin and operator. Customers are still blocked from that route and from the report APIs
 - `init_db.js` creates the notification tables when they are missing, including on a database created before this change
 - Removed the placeholder `POST /api/barcode` and `GET /api/delivery/rules` handlers from `server.js`

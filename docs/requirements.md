@@ -44,7 +44,7 @@ Delivery / will-call:
 - Rules live in `backend/deliveryRules.js`.
 - Will-call cutoff defaults to 15:00 (`WILL_CALL_CUTOFF`). Carrier cutoff defaults to 14:00 (`CARRIER_CUTOFF`). Timezone defaults to UTC (`DELIVERY_TIMEZONE`).
 - Ready before the cutoff on a weekday: due that day at the cutoff. Ready at or after the cutoff, or on a weekend: due the next Monday–Friday at the cutoff. Holidays are not skipped.
-- Flag open deliveries overdue, due today, or due soon (`DUE_SOON_HOURS`, default 4). Status `complete` is not overdue.
+- Flag open deliveries overdue, due today, or due soon (`DUE_SOON_HOURS`, default 1). Status `complete` is not overdue.
 - Status values are `pending`, `scheduled`, `out-for-delivery`, and `complete`.
 - Customers can read only deliveries for their own work orders. Admin and operator can write.
 
@@ -58,7 +58,7 @@ Reports (admin and operator):
 
 Notifications:
 - Stored in `notifications`, with per-user read state in `notification_reads`.
-- Generated when a delivery is overdue or due within `DELIVERY_DUE_SOON_MINUTES`, when a work order is put on hold or completed, and when a rush-priority work order is created.
+- Generated when a delivery is overdue or due within `DELIVERY_DUE_SOON_MINUTES` (default 60). When that variable is unset, the window matches `DUE_SOON_HOURS` (default 1 hour). Also generated when a work order is put on hold or completed, and when a rush-priority work order is created.
 - Admin and operator see all notifications. Customers see only notifications for their own work orders and deliveries.
 - A scheduler checks delivery times in process and does not insert the same delivery event twice.
 - Email notifications are off by default and are not sent.

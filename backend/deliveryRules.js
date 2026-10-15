@@ -3,7 +3,7 @@ const { DELIVERY_STATUSES } = require('./statuses');
 const DEFAULT_TIMEZONE = 'UTC';
 const DEFAULT_WILL_CALL_CUTOFF = '15:00';
 const DEFAULT_CARRIER_CUTOFF = '14:00';
-const DEFAULT_DUE_SOON_HOURS = 4;
+const DEFAULT_DUE_SOON_HOURS = 1;
 
 const BUSINESS_DAYS = Object.freeze(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']);
 
@@ -270,7 +270,7 @@ function rulesSummary(rules) {
     `Carrier deliveries use the same rule with a ${rules.carrierCutoff.label} cutoff.`,
     'Business days are Monday through Friday. Holidays are not skipped.',
     `Times are wall-clock in ${rules.timezone}.`,
-    `A delivery that is not complete is overdue after its due time, due today on that calendar day, and due soon within ${rules.dueSoonHours} hours.`,
+    `A delivery that is not complete is overdue after its due time, due today on that calendar day, and due soon within ${rules.dueSoonHours} ${rules.dueSoonHours === 1 ? 'hour' : 'hours'}.`,
     'Completed deliveries are not marked overdue.',
     'Delivery status values are pending, scheduled, out-for-delivery, and complete.',
   ].join(' ');

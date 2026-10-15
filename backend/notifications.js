@@ -2,7 +2,7 @@ const db = require('./db');
 const { classifyDelivery, getRules } = require('./deliveryRules');
 const notifyEmail = require('./notifyEmail');
 
-const DEFAULT_DUE_SOON_MINUTES = 240;
+const DEFAULT_DUE_SOON_MINUTES = 60;
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
@@ -10,10 +10,14 @@ const STAFF_ROLES = new Set(['admin', 'operator']);
 
 function dueSoonMinutes() {
   const raw = process.env.DELIVERY_DUE_SOON_MINUTES;
-  if (raw == null || String(raw).trim() === '') return DEFAULT_DUE_SOON_MINUTES;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_DUE_SOON_MINUTES;
-  return parsed;
+  if (raw != null && String(raw).trim() !== '') {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  // Same window as the delivery-list due_soon flag unless minutes are set on their own.
+  const fromHours = getRules().dueSoonHours * 60;
+  if (Number.isFinite(fromHours) && fromHours >= 0) return fromHours;
+  return DEFAULT_DUE_SOON_MINUTES;
 }
 
 function notificationRules() {
