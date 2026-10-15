@@ -12,6 +12,18 @@ function generatePassword() {
   return crypto.randomBytes(18).toString('base64url');
 }
 
+function parsePositiveInteger(value) {
+  if (typeof value === 'number') {
+    if (!Number.isInteger(value) || value <= 0) return null;
+    return value;
+  }
+  if (typeof value === 'string' && /^[1-9]\d*$/.test(value.trim())) {
+    const parsed = Number(value.trim());
+    if (Number.isSafeInteger(parsed)) return parsed;
+  }
+  return null;
+}
+
 // Read-only directory for staff who create work orders. No role, timestamps, or secrets.
 router.get('/lookup', auth.requireAuth, auth.requireRole('admin', 'operator'), (req, res) => {
   db.all(
@@ -103,6 +115,52 @@ router.post('/', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
         }
       );
     });
+  });
+});
+
+// Replace a customer password (admin only). Omit password to generate one and return it once.
+router.put('/:id/password', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
+  const id = parsePositiveInteger(req.params.id);
+  if (!id) return res.status(400).json({ error: 'id must be a positive integer' });
+
+  const suppliedPassword = typeof req.body?.password === 'string' ? req.body.password : '';
+  const generated = suppliedPassword.length === 0;
+  if (!generated && suppliedPassword.length < MIN_PASSWORD_LENGTH) {
+    return res.status(400).json({ error: `password must be at least ${MIN_PASSWORD_LENGTH} characters` });
+  }
+  const password = generated ? generatePassword() : suppliedPassword;
+
+  db.get('SELECT id, username, role FROM users WHERE id = ?', [id], (err, row) => {
+    if (err) {
+      console.error('CUSTOMER PASSWORD RESET ERROR:', err);
+      return res.status(500).json({ error: 'Failed to reset password' });
+    }
+    if (!row || row.role !== 'customer') {
+      return res.status(404).json({ error: 'Customer not found' });
+    }
+
+    auth.hashPassword(password)
+      .then((hash) => {
+        db.run(
+          'UPDATE users SET password_hash = ? WHERE id = ? AND role = ?',
+          [hash, id, 'customer'],
+          function (updateErr) {
+            if (updateErr) {
+              console.error('CUSTOMER PASSWORD RESET ERROR:', updateErr);
+              return res.status(500).json({ error: 'Failed to reset password' });
+            }
+            if (this.changes === 0) return res.status(404).json({ error: 'Customer not found' });
+
+            auth.clearSessionsForUser(row.id);
+            auth.clearLoginFailuresForUsername(row.username);
+            res.json({ id: row.id, username: row.username, password });
+          }
+        );
+      })
+      .catch((hashErr) => {
+        console.error('CUSTOMER PASSWORD RESET ERROR:', hashErr);
+        return res.status(500).json({ error: 'Failed to reset password' });
+      });
   });
 });
 

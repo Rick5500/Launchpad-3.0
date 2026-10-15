@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Admin password reset: `PUT /api/customers/:id/password` returns the new password once, and the Customers page can set or generate it
 - `GET /api/customers/lookup` for admin and operator, returning only `id`, `username`, and `display_name`
 - Optional `TRUST_PROXY` so the login rate limit uses the client IP behind a reverse proxy
 - Role checks via `requireRole` for admin, operator, and customer access
