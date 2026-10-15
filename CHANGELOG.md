@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Staff reports for work orders by status, department, and stage; completed throughput by day or week; overdue and due-today deliveries; barcode scans by operator and location; and average completed time in each production stage
+- `format=csv` on each report, and a Reports page at `/reports` with from/to filters
+- In-app notifications in SQLite (`notifications`, `notification_reads`) for overdue deliveries, deliveries due within `DELIVERY_DUE_SOON_MINUTES`, work orders put on hold, completed work orders, and rush work orders created
+- `GET /api/notifications`, `POST /api/notifications/:id/read`, and `POST /api/notifications/read-all`, with unread counts and paging
+- A top-bar notification bell with an unread badge and a `/notifications` page, polling about every 45 seconds
+- An unref'd in-process scheduler that checks delivery due times and skips events that were already notified
+- A stub email interface that stays off unless `EMAIL_NOTIFICATIONS` is enabled and never sends mail
 - Barcode scan logging on `POST /api/barcode`, writing `scanned_value`, resolved `work_order_id`, session `operator_id`, `location`, and `event_time` to `barcode_events`
 - `GET /api/barcode/events` with work order, operator, date-range, limit, and offset filters
 - `GET /api/workorders/:id/events` for one work order's scan history
@@ -30,6 +37,8 @@ All notable changes to this project will be documented in this file.
 - `CHANGELOG.md` file
 
 ### Changed
+- The Reports navigation item opens the reports page for admin and operator. Customers are still blocked from that route and from the report APIs
+- `init_db.js` creates the notification tables when they are missing, including on a database created before this change
 - Removed the placeholder `POST /api/barcode` and `GET /api/delivery/rules` handlers from `server.js`
 - `GET /api/delivery` now returns `{ deliveries, total, limit, offset, evaluated_at }` with work order fields and timing flags. Customers still only see their own work orders
 - Delivery due times follow `backend/deliveryRules.js`. Cutoff times, timezone, and the due-soon window are environment settings

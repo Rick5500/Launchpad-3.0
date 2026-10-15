@@ -103,3 +103,34 @@ CREATE INDEX IF NOT EXISTS idx_barcode_events_event_time ON barcode_events(event
 CREATE INDEX IF NOT EXISTS idx_deliveries_work_order ON deliveries(work_order_id);
 CREATE INDEX IF NOT EXISTS idx_deliveries_due_time ON deliveries(due_time);
 CREATE INDEX IF NOT EXISTS idx_deliveries_status ON deliveries(status);
+
+-- In-app notifications. One row per event. Read state is per user in notification_reads.
+-- type: delivery_overdue, delivery_due_soon, work_order_on_hold, work_order_completed, work_order_rush
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT,
+  customer_id INTEGER,
+  work_order_id INTEGER,
+  delivery_id INTEGER,
+  dedupe_key TEXT NOT NULL UNIQUE,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(customer_id) REFERENCES users(id),
+  FOREIGN KEY(work_order_id) REFERENCES work_orders(id),
+  FOREIGN KEY(delivery_id) REFERENCES deliveries(id)
+);
+
+CREATE TABLE IF NOT EXISTS notification_reads (
+  notification_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  read_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (notification_id, user_id),
+  FOREIGN KEY(notification_id) REFERENCES notifications(id),
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_customer_id ON notifications(customer_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_dedupe_key ON notifications(dedupe_key);
+CREATE INDEX IF NOT EXISTS idx_notification_reads_user ON notification_reads(user_id);

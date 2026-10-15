@@ -28,6 +28,9 @@ API endpoints:
 - `GET /api/delivery` — list deliveries with work order info and due-time flags
 - `POST /api/delivery` and `PUT /api/delivery/:id` — create or update a delivery (admin, operator)
 - `GET /api/delivery/rules` — will-call and carrier cutoff rules, plus the due time those rules would assign now
+- `GET /api/reports/...` — staff reports (admin, operator). `format=csv` downloads a CSV file
+- `GET /api/notifications` — notifications visible to the signed-in user, with `unread_count`, `total`, `limit`, and `offset`
+- `POST /api/notifications/:id/read` and `POST /api/notifications/read-all` — mark visible notifications read
 
 Barcode scans:
 - Persist `scanned_value`, `work_order_id`, `operator_id` (the signed-in user), `location`, and `event_time`.
@@ -44,6 +47,21 @@ Delivery / will-call:
 - Flag open deliveries overdue, due today, or due soon (`DUE_SOON_HOURS`, default 4). Status `complete` is not overdue.
 - Status values are `pending`, `scheduled`, `out-for-delivery`, and `complete`.
 - Customers can read only deliveries for their own work orders. Admin and operator can write.
+
+Reports (admin and operator):
+- Work orders by status, department, and production stage over `from` / `to`, using `created_at`.
+- Throughput of completed work orders per day or week (`bucket=day` or `bucket=week`).
+- Overdue and due-today deliveries, classified by `backend/deliveryRules.js`.
+- Barcode scan counts by operator and by location.
+- Average time in a production stage when barcode scans recorded the stage. Open stays are excluded.
+- Each report accepts `format=csv`. Customers receive HTTP 403.
+
+Notifications:
+- Stored in `notifications`, with per-user read state in `notification_reads`.
+- Generated when a delivery is overdue or due within `DELIVERY_DUE_SOON_MINUTES`, when a work order is put on hold or completed, and when a rush-priority work order is created.
+- Admin and operator see all notifications. Customers see only notifications for their own work orders and deliveries.
+- A scheduler checks delivery times in process and does not insert the same delivery event twice.
+- Email notifications are off by default and are not sent.
 
 Security & auth:
 - Start with simple session or JWT-based auth; keep roles in `users.role`.
