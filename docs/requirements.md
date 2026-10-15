@@ -20,7 +20,7 @@ High-level data model notes:
 - `barcode_events` to log scans (timestamp, operator, location, payload)
 - `production_history` starts with an "Order Created" row for printable work orders
 - `deliveries` table with will-call flags, due-time rules, and an optional `order_id`
-- Later screens can use `activity_log`, `system_settings`, `notification_settings`, and `system_alerts` without a new order schema
+- `activity_log` records work order create, move, and complete events for the Admin Board. `system_settings.last_backup_at` is the backup status placeholder. `system_alerts` holds real stored alerts. `notification_settings` stays for a later admin screen
 
 API endpoints:
 - `POST /api/auth/login` — authenticate users
@@ -37,6 +37,10 @@ API endpoints:
 - `GET /api/reports/...` — staff reports (admin, operator). `format=csv` downloads a CSV file
 - `GET /api/notifications` — notifications visible to the signed-in user, with `unread_count`, `total`, `limit`, and `offset`
 - `POST /api/notifications/:id/read` and `POST /api/notifications/read-all` — mark visible notifications read
+- `GET /api/admin-board` — staff board summary (admin, operator). Customers receive HTTP 403
+- `GET /api/admin-board/work-orders` — paginated, filtered active work orders
+- `GET /api/admin-board/activity` and `GET /api/admin-board/approvals` — paged activity and pending approvals
+- `POST /api/admin-board/approvals/:id` — admin approve or reject (`decision` of `approved` or `rejected`)
 
 Barcode scans:
 - Persist `scanned_value`, `work_order_id`, `operator_id` (the signed-in user), `location`, and `event_time`.
@@ -44,6 +48,7 @@ Barcode scans:
 - Return 400 for invalid input and 404 when no work order matches.
 - `GET /api/barcode/events` accepts `work_order_id`, `operator`, `from`, `to`, `limit`, and `offset`.
 - A configured location can move the work order to a production stage (`BARCODE_LOCATION_STAGES`). The default map is Shipping, Quality Control, and Finishing. An empty value turns advancement off.
+- A location that matches a department name moves the work order into that department. Complete also marks the work order completed. The scan stores the department it left and the department it entered.
 - `POST /api/barcode` is rate limited per signed-in user.
 
 Delivery / will-call:

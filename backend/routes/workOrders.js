@@ -5,6 +5,7 @@ const { WORK_ORDER_STATUSES } = require('../statuses');
 const barcodeEvents = require('../barcodeEvents');
 const { loadWorkOrderContext } = require('../orderService');
 const notifications = require('../notifications');
+const activityLog = require('../activityLog');
 const router = express.Router();
 
 const staffRoles = auth.requireRole('admin', 'operator');
@@ -253,27 +254,43 @@ router.post('/', auth.requireAuth, staffRoles, (req, res) => {
         return res.status(500).json({ error: 'Failed to create work order' });
       }
       const newId = this.lastID;
-      db.get(
-        `SELECT ${workOrderFieldList}
-         FROM work_orders wo
-         ${workOrderJoins}
-         WHERE wo.id = ?`,
-        [newId],
-        (err2, row) => {
-          const created = row || {
-            id: newId,
-            status,
-            priority: priority || 'Normal',
-            customer_id: Number(customer_id),
-            external_id: external_id || null,
-          };
-          notifications.notifyWorkOrderCreated(created, (notifyErr) => {
-            if (notifyErr) console.error('WORK ORDER NOTIFICATION ERROR:', notifyErr);
-            if (err2) return res.status(201).json({ id: newId });
-            res.status(201).json(row || { id: newId });
-          });
-        }
-      );
+      const entries = [
+        activityLog.createdEntry({
+          actorId: req.user.userId,
+          workOrderId: newId,
+          externalId: external_id || null,
+          department,
+        }),
+        ...activityLog.transitionEntries({
+          actorId: req.user.userId,
+          previous: { id: newId, status: 'open', department, external_id: external_id || null },
+          next: { id: newId, status, department, external_id: external_id || null },
+        }),
+      ];
+      activityLog.insertEntries(db, entries, (activityErr) => {
+        if (activityErr) console.error('WORK ORDER ACTIVITY ERROR:', activityErr);
+        db.get(
+          `SELECT ${workOrderFieldList}
+           FROM work_orders wo
+           ${workOrderJoins}
+           WHERE wo.id = ?`,
+          [newId],
+          (err2, row) => {
+            const created = row || {
+              id: newId,
+              status,
+              priority: priority || 'Normal',
+              customer_id: Number(customer_id),
+              external_id: external_id || null,
+            };
+            notifications.notifyWorkOrderCreated(created, (notifyErr) => {
+              if (notifyErr) console.error('WORK ORDER NOTIFICATION ERROR:', notifyErr);
+              if (err2) return res.status(201).json({ id: newId });
+              res.status(201).json(row || { id: newId });
+            });
+          }
+        );
+      });
     }
   );
 });
@@ -308,7 +325,7 @@ router.put('/:id', auth.requireAuth, staffRoles, (req, res) => {
   } = payload;
 
   db.get(
-    `SELECT id, status, priority, customer_id, external_id FROM work_orders WHERE id = ?`,
+    `SELECT id, status, priority, customer_id, external_id, department FROM work_orders WHERE id = ?`,
     [id],
     (lookupErr, previous) => {
       if (lookupErr) return res.status(500).json({ error: 'Failed to update work order' });
@@ -363,7 +380,7 @@ router.put('/:id', auth.requireAuth, staffRoles, (req, res) => {
           if (err) return res.status(500).json({ error: 'Failed to update work order' });
           if (this.changes === 0) return res.status(404).json({ error: 'Work order not found' });
 
-          db.get(
+          const loadUpdated = () => db.get(
             `SELECT ${workOrderFieldList}
              FROM work_orders wo
              ${workOrderJoins}
@@ -372,10 +389,38 @@ router.put('/:id', auth.requireAuth, staffRoles, (req, res) => {
             (err2, row) => {
               if (err2) return res.status(500).json({ error: 'Failed to load updated work order' });
               if (!row) return res.status(404).json({ error: 'Work order not found after update' });
-              notifications.notifyWorkOrderUpdated(previous, row, (notifyErr) => {
-                if (notifyErr) console.error('WORK ORDER NOTIFICATION ERROR:', notifyErr);
-                res.json(row);
+              const entries = activityLog.transitionEntries({
+                actorId: req.user.userId,
+                previous,
+                next: row,
               });
+              activityLog.insertEntries(db, entries, (activityErr) => {
+                if (activityErr) console.error('WORK ORDER ACTIVITY ERROR:', activityErr);
+                notifications.notifyWorkOrderUpdated(previous, row, (notifyErr) => {
+                  if (notifyErr) console.error('WORK ORDER NOTIFICATION ERROR:', notifyErr);
+                  res.json(row);
+                });
+              });
+            }
+          );
+
+          const departmentChanged = String(previous.department || '').trim() !== String(department || '').trim();
+          if (!departmentChanged) return loadUpdated();
+
+          db.get(
+            `SELECT id, next_department FROM departments WHERE lower(name) = lower(?)`,
+            [String(department || '').trim()],
+            (routeErr, route) => {
+              if (routeErr) console.error('WORK ORDER ROUTE ERROR:', routeErr);
+              if (routeErr || !route) return loadUpdated();
+              db.run(
+                `UPDATE work_orders SET assigned_department_id = ?, next_department = ? WHERE id = ?`,
+                [route.id, route.next_department || null, id],
+                (routeUpdateErr) => {
+                  if (routeUpdateErr) console.error('WORK ORDER ROUTE ERROR:', routeUpdateErr);
+                  loadUpdated();
+                }
+              );
             }
           );
         }

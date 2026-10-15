@@ -38,6 +38,7 @@ const ordersRouter = require('./routes/orders');
 const uploadsRouter = require('./routes/uploads');
 const { ensureUploadDir } = require('./fileStore');
 const { startOrphanSweep } = require('./uploadMaintenance');
+const adminBoardRouter = require('./routes/adminBoard');
 const reportsRouter = require('./routes/reports');
 const notificationsRouter = require('./routes/notifications');
 const notificationScheduler = require('./notificationScheduler');
@@ -125,6 +126,7 @@ app.use('/api/barcode', barcodeRouter);
 app.use('/api/departments', departmentsRouter);
 app.use('/api/orders', ordersRouter);
 app.use('/api/uploads', uploadsRouter);
+app.use('/api/admin-board', adminBoardRouter);
 app.use('/api/reports', reportsRouter);
 app.use('/api/notifications', notificationsRouter);
 

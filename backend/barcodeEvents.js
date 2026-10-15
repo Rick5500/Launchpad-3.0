@@ -1,4 +1,5 @@
 const db = require('./db');
+const activityLog = require('./activityLog');
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -176,7 +177,7 @@ function parseListQuery(query) {
 function resolveWorkOrder(scannedValue, cb) {
   const value = String(scannedValue || '').trim();
   db.get(
-    `SELECT id, external_id, description
+    `SELECT id, external_id, description, department, status
      FROM work_orders
      WHERE external_id = ?
      ORDER BY id ASC`,
@@ -188,7 +189,7 @@ function resolveWorkOrder(scannedValue, cb) {
       const id = Number(value);
       if (!Number.isSafeInteger(id)) return cb(null, null);
       db.get(
-        'SELECT id, external_id, description FROM work_orders WHERE id = ?',
+        'SELECT id, external_id, description, department, status FROM work_orders WHERE id = ?',
         [id],
         (err2, byId) => cb(err2, byId || null)
       );
@@ -216,6 +217,148 @@ function resolveStage(location, cb) {
   );
 }
 
+function runSql(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, function onRun(err) {
+      if (err) reject(err);
+      else resolve({ lastID: this.lastID, changes: this.changes });
+    });
+  });
+}
+
+function getSql(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row || null)));
+  });
+}
+
+function isCompleteDepartment(name) {
+  return String(name || '').trim().toLowerCase() === 'complete';
+}
+
+// A scan location that names a department moves the work order there.
+// Shipping / Quality Control / Finishing still advance production stages and do not match a department.
+async function applyScan({ scannedValue, location, eventTime, operatorId, workOrder, stage }) {
+  const storedTime = eventTime || utcNowNaive();
+  const [matchedDepartment, operator] = await Promise.all([
+    location
+      ? getSql(
+        `SELECT id, name, next_department FROM departments
+         WHERE is_active = 1 AND lower(name) = lower(?)`,
+        [String(location).trim()]
+      )
+      : Promise.resolve(null),
+    operatorId
+      ? getSql('SELECT id, display_name, username FROM users WHERE id = ?', [operatorId])
+      : Promise.resolve(null),
+  ]);
+
+  const fromDepartment = workOrder.department || null;
+  const toDepartment = matchedDepartment ? matchedDepartment.name : null;
+  const inserted = await runSql(
+    `INSERT INTO barcode_events
+      (scanned_value, work_order_id, operator_id, location, event_time, stage_id, from_department, to_department)
+     VALUES (?,?,?,?,?,?,?,?)`,
+    [
+      scannedValue,
+      workOrder.id,
+      operatorId,
+      location || null,
+      storedTime,
+      stage ? stage.id : null,
+      fromDepartment,
+      toDepartment,
+    ]
+  );
+
+  const payload = {
+    id: inserted.lastID,
+    scanned_value: scannedValue,
+    work_order_id: workOrder.id,
+    external_id: workOrder.external_id,
+    description: workOrder.description,
+    operator_id: operatorId,
+    location: location || null,
+    event_time: storedTime,
+    stage_id: stage ? stage.id : null,
+    stage_name: stage ? stage.name : null,
+    stage_advanced: false,
+    from_department: fromDepartment,
+    to_department: toDepartment,
+    department_moved: false,
+  };
+
+  if (stage) {
+    try {
+      const stageUpdate = await runSql(
+        `UPDATE work_orders SET stage_id = ?, updated_at = datetime('now') WHERE id = ?`,
+        [stage.id, workOrder.id]
+      );
+      payload.stage_advanced = stageUpdate.changes > 0;
+    } catch (stageErr) {
+      console.error('BARCODE STAGE UPDATE ERROR:', stageErr);
+    }
+  }
+
+  const moved = Boolean(matchedDepartment)
+    && String(fromDepartment || '').trim() !== matchedDepartment.name;
+  if (!moved) return payload;
+
+  let nextStatus = workOrder.status || 'open';
+  if (isCompleteDepartment(matchedDepartment.name) && !activityLog.isFinishedStatus(nextStatus)) {
+    nextStatus = 'completed';
+  }
+
+  await runSql(
+    `UPDATE work_orders
+     SET department = ?,
+         assigned_department_id = ?,
+         next_department = ?,
+         status = ?,
+         updated_at = datetime('now')
+     WHERE id = ?`,
+    [
+      matchedDepartment.name,
+      matchedDepartment.id,
+      matchedDepartment.next_department || null,
+      nextStatus,
+      workOrder.id,
+    ]
+  );
+
+  const scannedBy = operator?.display_name || operator?.username || 'Staff';
+  await runSql(
+    `INSERT INTO production_history (work_order_id, department, status, scanned_by, user_id, notes)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      workOrder.id,
+      matchedDepartment.name,
+      nextStatus,
+      scannedBy,
+      operatorId || null,
+      `Moved from ${fromDepartment || 'unassigned'} to ${matchedDepartment.name}`,
+    ]
+  );
+
+  const entries = activityLog.transitionEntries({
+    actorId: operatorId,
+    previous: workOrder,
+    next: {
+      id: workOrder.id,
+      external_id: workOrder.external_id,
+      department: matchedDepartment.name,
+      status: nextStatus,
+    },
+  });
+  await new Promise((resolve, reject) => {
+    activityLog.insertEntries(db, entries, (err) => (err ? reject(err) : resolve()));
+  });
+
+  payload.department_moved = true;
+  payload.status = nextStatus;
+  return payload;
+}
+
 function recordScan({ scannedValue, location, eventTime, operatorId }, cb) {
   resolveWorkOrder(scannedValue, (err, workOrder) => {
     if (err) return cb(err);
@@ -223,51 +366,9 @@ function recordScan({ scannedValue, location, eventTime, operatorId }, cb) {
 
     resolveStage(location, (stageErr, stage) => {
       if (stageErr) return cb(stageErr);
-      const storedTime = eventTime || utcNowNaive();
-      db.run(
-        `INSERT INTO barcode_events
-          (scanned_value, work_order_id, operator_id, location, event_time, stage_id)
-         VALUES (?,?,?,?,?,?)`,
-        [
-          scannedValue,
-          workOrder.id,
-          operatorId,
-          location || null,
-          storedTime,
-          stage ? stage.id : null,
-        ],
-        function onInsert(insertErr) {
-          if (insertErr) return cb(insertErr);
-          const eventId = this.lastID;
-          const payload = {
-            id: eventId,
-            scanned_value: scannedValue,
-            work_order_id: workOrder.id,
-            external_id: workOrder.external_id,
-            description: workOrder.description,
-            operator_id: operatorId,
-            location: location || null,
-            event_time: storedTime,
-            stage_id: stage ? stage.id : null,
-            stage_name: stage ? stage.name : null,
-            stage_advanced: false,
-          };
-          if (!stage) return cb(null, payload);
-
-          db.run(
-            `UPDATE work_orders SET stage_id = ?, updated_at = datetime('now') WHERE id = ?`,
-            [stage.id, workOrder.id],
-            function onStage(updateErr) {
-              if (updateErr) {
-                console.error('BARCODE STAGE UPDATE ERROR:', updateErr);
-                return cb(null, payload);
-              }
-              payload.stage_advanced = this.changes > 0;
-              cb(null, payload);
-            }
-          );
-        }
-      );
+      applyScan({ scannedValue, location, eventTime, operatorId, workOrder, stage })
+        .then((payload) => cb(null, payload))
+        .catch(cb);
     });
   });
 }
@@ -316,6 +417,8 @@ function listEvents(filters, cb) {
          e.location,
          e.event_time,
          e.stage_id,
+         e.from_department,
+         e.to_department,
          wo.external_id,
          wo.description AS work_order_description,
          u.username AS operator_username,
