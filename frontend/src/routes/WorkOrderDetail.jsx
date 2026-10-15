@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Box, Button, Card, CardContent, Chip, Grid, Typography, Tabs, Tab, Divider } from '@mui/material';
+import { Box, Button, Card, CardContent, Chip, Grid, Typography, Tabs, Tab, Divider, Table, TableBody, TableCell, TableContainer, TableHead, TableRow } from '@mui/material';
 import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
 import SectionCard from '../components/SectionCard';
@@ -8,9 +8,49 @@ import { authFetch } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { canonicalWorkOrderStatus } from '../workOrderStatus';
 
-const tabs = ['Overview', 'Specifications', 'Attachments', 'Activity History', 'Routing', 'Notes'];
+const tabs = ['Overview', 'Specifications', 'Attachments', 'Scan History', 'Routing', 'Notes'];
 
-function getTabContent(tab, workOrder) {
+function formatStamp(value) {
+  if (!value) return '—';
+  return String(value).replace('T', ' ').slice(0, 19);
+}
+
+function ScanHistory({ events, loading, error }) {
+  if (loading) return <Typography color="text.secondary">Loading scans...</Typography>;
+  if (error) return <Typography color="error">{error}</Typography>;
+  if (!events.length) {
+    return <Typography color="text.secondary">No barcode scans recorded for this work order yet.</Typography>;
+  }
+
+  return (
+    <TableContainer>
+      <Table size="small">
+        <TableHead>
+          <TableRow>
+            <TableCell>Time</TableCell>
+            <TableCell>Scanned</TableCell>
+            <TableCell>Operator</TableCell>
+            <TableCell>Location</TableCell>
+            <TableCell>Stage</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {events.map((event) => (
+            <TableRow key={event.id}>
+              <TableCell>{formatStamp(event.event_time)}</TableCell>
+              <TableCell>{event.scanned_value}</TableCell>
+              <TableCell>{event.operator_name || event.operator_username || '—'}</TableCell>
+              <TableCell>{event.location || '—'}</TableCell>
+              <TableCell>{event.stage_name || '—'}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
+  );
+}
+
+function getTabContent(tab, workOrder, scanState) {
   switch (tab) {
     case 'Overview':
       return (
@@ -43,8 +83,8 @@ function getTabContent(tab, workOrder) {
       return <Typography color="text.secondary">Specification details will be added here when available.</Typography>;
     case 'Attachments':
       return <Typography color="text.secondary">No attachments yet. This section will support file uploads in the future.</Typography>;
-    case 'Activity History':
-      return <Typography color="text.secondary">History events will appear here once the activity log is implemented.</Typography>;
+    case 'Scan History':
+      return <ScanHistory events={scanState.events} loading={scanState.loading} error={scanState.error} />;
     case 'Routing':
       return <Typography color="text.secondary">Routing details and production lane path will appear here.</Typography>;
     case 'Notes':
@@ -64,17 +104,50 @@ export default function WorkOrderDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('Overview');
+  const [events, setEvents] = useState([]);
+  const [eventsLoading, setEventsLoading] = useState(true);
+  const [eventsError, setEventsError] = useState('');
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
+    setEventsLoading(true);
+    setEventsError('');
+
     authFetch(`/api/workorders/${id}`)
       .then((res) => {
         if (!res.ok) throw new Error('Work order not found');
         return res.json();
       })
-      .then((data) => setWorkOrder(data))
-      .catch((err) => setError(err.message || 'Unable to load work order'))
-      .finally(() => setLoading(false));
+      .then((data) => {
+        if (!cancelled) setWorkOrder(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message || 'Unable to load work order');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    authFetch(`/api/workorders/${id}/events`)
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || 'Unable to load scan history');
+        return body;
+      })
+      .then((data) => {
+        if (!cancelled) setEvents(data.events || []);
+      })
+      .catch((err) => {
+        if (!cancelled) setEventsError(err.message || 'Unable to load scan history');
+      })
+      .finally(() => {
+        if (!cancelled) setEventsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   if (loading) return <LoadingState message="Loading work order details..." />;
@@ -113,7 +186,7 @@ export default function WorkOrderDetail() {
             ))}
           </Tabs>
           <Divider sx={{ borderColor: '#334455', my: 2 }} />
-          {getTabContent(activeTab, workOrder)}
+          {getTabContent(activeTab, workOrder, { events, loading: eventsLoading, error: eventsError })}
         </CardContent>
       </Card>
     </Box>

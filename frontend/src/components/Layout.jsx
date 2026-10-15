@@ -6,6 +6,7 @@ import AssignmentIcon from '@mui/icons-material/Assignment';
 import BuildIcon from '@mui/icons-material/Build';
 import PeopleIcon from '@mui/icons-material/People';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
+import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import LogoutIcon from '@mui/icons-material/Logout';
@@ -17,8 +18,9 @@ const navItems = [
   { title: 'Dashboard', route: '/', icon: <HomeIcon />, roles: ['admin', 'operator', 'customer'] },
   { title: 'Work Orders', route: '/work-orders', icon: <AssignmentIcon />, roles: ['admin', 'operator', 'customer'] },
   { title: 'Production Board', route: '/production-board', icon: <BuildIcon />, roles: ['admin', 'operator'] },
+  { title: 'Scan', route: '/scan', icon: <QrCodeScannerIcon />, roles: ['admin', 'operator'] },
   { title: 'Customers', route: '/customers', icon: <PeopleIcon />, roles: ['admin'] },
-  { title: 'Delivery', route: '/delivery', icon: <LocalShippingIcon />, roles: ['admin', 'operator'] },
+  { title: 'Delivery', route: '/delivery', icon: <LocalShippingIcon />, roles: ['admin', 'operator', 'customer'] },
   { title: 'Reports', route: '/reports', icon: <BarChartIcon />, roles: ['admin', 'operator'] },
   { title: 'Admin', route: '/admin', icon: <AdminPanelSettingsIcon />, roles: ['admin'] },
   { title: 'Departments', route: '/admin/departments', icon: <BusinessIcon />, roles: ['admin'] },

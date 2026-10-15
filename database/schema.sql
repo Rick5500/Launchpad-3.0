@@ -79,8 +79,10 @@ CREATE TABLE IF NOT EXISTS barcode_events (
   operator_id INTEGER,
   location TEXT,
   event_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+  stage_id INTEGER, -- production stage applied by a configured scan location, if any
   FOREIGN KEY(work_order_id) REFERENCES work_orders(id),
-  FOREIGN KEY(operator_id) REFERENCES users(id)
+  FOREIGN KEY(operator_id) REFERENCES users(id),
+  FOREIGN KEY(stage_id) REFERENCES production_stages(id)
 );
 
 CREATE TABLE IF NOT EXISTS deliveries (
@@ -89,7 +91,15 @@ CREATE TABLE IF NOT EXISTS deliveries (
   will_call BOOLEAN DEFAULT 0,
   due_time DATETIME,
   carrier TEXT,
-  status TEXT DEFAULT 'pending',
+  status TEXT DEFAULT 'pending', -- pending, scheduled, out-for-delivery, complete
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME,
   FOREIGN KEY(work_order_id) REFERENCES work_orders(id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_barcode_events_work_order ON barcode_events(work_order_id);
+CREATE INDEX IF NOT EXISTS idx_barcode_events_operator ON barcode_events(operator_id);
+CREATE INDEX IF NOT EXISTS idx_barcode_events_event_time ON barcode_events(event_time);
+CREATE INDEX IF NOT EXISTS idx_deliveries_work_order ON deliveries(work_order_id);
+CREATE INDEX IF NOT EXISTS idx_deliveries_due_time ON deliveries(due_time);
+CREATE INDEX IF NOT EXISTS idx_deliveries_status ON deliveries(status);

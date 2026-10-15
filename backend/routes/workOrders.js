@@ -2,6 +2,7 @@ const express = require('express');
 const auth = require('../auth');
 const db = require('../db');
 const { WORK_ORDER_STATUSES } = require('../statuses');
+const barcodeEvents = require('../barcodeEvents');
 const router = express.Router();
 
 const staffRoles = auth.requireRole('admin', 'operator');
@@ -135,6 +136,41 @@ router.get('/:id', auth.requireAuth, (req, res) => {
       }
 
       res.json(row);
+    }
+  );
+});
+
+router.get('/:id/events', auth.requireAuth, (req, res) => {
+  const id = parsePositiveInteger(req.params.id);
+  if (!id) return res.status(400).json({ error: 'id must be a positive integer' });
+
+  const parsed = barcodeEvents.parseListQuery(req.query);
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+
+  const params = [id];
+  let customerClause = '';
+  if (req.user.role === 'customer') {
+    customerClause = ' AND customer_id = ?';
+    params.push(req.user.userId);
+  }
+
+  db.get(
+    `SELECT id FROM work_orders WHERE id = ?${customerClause}`,
+    params,
+    (err, order) => {
+      if (err) {
+        console.error('WORK ORDER EVENTS ERROR:', err);
+        return res.status(500).json({ error: 'Failed to load barcode events' });
+      }
+      if (!order) return res.status(404).json({ error: 'Work order not found' });
+
+      barcodeEvents.listEvents({ ...parsed.value, workOrderId: id }, (listErr, result) => {
+        if (listErr) {
+          console.error('WORK ORDER EVENTS ERROR:', listErr);
+          return res.status(500).json({ error: 'Failed to load barcode events' });
+        }
+        res.json(result);
+      });
     }
   );
 });

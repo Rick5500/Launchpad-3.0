@@ -32,6 +32,7 @@ const productionRouter = require('./routes/production');
 const productionBoardRouter = require('./routes/productionBoard');
 const customersRouter = require('./routes/customers');
 const deliveryRouter = require('./routes/delivery');
+const barcodeRouter = require('./routes/barcode');
 const departmentsRouter = require('./routes/departments');
 
 
@@ -90,6 +91,7 @@ app.use('/api/production-board', productionBoardRouter);
 app.use('/api/production-stages', productionBoardRouter);
 app.use('/api/customers', customersRouter);
 app.use('/api/delivery', deliveryRouter);
+app.use('/api/barcode', barcodeRouter);
 app.use('/api/departments', departmentsRouter);
 
 // Admin placeholder
@@ -97,12 +99,6 @@ app.get('/api/admin', auth.requireAuth, auth.requireRole('admin'), (req, res) =>
 
 // Customer placeholder
 app.get('/api/customer', auth.requireAuth, (req, res) => res.json({ message: 'customer endpoint (placeholder)', user: req.user }));
-
-// Barcode tracking placeholder
-app.post('/api/barcode', auth.requireAuth, (req, res) => res.json({ message: 'barcode event recorded (placeholder)' }));
-
-// Delivery / will-call rules placeholder
-app.get('/api/delivery/rules', auth.requireAuth, (req, res) => res.json({ message: 'delivery rules (placeholder)' }));
 
 app.listen(port, () => {
   console.log(`Launchpad backend listening on port ${port}`);
