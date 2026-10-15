@@ -27,7 +27,7 @@ function parsePositiveInteger(value) {
 // Read-only directory for staff who create work orders. No role, timestamps, or secrets.
 router.get('/lookup', auth.requireAuth, auth.requireRole('admin', 'operator'), (req, res) => {
   db.all(
-    `SELECT id, username, display_name
+    `SELECT id, username, display_name, company, contact_name, phone, email
      FROM users
      WHERE role = 'customer'
      ORDER BY display_name ASC`,
@@ -66,6 +66,24 @@ router.post('/', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
     return res.status(400).json({ error: 'display_name is required' });
   }
 
+  function optionalProfile(value, field, max) {
+    if (value == null || value === '') return null;
+    const text = String(value).trim();
+    if (!text) return null;
+    if (text.length > max) return { error: `${field} must be ${max} characters or fewer` };
+    return text;
+  }
+
+  const company = optionalProfile(req.body?.company, 'company', 160);
+  const contactName = optionalProfile(req.body?.contact_name, 'contact_name', 160);
+  const phone = optionalProfile(req.body?.phone, 'phone', 40);
+  const email = optionalProfile(req.body?.email, 'email', 160);
+  const profileError = [company, contactName, phone, email].find((value) => value && value.error);
+  if (profileError) return res.status(400).json({ error: profileError.error });
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'email is invalid' });
+  }
+
   const suppliedPassword = typeof req.body?.password === 'string' ? req.body.password : '';
   const generated = suppliedPassword.length === 0;
   if (!generated && suppliedPassword.length < MIN_PASSWORD_LENGTH) {
@@ -98,8 +116,9 @@ router.post('/', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
       }
 
       db.run(
-        `INSERT INTO users (username, password_hash, role, display_name, created_at) VALUES (?,?,?,?,datetime('now'))`,
-        [uniqueUsername, hash, 'customer', display_name],
+        `INSERT INTO users (username, password_hash, role, display_name, company, contact_name, phone, email, created_at)
+         VALUES (?,?,?,?,?,?,?,?,datetime('now'))`,
+        [uniqueUsername, hash, 'customer', display_name, company, contactName, phone, email],
         function (insertErr) {
           if (insertErr) {
             console.error('CUSTOMER CREATE ERROR:', insertErr);

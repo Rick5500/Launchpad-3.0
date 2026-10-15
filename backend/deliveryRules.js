@@ -263,7 +263,99 @@ function classifyDelivery(delivery, now = new Date(), rules = getRules()) {
   };
 }
 
+function clockLabel(hhmm) {
+  const match = /^(\d{2}):(\d{2})$/.exec(String(hhmm || ''));
+  if (!match) return String(hhmm || '');
+  const hour24 = Number(match[1]);
+  const minute = match[2];
+  const suffix = hour24 >= 12 ? 'PM' : 'AM';
+  const hour12 = hour24 % 12 || 12;
+  return `${hour12}:${minute} ${suffix}`;
+}
+
+function orderWindow() {
+  const start = parseCutoff(process.env.DELIVERY_WINDOW_START, '09:00');
+  const end = parseCutoff(process.env.DELIVERY_WINDOW_END, '14:00');
+  const parsedIncrement = Number(process.env.DELIVERY_SLOT_MINUTES);
+  const incrementMinutes = Number.isInteger(parsedIncrement) && parsedIncrement >= 1 && parsedIncrement <= 120
+    ? parsedIncrement
+    : 15;
+  const slots = [];
+  const startMinutes = start.hour * 60 + start.minute;
+  const endMinutes = end.hour * 60 + end.minute;
+  if (endMinutes >= startMinutes) {
+    for (let minute = startMinutes; minute <= endMinutes; minute += incrementMinutes) {
+      slots.push(`${pad(Math.floor(minute / 60))}:${pad(minute % 60)}`);
+    }
+  }
+  return {
+    start: start.label,
+    end: end.label,
+    incrementMinutes,
+    slots,
+  };
+}
+
+function orderWindowSummary(window = orderWindow()) {
+  return `Delivery orders ${clockLabel(window.start)} - ${clockLabel(window.end)} (${window.incrementMinutes} minute increments).`;
+}
+
+function businessToday(now = new Date()) {
+  const rules = getRules();
+  const parts = zonedParts(now, rules.timezone);
+  return {
+    year: parts.year,
+    month: parts.month,
+    day: parts.day,
+    weekday: parts.weekday,
+    key: `${parts.year}${pad(parts.month)}${pad(parts.day)}`,
+    iso: `${parts.year}-${pad(parts.month)}-${pad(parts.day)}`,
+  };
+}
+
+// Customer-selected order due times use the shop window (default 9:00 AM–2:00 PM,
+// 15 minute increments, Monday–Friday). The value is stored with the same
+// wall-clock normalization as other delivery due times.
+function validateOrderDue(dueDate, dueTime, now = new Date()) {
+  const date = String(dueDate || '').trim();
+  const time = String(dueTime || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: 'due_date must be YYYY-MM-DD' };
+
+  const parts = parseNaiveDateTime(`${date} 00:00:00`);
+  if (!parts) return { error: 'due_date is invalid' };
+
+  const weekday = new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay();
+  if (weekday === 0 || weekday === 6) {
+    return { error: 'due_date must be a weekday (Monday through Friday)' };
+  }
+
+  const today = businessToday(now);
+  if (date < today.iso) return { error: 'due_date cannot be before today' };
+  const latest = Date.UTC(today.year + 2, today.month - 1, today.day);
+  const selected = Date.UTC(parts.year, parts.month - 1, parts.day);
+  if (selected > latest) return { error: 'due_date is too far in the future' };
+
+  const window = orderWindow();
+  const match = /^(\d{2}):(\d{2})$/.exec(time);
+  if (!match || !window.slots.includes(`${match[1]}:${match[2]}`)) {
+    return {
+      error: `due_time must be a ${window.incrementMinutes} minute increment between ${clockLabel(window.start)} and ${clockLabel(window.end)}`,
+    };
+  }
+
+  const normalized = normalizeDueTime(`${date} ${match[1]}:${match[2]}:00`);
+  if (normalized.error) return { error: normalized.error };
+  return {
+    value: {
+      dueDate: date,
+      dueTime: `${match[1]}:${match[2]}`,
+      dueDateTime: normalized.value,
+    },
+  };
+}
+
 function rulesSummary(rules) {
+  const window = orderWindow();
   return [
     `Will-call orders ready before ${rules.willCallCutoff.label} on a business day are due that day at the cutoff.`,
     'Ready at or after the cutoff, or on Saturday or Sunday, are due the next business day at the cutoff.',
@@ -273,6 +365,7 @@ function rulesSummary(rules) {
     `A delivery that is not complete is overdue after its due time, due today on that calendar day, and due soon within ${rules.dueSoonHours} ${rules.dueSoonHours === 1 ? 'hour' : 'hours'}.`,
     'Completed deliveries are not marked overdue.',
     'Delivery status values are pending, scheduled, out-for-delivery, and complete.',
+    `Customer order due times are chosen on a weekday in ${window.incrementMinutes} minute increments from ${clockLabel(window.start)} through ${clockLabel(window.end)}.`,
   ].join(' ');
 }
 
@@ -280,6 +373,7 @@ function publicRulesView(now = new Date()) {
   const rules = getRules();
   const willCall = suggestDueTime(true, now, rules);
   const carrier = suggestDueTime(false, now, rules);
+  const window = orderWindow();
   return {
     rules: {
       timezone: rules.timezone,
@@ -289,6 +383,13 @@ function publicRulesView(now = new Date()) {
       businessDays: rules.businessDays.slice(),
       statuses: rules.statuses.slice(),
       summary: rulesSummary(rules),
+      orderWindow: {
+        start: window.start,
+        end: window.end,
+        incrementMinutes: window.incrementMinutes,
+        slots: window.slots.slice(),
+        summary: orderWindowSummary(window),
+      },
     },
     computed: {
       evaluatedAt: now.toISOString(),
@@ -315,4 +416,9 @@ module.exports = {
   suggestDueTime,
   classifyDelivery,
   publicRulesView,
+  businessToday,
+  orderWindow,
+  orderWindowSummary,
+  validateOrderDue,
+  clockLabel,
 };

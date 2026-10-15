@@ -119,26 +119,38 @@ async function seedCustomers() {
     const existing = await get('SELECT id FROM users WHERE username = ?', [username]);
     if (existing) {
       console.log(`Customer user already exists: ${username}`);
-      continue;
+    } else {
+      const passwordHash = await bcrypt.hash(crypto.randomBytes(18).toString('base64url'), BCRYPT_ROUNDS);
+      await run(
+        'INSERT INTO users (username, password_hash, role, display_name, company) VALUES (?,?,?,?,?)',
+        [username, passwordHash, 'customer', displayName, displayName]
+      );
+      console.log(`Seeded customer user ${username} (no password issued)`);
     }
 
-    const passwordHash = await bcrypt.hash(crypto.randomBytes(18).toString('base64url'), BCRYPT_ROUNDS);
     await run(
-      'INSERT INTO users (username, password_hash, role, display_name) VALUES (?,?,?,?)',
-      [username, passwordHash, 'customer', displayName]
+      `UPDATE users
+       SET company = display_name
+       WHERE username = ? AND role = 'customer' AND (company IS NULL OR trim(company) = '')`,
+      [username]
     );
-    console.log(`Seeded customer user ${username} (no password issued)`);
   }
 }
 
 async function seedDepartments() {
   const departments = [
-    ['Small Format', 'Small format print production', '#90caf9', 'print', 1, 1],
-    ['Signs & Graphics', 'Large format and signage jobs', '#f6c343', 'branding_watermark', 2, 1],
-    ['Reprographics', 'Reproduction and copy projects', '#7e57c2', 'copy_all', 3, 1],
-    ['Scanning', 'Scanning and digitization tasks', '#26a69a', 'scanner', 4, 1],
-    ['Delivery', 'Logistics and outbound delivery', '#ef5350', 'local_shipping', 5, 1],
-    ['Admin', 'Administrative and ops support', '#78909c', 'admin_panel_settings', 6, 1],
+    ['Large Format', 'Plans, drawings, and bid sets', '#1E88E5', 'description', 1, 1],
+    ['Small Format', 'Small format print production', '#43A047', 'print', 2, 1],
+    ['Signs & Graphics', 'Banners, signs, and graphics', '#8E24AA', 'branding_watermark', 3, 1],
+    ['Scanning', 'Scanning, OCR, and indexing', '#FB8C00', 'scanner', 4, 1],
+    ['Planroom', 'Project distribution and bids', '#00897B', 'groups', 5, 1],
+    ['Archive File', 'Archive retrieval', '#78909C', 'inventory_2', 6, 1],
+    ['Quality', 'Quality check before dispatch', '#F9A825', 'verified', 7, 1],
+    ['Dispatch', 'Ready for handoff and delivery', '#1565C0', 'outbound', 8, 1],
+    ['Delivery', 'Logistics and outbound delivery', '#ef5350', 'local_shipping', 9, 1],
+    ['Complete', 'Finished work orders', '#2E7D32', 'check_circle', 10, 1],
+    ['Reprographics', 'Reproduction and copy projects', '#7e57c2', 'copy_all', 11, 1],
+    ['Admin', 'Administrative and ops support', '#78909c', 'admin_panel_settings', 12, 1],
   ];
 
   for (const department of departments) {
@@ -147,6 +159,92 @@ async function seedDepartments() {
     await run(
       'INSERT INTO departments (name, description, color, icon, sort_order, is_active) VALUES (?,?,?,?,?,?)',
       department
+    );
+  }
+}
+
+async function applyDepartmentRoutes() {
+  // Only rows that an administrator has not edited (updated_at is still null).
+  const routes = [
+    ['Large Format', 'Quality', 1],
+    ['Small Format', 'Quality', 2],
+    ['Signs & Graphics', 'Quality', 3],
+    ['Scanning', 'Quality', 4],
+    ['Planroom', 'Quality', 5],
+    ['Archive File', 'Quality', 6],
+    ['Quality', 'Dispatch', 7],
+    ['Dispatch', 'Delivery', 8],
+    ['Delivery', 'Complete', 9],
+    ['Complete', null, 10],
+    ['Reprographics', 'Quality', 11],
+    ['Admin', null, 12],
+  ];
+
+  for (const [name, nextDepartment, sortOrder] of routes) {
+    await run(
+      `UPDATE departments
+       SET next_department = ?, sort_order = ?
+       WHERE name = ? AND updated_at IS NULL`,
+      [nextDepartment, sortOrder, name]
+    );
+  }
+}
+
+async function seedServices() {
+  const services = [
+    ['Large Format', 'Plans, Drawings, Bid Sets', 'Large Format', 1, 0],
+    ['Small Format', 'Specifications, Manuals, Reports', 'Small Format', 2, 0],
+    ['Signs & Graphics', 'Banners, Signs, Graphics', 'Signs & Graphics', 3, 0],
+    ['Scanning', 'Scanning, OCR, Indexing', 'Scanning', 4, 0],
+    ['Planroom', 'Project Distribution, Bids', 'Planroom', 5, 0],
+    ['Archive File Request', 'Archive Retrieval', 'Archive File', 6, 1],
+    ['Ship To (3rd Party)', 'Third Party Shipping', 'Delivery', 7, 0],
+  ];
+
+  for (const service of services) {
+    const existing = await get('SELECT id FROM services WHERE name = ?', [service[0]]);
+    if (existing) continue;
+    await run(
+      `INSERT INTO services (name, description, department_name, sort_order, requires_approval, is_active)
+       VALUES (?,?,?,?,?,1)`,
+      service
+    );
+  }
+}
+
+async function seedDeliveryMethods() {
+  const methods = [
+    ['Accent Truck', 0, 1],
+    ['Will Call', 1, 2],
+    ['Customer Pickup', 1, 3],
+    ['UPS', 0, 4],
+    ['FedEx', 0, 5],
+    ['Common Carrier', 0, 6],
+  ];
+
+  for (const method of methods) {
+    const existing = await get('SELECT id FROM delivery_methods WHERE name = ?', [method[0]]);
+    if (existing) continue;
+    await run(
+      'INSERT INTO delivery_methods (name, will_call, sort_order, is_active) VALUES (?,?,?,1)',
+      method
+    );
+  }
+}
+
+async function seedNotificationSettings() {
+  const events = [
+    ['order_submitted', 0, 'email'],
+    ['work_order_status', 0, 'email'],
+    ['delivery_reminder', 0, 'email'],
+  ];
+
+  for (const event of events) {
+    const existing = await get('SELECT id FROM notification_settings WHERE event_key = ?', [event[0]]);
+    if (existing) continue;
+    await run(
+      'INSERT INTO notification_settings (event_key, enabled, channel, updated_at) VALUES (?,?,?,datetime(\'now\'))',
+      event
     );
   }
 }
@@ -316,17 +414,60 @@ async function main() {
   ]);
   await ensureColumns('deliveries', [
     { name: 'updated_at', definition: 'DATETIME' },
+    { name: 'order_id', definition: 'INTEGER' },
   ]);
+  await ensureColumns('users', [
+    { name: 'company', definition: 'TEXT' },
+    { name: 'contact_name', definition: 'TEXT' },
+    { name: 'phone', definition: 'TEXT' },
+    { name: 'email', definition: 'TEXT' },
+  ]);
+  await ensureColumns('departments', [
+    { name: 'next_department', definition: 'TEXT' },
+  ]);
+  await ensureColumns('work_orders', [
+    { name: 'order_id', definition: 'INTEGER' },
+    { name: 'service_id', definition: 'INTEGER' },
+    { name: 'next_department', definition: 'TEXT' },
+    { name: 'requires_approval', definition: 'INTEGER DEFAULT 0' },
+    { name: 'approval_status', definition: 'TEXT' },
+  ]);
+  await run('CREATE INDEX IF NOT EXISTS idx_work_orders_order_id ON work_orders(order_id)');
+  await run('CREATE INDEX IF NOT EXISTS idx_work_orders_service_id ON work_orders(service_id)');
+  await run('CREATE INDEX IF NOT EXISTS idx_deliveries_order_id ON deliveries(order_id)');
   await ensureNotifications();
   await seedAdmin();
   await seedCustomers();
   await seedDepartments();
+  await applyDepartmentRoutes();
+  await seedServices();
+  await seedDeliveryMethods();
+  await seedNotificationSettings();
   await seedStages();
   await seedSampleOrders();
   await seedProductionBoard();
   await seedDeliveries();
   await normalizeLegacyWorkOrderStatuses();
+  await ensureExternalIdUniqueIndex();
   console.log('Database initialization complete.');
+}
+
+async function ensureExternalIdUniqueIndex() {
+  const duplicate = await get(
+    `SELECT external_id
+     FROM work_orders
+     WHERE external_id IS NOT NULL
+     GROUP BY external_id
+     HAVING COUNT(*) > 1
+     LIMIT 1`
+  );
+  if (duplicate) {
+    console.warn(
+      `Skipping unique index on work_orders.external_id because duplicate values exist (example: ${duplicate.external_id})`
+    );
+    return;
+  }
+  await run('CREATE UNIQUE INDEX IF NOT EXISTS idx_work_orders_external_id ON work_orders(external_id)');
 }
 
 main()

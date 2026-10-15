@@ -109,7 +109,7 @@ export function AuthProvider({ children }) {
         setIsAuthenticated(true);
         setLoginError('');
         setAuthMessage('');
-        navigate('/', { replace: true });
+        navigate(payload.user?.role === 'customer' ? '/order' : '/', { replace: true });
         return true;
       } catch {
         setUser(null);

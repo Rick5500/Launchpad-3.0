@@ -3,6 +3,7 @@ const auth = require('../auth');
 const db = require('../db');
 const { WORK_ORDER_STATUSES } = require('../statuses');
 const barcodeEvents = require('../barcodeEvents');
+const { loadWorkOrderContext } = require('../orderService');
 const notifications = require('../notifications');
 const router = express.Router();
 
@@ -46,11 +47,24 @@ const workOrderFieldList = `
   wo.routing_instructions,
   wo.attachments,
   wo.notes,
+  wo.order_id,
+  wo.service_id,
+  wo.next_department,
+  wo.requires_approval,
+  wo.approval_status,
   wo.created_at,
   wo.updated_at,
   wo.customer_id,
   u.display_name AS customer_name,
-  u.username AS customer_username
+  u.username AS customer_username,
+  o.order_number,
+  s.name AS service_name
+`;
+
+const workOrderJoins = `
+  LEFT JOIN users u ON wo.customer_id = u.id
+  LEFT JOIN orders o ON o.id = wo.order_id
+  LEFT JOIN services s ON s.id = wo.service_id
 `;
 
 function parseOptionalNumber(value) {
@@ -97,7 +111,7 @@ router.get('/', auth.requireAuth, (req, res) => {
   db.all(
     `SELECT ${workOrderFieldList}
      FROM work_orders wo
-     LEFT JOIN users u ON wo.customer_id = u.id
+     ${workOrderJoins}
      ${where}
      ORDER BY wo.created_at DESC`,
     params,
@@ -123,7 +137,7 @@ router.get('/:id', auth.requireAuth, (req, res) => {
   db.get(
     `SELECT ${workOrderFieldList}
      FROM work_orders wo
-     LEFT JOIN users u ON wo.customer_id = u.id
+     ${workOrderJoins}
      WHERE wo.id = ?${customerClause}`,
     params,
     (err, row) => {
@@ -136,7 +150,12 @@ router.get('/:id', auth.requireAuth, (req, res) => {
         return res.status(404).json({ error: 'Work order not found' });
       }
 
-      res.json(row);
+      loadWorkOrderContext(row, req.user)
+        .then((detailed) => res.json(detailed))
+        .catch((contextErr) => {
+          console.error('WORK ORDER DETAIL ERROR:', contextErr);
+          return res.status(500).json({ error: 'Failed to load work order' });
+        });
     }
   );
 });
@@ -237,7 +256,7 @@ router.post('/', auth.requireAuth, staffRoles, (req, res) => {
       db.get(
         `SELECT ${workOrderFieldList}
          FROM work_orders wo
-         LEFT JOIN users u ON wo.customer_id = u.id
+         ${workOrderJoins}
          WHERE wo.id = ?`,
         [newId],
         (err2, row) => {
@@ -347,7 +366,7 @@ router.put('/:id', auth.requireAuth, staffRoles, (req, res) => {
           db.get(
             `SELECT ${workOrderFieldList}
              FROM work_orders wo
-             LEFT JOIN users u ON wo.customer_id = u.id
+             ${workOrderJoins}
              WHERE wo.id = ?`,
             [id],
             (err2, row) => {

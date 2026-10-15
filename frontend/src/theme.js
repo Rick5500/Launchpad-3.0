@@ -1,25 +1,49 @@
 import { createTheme } from '@mui/material/styles';
+import { brand } from './brand';
 
 const theme = createTheme({
   palette: {
-    mode: 'dark',
+    mode: 'light',
     primary: {
-      main: '#90caf9',
+      main: brand.navy,
     },
     secondary: {
-      main: '#f48fb1',
+      main: brand.orange,
+    },
+    success: {
+      main: brand.green,
     },
     background: {
-      default: '#121212',
-      paper: '#1d1d1d',
+      default: brand.page,
+      paper: brand.card,
     },
     text: {
-      primary: '#ffffff',
-      secondary: '#b0bec5',
+      primary: brand.text,
+      secondary: brand.muted,
     },
   },
   typography: {
-    fontFamily: 'Inter, Roboto, sans-serif',
+    fontFamily: '"Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  shape: {
+    borderRadius: 8,
+  },
+  components: {
+    MuiCard: {
+      styleOverrides: {
+        root: {
+          border: `1px solid ${brand.border}`,
+          boxShadow: 'none',
+        },
+      },
+    },
+    MuiButton: {
+      styleOverrides: {
+        containedPrimary: {
+          '&:hover': { backgroundColor: brand.navyDark },
+        },
+      },
+    },
   },
 });
 

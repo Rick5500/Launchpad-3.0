@@ -10,11 +10,17 @@ Scope (v1 scaffold):
 - Delivery / Will-call due-time rules and scheduling
 
 High-level data model notes:
-- `users` table with `role` (admin, customer, operator)
-- `work_orders` table capturing items, quantities, due dates, status
+- `users` table with `role` (admin, customer, operator), plus optional company, contact name, phone, and email for order prefill
+- `orders` group work orders. Order numbers are `YYYYMMDD-NNN` and reset daily. Each selected service becomes a work order suffixed `-A`, `-B`, `-C`
+- `services` map to a department queue. Archive file requests are flagged for later approval
+- `order_line_items` hold size, quantity, media, color, binding/finish, mount, and laminate, and link to the matching service's work order
+- `order_files` store upload metadata. Bytes live under `UPLOAD_DIR`, outside the web root
+- `work_orders` table capturing items, quantities, due dates, status, plus `order_id`, `service_id`, and `next_department`
 - `production_board` records or derived from `work_orders` status
 - `barcode_events` to log scans (timestamp, operator, location, payload)
-- `deliveries` table with will-call flags and due-time rules
+- `production_history` starts with an "Order Created" row for printable work orders
+- `deliveries` table with will-call flags, due-time rules, and an optional `order_id`
+- Later screens can use `activity_log`, `system_settings`, `notification_settings`, and `system_alerts` without a new order schema
 
 API endpoints:
 - `POST /api/auth/login` — authenticate users
@@ -42,7 +48,7 @@ Barcode scans:
 
 Delivery / will-call:
 - Rules live in `backend/deliveryRules.js`.
-- Will-call cutoff defaults to 15:00 (`WILL_CALL_CUTOFF`). Carrier cutoff defaults to 14:00 (`CARRIER_CUTOFF`). Timezone defaults to UTC (`DELIVERY_TIMEZONE`).
+- Will-call cutoff defaults to 15:00 (`WILL_CALL_CUTOFF`). Carrier cutoff defaults to 14:00 (`CARRIER_CUTOFF`). When `DELIVERY_TIMEZONE` is unset the code default is UTC. `backend/.env.example` sets `America/New_York` for the shop.
 - Ready before the cutoff on a weekday: due that day at the cutoff. Ready at or after the cutoff, or on a weekend: due the next Monday–Friday at the cutoff. Holidays are not skipped.
 - Flag open deliveries overdue, due today, or due soon (`DUE_SOON_HOURS`, default 1). Status `complete` is not overdue.
 - Status values are `pending`, `scheduled`, `out-for-delivery`, and `complete`.

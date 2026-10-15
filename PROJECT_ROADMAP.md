@@ -29,6 +29,22 @@ The architecture is intentionally modular so the backend can later add route mod
 6. Barcode event logging and tracking.
 7. Delivery / will-call due-time rules.
 8. Reporting, notifications, and role-specific UI flows. **Done.** Staff reports with CSV export, in-app notifications, and a notification bell are in place. Customers cannot open reports and only see notifications for their own work orders and deliveries.
+9. Phase 1 order intake: customer order form, order numbers, services, line items, and file uploads. Done in this phase.
+10. Phase 2 Admin Board.
+11. Phase 3 printable work order.
+12. Phase 4 admin configuration pages.
+
+## Phase 1 — Order intake (done)
+Customers submit one order that creates a work order per selected service (`YYYYMMDD-NNN-A/B/C`). Contact, project, delivery, due date/time, line items, and files are stored with the order. The schema below is in place so later phases do not need a breaking redesign.
+
+## Phase 2 — Admin Board (not built)
+Tabbed department queues with counts, stat cards, an active work orders table with search and filters, a department queue summary, recent activity (`activity_log`), scan activity (`barcode_events`), pending approvals (`work_orders.requires_approval` / `approval_status`), and system alerts (`system_alerts`). Archive file requests are already marked pending when that service is ordered.
+
+## Phase 3 — Printable work order (not built)
+A print/PDF view of the work order with a Code 128 barcode of the work order number (`external_id`), production history (`production_history` plus barcode scans), scan instructions, and the spec block already returned by work order detail. Scanning stays on `POST /api/barcode`.
+
+## Phase 4 — Admin pages (not built)
+Services, Users, System Settings (`system_settings`), notification settings (`notification_settings`, seeded disabled — no mail is sent), Activity Log, Barcode Settings, Search Orders, and a pending-approvals queue for requests such as archive file retrieval. Staff reports and in-app notifications from milestone 8 are already available; this phase is the admin screen for the older notification settings rows. Delivery methods are already a table so the method list can be edited without a schema change.
 
 ## Module Status
 - `frontend/`: Vite + React scaffold complete, login screen in place.

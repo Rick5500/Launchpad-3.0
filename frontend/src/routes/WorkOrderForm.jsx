@@ -236,7 +236,7 @@ export default function WorkOrderForm() {
           ? 'Update existing work order details and operational instructions.'
           : 'Enter the work order details and schedule that will be used by production and delivery teams.'}
       </Typography>
-      <Card sx={{ bgcolor: '#1f2a38' }}>
+      <Card sx={{ bgcolor: '#ffffff' }}>
         <CardContent>
           <Box component="form" onSubmit={handleSubmit} sx={{ display: 'grid', gap: 3 }}>
             {error && <Alert severity="error">{error}</Alert>}
@@ -261,7 +261,7 @@ export default function WorkOrderForm() {
                   onChange={handleChange('external_id')}
                   fullWidth
                   variant="filled"
-                  InputProps={{ sx: { bgcolor: '#121d27' } }}
+                  InputProps={{ sx: { bgcolor: '#ffffff' } }}
                 />
               </Grid>
               <Grid item xs={12} md={6}>
@@ -300,7 +300,7 @@ export default function WorkOrderForm() {
                         : customers.length
                           ? `Select an existing customer. ${OPERATOR_CUSTOMER_MESSAGE}`
                           : `No customers are available. ${OPERATOR_CUSTOMER_MESSAGE}`}
-                      InputProps={{ ...params.InputProps, sx: { bgcolor: '#121d27' } }}
+                      InputProps={{ ...params.InputProps, sx: { bgcolor: '#ffffff' } }}
                     />
                   )}
                 />
@@ -313,7 +313,7 @@ export default function WorkOrderForm() {
                   onChange={handleChange('status')}
                   fullWidth
                   variant="filled"
-                  InputProps={{ sx: { bgcolor: '#121d27' } }}
+                  InputProps={{ sx: { bgcolor: '#ffffff' } }}
                 >
                   {statusOptions.map((status) => (
                     <MenuItem key={status} value={status}>
@@ -330,7 +330,7 @@ export default function WorkOrderForm() {
                   onChange={handleChange('department')}
                   fullWidth
                   variant="filled"
-                  InputProps={{ sx: { bgcolor: '#121d27' } }}
+                  InputProps={{ sx: { bgcolor: '#ffffff' } }}
                 >
                   {departments.length ? departments.map((department) => (
                     <MenuItem key={department.id} value={department.name}>
@@ -350,7 +350,7 @@ export default function WorkOrderForm() {
                   multiline
                   rows={3}
                   variant="filled"
-                  InputProps={{ sx: { bgcolor: '#121d27' } }}
+                  InputProps={{ sx: { bgcolor: '#ffffff' } }}
                 />
               </Grid>
               <Grid item xs={12} md={4}>
@@ -361,7 +361,7 @@ export default function WorkOrderForm() {
                   type="number"
                   fullWidth
                   variant="filled"
-                  InputProps={{ sx: { bgcolor: '#121d27' } }}
+                  InputProps={{ sx: { bgcolor: '#ffffff' } }}
                 />
               </Grid>
               <Grid item xs={12} md={6}>
@@ -373,7 +373,7 @@ export default function WorkOrderForm() {
                   fullWidth
                   InputLabelProps={{ shrink: true }}
                   variant="filled"
-                  InputProps={{ sx: { bgcolor: '#121d27' } }}
+                  InputProps={{ sx: { bgcolor: '#ffffff' } }}
                 />
               </Grid>
               <Grid item xs={12} md={6}>
@@ -385,7 +385,7 @@ export default function WorkOrderForm() {
                   fullWidth
                   InputLabelProps={{ shrink: true }}
                   variant="filled"
-                  InputProps={{ sx: { bgcolor: '#121d27' } }}
+                  InputProps={{ sx: { bgcolor: '#ffffff' } }}
                 />
               </Grid>
               <Grid item xs={12} md={6}>
@@ -395,7 +395,7 @@ export default function WorkOrderForm() {
                   onChange={handleChange('production_line')}
                   fullWidth
                   variant="filled"
-                  InputProps={{ sx: { bgcolor: '#121d27' } }}
+                  InputProps={{ sx: { bgcolor: '#ffffff' } }}
                 />
               </Grid>
               <Grid item xs={12} md={6}>
@@ -405,7 +405,7 @@ export default function WorkOrderForm() {
                   onChange={handleChange('attachments')}
                   fullWidth
                   variant="filled"
-                  InputProps={{ sx: { bgcolor: '#121d27' } }}
+                  InputProps={{ sx: { bgcolor: '#ffffff' } }}
                 />
               </Grid>
               <Grid item xs={12}>
@@ -417,7 +417,7 @@ export default function WorkOrderForm() {
                   multiline
                   rows={3}
                   variant="filled"
-                  InputProps={{ sx: { bgcolor: '#121d27' } }}
+                  InputProps={{ sx: { bgcolor: '#ffffff' } }}
                 />
               </Grid>
               <Grid item xs={12}>
@@ -429,7 +429,7 @@ export default function WorkOrderForm() {
                   multiline
                   rows={2}
                   variant="filled"
-                  InputProps={{ sx: { bgcolor: '#121d27' } }}
+                  InputProps={{ sx: { bgcolor: '#ffffff' } }}
                 />
               </Grid>
               <Grid item xs={12}>
@@ -441,7 +441,7 @@ export default function WorkOrderForm() {
                   multiline
                   rows={3}
                   variant="filled"
-                  InputProps={{ sx: { bgcolor: '#121d27' } }}
+                  InputProps={{ sx: { bgcolor: '#ffffff' } }}
                 />
               </Grid>
             </Grid>

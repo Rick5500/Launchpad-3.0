@@ -11,12 +11,15 @@ import Customers from './routes/Customers';
 import ProductionBoard from './routes/ProductionBoard';
 import BarcodeScan from './routes/BarcodeScan';
 import Deliveries from './routes/Deliveries';
+import CustomerOrderForm from './routes/CustomerOrderForm';
+import OrderDetail from './routes/OrderDetail';
 import Reports from './routes/Reports';
 import Notifications from './routes/Notifications';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import theme from './theme';
+import { brand } from './brand';
 
 function LoginScreen() {
   const { login, isLoggingIn, loginError, authMessage } = useAuth();
@@ -48,10 +51,14 @@ function LoginScreen() {
   }
 
   return (
-    <Box sx={{ fontFamily: 'sans-serif', p: 4, minHeight: '100vh', bgcolor: 'background.default' }}>
-      <Box sx={{ maxWidth: 380, mx: 'auto', p: 4, bgcolor: 'background.paper', borderRadius: 2, boxShadow: 3 }}>
-        <Typography variant="h4" gutterBottom>
-          Launchpad 3.0 Login
+    <Box sx={{ minHeight: '100vh', bgcolor: brand.navy, display: 'flex', alignItems: 'center', justifyContent: 'center', p: 2 }}>
+      <Box sx={{ width: 440, maxWidth: '100%', bgcolor: '#fff', borderRadius: 2, boxShadow: 6, overflow: 'hidden' }}>
+        <Box sx={{ bgcolor: '#fff', px: 3, pt: 3, textAlign: 'center' }}>
+          <Box component="img" src="/logo.png" alt="LaunchPad 3.0" sx={{ width: 280, maxWidth: '100%', height: 'auto' }} />
+        </Box>
+        <Box sx={{ p: 4, pt: 1 }}>
+        <Typography variant="h5" sx={{ color: brand.navy, fontWeight: 700, mb: 2 }}>
+          Sign in
         </Typography>
         <Box component="form" onSubmit={handleSubmit} sx={{ display: 'grid', gap: 2 }}>
           <TextField
@@ -72,7 +79,7 @@ function LoginScreen() {
             autoComplete="current-password"
             variant="outlined"
           />
-          <Button type="submit" variant="contained" size="large" disabled={isLoggingIn}>
+          <Button type="submit" variant="contained" size="large" disabled={isLoggingIn} sx={{ bgcolor: brand.orange, '&:hover': { bgcolor: brand.orangeDark } }}>
             {isLoggingIn ? <CircularProgress size={24} color="inherit" /> : 'Login'}
           </Button>
         </Box>
@@ -81,9 +88,16 @@ function LoginScreen() {
             {loginError || localError || authMessage}
           </Alert>
         )}
+        </Box>
       </Box>
     </Box>
   );
+}
+
+function HomeOrOrder() {
+  const { user } = useAuth();
+  if (user?.role === 'customer') return <Navigate to="/order" replace />;
+  return <HomeDashboard />;
 }
 
 function AppRoutes() {
@@ -99,9 +113,11 @@ function AppRoutes() {
 
   return (
     <Routes>
-      <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginScreen />} />
+      <Route path="/login" element={user ? <Navigate to={user.role === 'customer' ? '/order' : '/'} replace /> : <LoginScreen />} />
+      <Route path="/order" element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><CustomerOrderForm /></ProtectedRoute>} />
+      <Route path="/orders/:id" element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><OrderDetail /></ProtectedRoute>} />
       <Route path="/" element={<Layout user={user} onLogout={logout} />}>
-        <Route index element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><HomeDashboard /></ProtectedRoute>} />
+        <Route index element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><HomeOrOrder /></ProtectedRoute>} />
         <Route path="work-orders" element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><WorkOrdersList /></ProtectedRoute>} />
         <Route path="work-orders/new" element={<ProtectedRoute roles={['admin', 'operator']}><WorkOrderForm /></ProtectedRoute>} />
         <Route path="work-orders/:id" element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><WorkOrderDetail /></ProtectedRoute>} />

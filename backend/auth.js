@@ -163,7 +163,8 @@ function clearLoginFailuresForUsername(username) {
 
 function login(username, password, cb) {
   db.get(
-    'SELECT id, username, password_hash, role, display_name FROM users WHERE username = ?',
+    `SELECT id, username, password_hash, role, display_name, company, contact_name, phone, email
+     FROM users WHERE username = ?`,
     [username],
     (err, row) => {
       if (err) return cb(err);
@@ -182,6 +183,10 @@ function login(username, password, cb) {
                 username: row.username,
                 role: row.role,
                 display_name: row.display_name,
+                company: row.company || '',
+                contact_name: row.contact_name || '',
+                phone: row.phone || '',
+                email: row.email || '',
               },
             });
           };

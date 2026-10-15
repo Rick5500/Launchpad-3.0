@@ -116,7 +116,7 @@ export default function Customers() {
       <Typography color="text.secondary" gutterBottom>
         Reset a customer password so an existing account can sign in. The new password is shown once.
       </Typography>
-      <Card sx={{ bgcolor: '#1f2a38', mt: 2 }}>
+      <Card sx={{ bgcolor: '#ffffff', mt: 2 }}>
         <CardContent>
           <TableContainer>
             <Table>
@@ -137,7 +137,7 @@ export default function Customers() {
                   </TableRow>
                 ) : (
                   customers.map((customer) => (
-                    <TableRow key={customer.id} hover sx={{ '&:hover': { bgcolor: '#16212d' } }}>
+                    <TableRow key={customer.id} hover sx={{ '&:hover': { bgcolor: '#f0f4fa' } }}>
                       <TableCell>{customer.display_name || '-'}</TableCell>
                       <TableCell>{customer.username}</TableCell>
                       <TableCell>{formatCreated(customer.created_at)}</TableCell>
@@ -170,7 +170,7 @@ export default function Customers() {
                 value={issuedPassword}
                 fullWidth
                 variant="filled"
-                InputProps={{ readOnly: true, sx: { bgcolor: '#121d27' } }}
+                InputProps={{ readOnly: true, sx: { bgcolor: '#ffffff' } }}
               />
               {formError && <Alert severity="warning">{formError}</Alert>}
             </DialogContent>
@@ -193,7 +193,7 @@ export default function Customers() {
                 autoComplete="new-password"
                 variant="filled"
                 helperText="Leave blank to generate a random password. A typed password must be at least 8 characters."
-                InputProps={{ sx: { bgcolor: '#121d27' } }}
+                InputProps={{ sx: { bgcolor: '#ffffff' } }}
               />
             </DialogContent>
             <DialogActions>

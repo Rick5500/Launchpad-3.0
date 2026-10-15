@@ -64,7 +64,7 @@ export default function WorkOrdersList() {
           </Button>
         )}
       </Box>
-      <Card sx={{ bgcolor: '#1f2a38' }}>
+      <Card sx={{ bgcolor: '#ffffff' }}>
         <CardContent>
           <TableContainer>
             <Table>
@@ -91,7 +91,7 @@ export default function WorkOrdersList() {
                     <TableRow
                       key={order.id}
                       hover
-                      sx={{ cursor: 'pointer', '&:hover': { bgcolor: '#16212d' } }}
+                      sx={{ cursor: 'pointer', '&:hover': { bgcolor: '#f0f4fa' } }}
                       onClick={() => navigate(`/work-orders/${order.id}`)}
                     >
                       <TableCell>{order.external_id || `WO-${order.id}`}</TableCell>

@@ -227,7 +227,7 @@ export default function Deliveries() {
       )}
 
       {canWrite && (
-        <Card sx={{ bgcolor: '#1f2a38', mb: 3 }}>
+        <Card sx={{ bgcolor: '#ffffff', mb: 3 }}>
           <CardContent>
             <Typography variant="h6" gutterBottom>
               {editingId ? `Edit delivery #${editingId}` : 'New delivery'}
@@ -298,7 +298,7 @@ export default function Deliveries() {
         </Card>
       )}
 
-      <Card sx={{ bgcolor: '#1f2a38' }}>
+      <Card sx={{ bgcolor: '#ffffff' }}>
         <CardContent>
           <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 2 }}>
             <TextField
