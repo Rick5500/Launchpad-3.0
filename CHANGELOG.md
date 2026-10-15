@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Customer order intake: `orders`, `services`, `order_line_items`, `order_files`, `delivery_methods`, and a daily `order_sequences` counter (`YYYYMMDD-NNN`, work orders suffixed `-A`, `-B`, `-C`)
+- `POST /api/orders`, `GET /api/orders`, and `GET /api/orders/:id` for admin, operator, and customer, with customers limited to their own orders
+- Multipart uploads at `POST /api/uploads` with type and size limits, random stored names under `UPLOAD_DIR`, and authenticated download and delete
+- Customer Order Form at `/order`, with a success panel, and order specs, files, and routing on the work order detail page
+- Seeded print-shop services and the Large Format, Planroom, Archive File, Quality, Dispatch, and Complete departments
+- Tables reserved for later phases: `production_history`, `activity_log`, `system_settings`, `notification_settings`, and `system_alerts`
 - Barcode scan logging on `POST /api/barcode`, writing `scanned_value`, resolved `work_order_id`, session `operator_id`, `location`, and `event_time` to `barcode_events`
 - `GET /api/barcode/events` with work order, operator, date-range, limit, and offset filters
 - `GET /api/workorders/:id/events` for one work order's scan history

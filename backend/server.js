@@ -34,6 +34,9 @@ const customersRouter = require('./routes/customers');
 const deliveryRouter = require('./routes/delivery');
 const barcodeRouter = require('./routes/barcode');
 const departmentsRouter = require('./routes/departments');
+const ordersRouter = require('./routes/orders');
+const uploadsRouter = require('./routes/uploads');
+const { ensureUploadDir } = require('./fileStore');
 
 
 // Health check
@@ -81,7 +84,30 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/auth/me', auth.requireAuth, (req, res) => {
-  res.json({ user: req.user });
+  db.get(
+    `SELECT id, username, role, display_name, company, contact_name, phone, email
+     FROM users WHERE id = ?`,
+    [req.user.userId],
+    (err, row) => {
+      if (err || !row) {
+        if (err) console.error('AUTH ME ERROR:', err);
+        return res.json({ user: req.user });
+      }
+      res.json({
+        user: {
+          id: row.id,
+          userId: row.id,
+          username: row.username,
+          role: row.role,
+          display_name: row.display_name,
+          company: row.company || '',
+          contact_name: row.contact_name || '',
+          phone: row.phone || '',
+          email: row.email || '',
+        },
+      });
+    }
+  );
 });
 
 app.use('/api/dashboard', dashboardRouter);
@@ -93,6 +119,14 @@ app.use('/api/customers', customersRouter);
 app.use('/api/delivery', deliveryRouter);
 app.use('/api/barcode', barcodeRouter);
 app.use('/api/departments', departmentsRouter);
+app.use('/api/orders', ordersRouter);
+app.use('/api/uploads', uploadsRouter);
+
+try {
+  ensureUploadDir();
+} catch (err) {
+  console.error('UPLOAD DIR ERROR:', err.message);
+}
 
 // Admin placeholder
 app.get('/api/admin', auth.requireAuth, auth.requireRole('admin'), (req, res) => res.json({ message: 'admin endpoint (placeholder)', user: req.user }));

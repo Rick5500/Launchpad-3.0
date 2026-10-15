@@ -4,9 +4,10 @@ import { Box, Button, Card, CardContent, Chip, Grid, Typography, Tabs, Tab, Divi
 import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
 import SectionCard from '../components/SectionCard';
-import { authFetch } from '../api';
+import { authFetch, downloadAuthorized } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { canonicalWorkOrderStatus } from '../workOrderStatus';
+import { formatFileSize } from '../brand';
 
 const tabs = ['Overview', 'Specifications', 'Attachments', 'Scan History', 'Routing', 'Notes'];
 
@@ -50,6 +51,120 @@ function ScanHistory({ events, loading, error }) {
   );
 }
 
+function SpecificationBlocks({ workOrder }) {
+  const blocks = workOrder.specification_lines || [];
+  if (!blocks.length) {
+    return (
+      <Typography sx={{ whiteSpace: 'pre-wrap' }}>
+        {workOrder.specifications || 'No specifications recorded for this work order.'}
+      </Typography>
+    );
+  }
+  return (
+    <Box sx={{ display: 'grid', gap: 2 }}>
+      {blocks.map((block) => (
+        <Box key={`${block.line_number}-${block.title}`}>
+          <Typography sx={{ fontWeight: 700, mb: 1 }}>{block.title}</Typography>
+          <Grid container spacing={1}>
+            {block.fields.map((field) => (
+              <Grid item xs={12} sm={6} key={field.label}>
+                <Typography variant="caption" color="text.secondary">{field.label}</Typography>
+                <Typography>{field.value || '—'}</Typography>
+              </Grid>
+            ))}
+          </Grid>
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
+function AttachmentList({ files, legacy }) {
+  if (!files?.length) {
+    return <Typography sx={{ whiteSpace: 'pre-wrap' }}>{legacy || 'No files are attached to this work order.'}</Typography>;
+  }
+  return (
+    <TableContainer>
+      <Table size="small">
+        <TableHead>
+          <TableRow>
+            <TableCell>File Name</TableCell>
+            <TableCell>Uploaded</TableCell>
+            <TableCell>Size</TableCell>
+            <TableCell />
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {files.map((file) => (
+            <TableRow key={file.id}>
+              <TableCell>{file.original_name}</TableCell>
+              <TableCell>{formatStamp(file.uploaded_at)}</TableCell>
+              <TableCell>{formatFileSize(file.size_bytes)}</TableCell>
+              <TableCell>
+                <Button size="small" onClick={() => downloadAuthorized(`/api/uploads/${file.id}/download`, file.original_name)}>
+                  Download
+                </Button>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
+  );
+}
+
+function RoutingPanel({ workOrder }) {
+  const routing = workOrder.routing || {};
+  const history = workOrder.production_history || [];
+  return (
+    <Box>
+      <Grid container spacing={2} sx={{ mb: 2 }}>
+        <Grid item xs={12} sm={4}>
+          <Typography variant="caption" color="text.secondary">Department</Typography>
+          <Typography>{routing.department || workOrder.department || '—'}</Typography>
+        </Grid>
+        <Grid item xs={12} sm={4}>
+          <Typography variant="caption" color="text.secondary">Current Status</Typography>
+          <Typography>{routing.current_status_label || canonicalWorkOrderStatus(workOrder.status) || '—'}</Typography>
+        </Grid>
+        <Grid item xs={12} sm={4}>
+          <Typography variant="caption" color="text.secondary">Next Department</Typography>
+          <Typography>{routing.next_department || workOrder.next_department || '—'}</Typography>
+        </Grid>
+      </Grid>
+      {workOrder.routing_instructions && (
+        <Typography sx={{ mb: 2 }}>{workOrder.routing_instructions}</Typography>
+      )}
+      {history.length > 0 && (
+        <TableContainer>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Department</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell>Date / Time</TableCell>
+                <TableCell>Scanned By</TableCell>
+                <TableCell>Notes</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {history.map((row) => (
+                <TableRow key={row.id}>
+                  <TableCell>{row.department || '—'}</TableCell>
+                  <TableCell>{row.status || '—'}</TableCell>
+                  <TableCell>{formatStamp(row.event_time)}</TableCell>
+                  <TableCell>{row.scanned_by || '—'}</TableCell>
+                  <TableCell>{row.notes || '—'}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      )}
+    </Box>
+  );
+}
+
 function getTabContent(tab, workOrder, scanState) {
   switch (tab) {
     case 'Overview':
@@ -61,8 +176,11 @@ function getTabContent(tab, workOrder, scanState) {
           <Grid container spacing={2}>
             {Object.entries({
               'Work Order': workOrder.external_id,
-              'Status': canonicalWorkOrderStatus(workOrder.status),
+              'Order': workOrder.order_number,
+              'Service': workOrder.service_name,
+              'Status': workOrder.routing?.current_status_label || canonicalWorkOrderStatus(workOrder.status),
               'Department': workOrder.department,
+              'Next Department': workOrder.next_department,
               'Quantity': workOrder.quantity,
               'Due Date': workOrder.due_date,
               'Customer': workOrder.customer_name,
@@ -80,15 +198,15 @@ function getTabContent(tab, workOrder, scanState) {
         </Box>
       );
     case 'Specifications':
-      return <Typography color="text.secondary">Specification details will be added here when available.</Typography>;
+      return <SpecificationBlocks workOrder={workOrder} />;
     case 'Attachments':
-      return <Typography color="text.secondary">No attachments yet. This section will support file uploads in the future.</Typography>;
+      return <AttachmentList files={workOrder.files} legacy={workOrder.attachments} />;
     case 'Scan History':
       return <ScanHistory events={scanState.events} loading={scanState.loading} error={scanState.error} />;
     case 'Routing':
-      return <Typography color="text.secondary">Routing details and production lane path will appear here.</Typography>;
+      return <RoutingPanel workOrder={workOrder} />;
     case 'Notes':
-      return <Typography color="text.secondary">Internal notes and comments will be displayed here.</Typography>;
+      return <Typography sx={{ whiteSpace: 'pre-wrap' }}>{workOrder.notes || 'No notes on this work order.'}</Typography>;
     default:
       return null;
   }
@@ -173,19 +291,20 @@ export default function WorkOrderDetail() {
       </Box>
 
       <Box sx={{ mt: 2, mb: 3 }}>
-        <Chip label={canonicalWorkOrderStatus(workOrder.status) || '-'} color="primary" sx={{ mr: 1 }} />
-        <Chip label={workOrder.department} sx={{ mr: 1 }} />
+        <Chip label={workOrder.routing?.current_status_label || canonicalWorkOrderStatus(workOrder.status) || '-'} color="primary" sx={{ mr: 1 }} />
+        <Chip label={workOrder.department || 'No department'} sx={{ mr: 1 }} />
+        <Chip label={workOrder.next_department ? `Next: ${workOrder.next_department}` : 'No next department'} sx={{ mr: 1 }} />
         <Chip label={`Qty: ${workOrder.quantity}`} />
       </Box>
 
-      <Card sx={{ bgcolor: '#1f2a38' }}>
+      <Card sx={{ bgcolor: '#ffffff' }}>
         <CardContent>
           <Tabs value={activeTab} onChange={(_, value) => setActiveTab(value)} indicatorColor="primary" textColor="inherit" variant="scrollable" scrollButtons="auto">
             {tabs.map((tab) => (
               <Tab key={tab} label={tab} value={tab} />
             ))}
           </Tabs>
-          <Divider sx={{ borderColor: '#334455', my: 2 }} />
+          <Divider sx={{ borderColor: '#e2e8f0', my: 2 }} />
           {getTabContent(activeTab, workOrder, { events, loading: eventsLoading, error: eventsError })}
         </CardContent>
       </Card>

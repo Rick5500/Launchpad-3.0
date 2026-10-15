@@ -34,7 +34,7 @@ import { authFetch } from '../api';
 const emptyForm = {
   name: '',
   description: '',
-  color: '#90caf9',
+  color: '#0A2F6E',
   icon: '',
   sort_order: '0',
   is_active: true,
@@ -110,7 +110,7 @@ export default function DepartmentsAdmin() {
     setForm({
       name: department.name || '',
       description: department.description || '',
-      color: department.color || '#90caf9',
+      color: department.color || '#0A2F6E',
       icon: department.icon || '',
       sort_order: String(department.sort_order ?? 0),
       is_active: Boolean(department.is_active),
@@ -174,7 +174,7 @@ export default function DepartmentsAdmin() {
 
       <Grid container spacing={3}>
         <Grid item xs={12} md={4}>
-          <Card sx={{ bgcolor: '#1f2a38' }}>
+          <Card sx={{ bgcolor: '#ffffff' }}>
             <CardContent>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Typography variant="h6">{editingId ? 'Edit Department' : 'Add Department'}</Typography>
@@ -193,7 +193,7 @@ export default function DepartmentsAdmin() {
                   fullWidth
                   variant="filled"
                   required
-                  InputProps={{ sx: { bgcolor: '#121d27' } }}
+                  InputProps={{ sx: { bgcolor: '#ffffff' } }}
                 />
                 <TextField
                   label="Description"
@@ -203,7 +203,7 @@ export default function DepartmentsAdmin() {
                   multiline
                   rows={3}
                   variant="filled"
-                  InputProps={{ sx: { bgcolor: '#121d27' } }}
+                  InputProps={{ sx: { bgcolor: '#ffffff' } }}
                 />
                 <Grid container spacing={2}>
                   <Grid item xs={6}>
@@ -213,7 +213,7 @@ export default function DepartmentsAdmin() {
                       onChange={handleChange('color')}
                       fullWidth
                       variant="filled"
-                      InputProps={{ sx: { bgcolor: '#121d27' } }}
+                      InputProps={{ sx: { bgcolor: '#ffffff' } }}
                     />
                   </Grid>
                   <Grid item xs={6}>
@@ -223,7 +223,7 @@ export default function DepartmentsAdmin() {
                       onChange={handleChange('icon')}
                       fullWidth
                       variant="filled"
-                      InputProps={{ sx: { bgcolor: '#121d27' } }}
+                      InputProps={{ sx: { bgcolor: '#ffffff' } }}
                     />
                   </Grid>
                 </Grid>
@@ -234,7 +234,7 @@ export default function DepartmentsAdmin() {
                   onChange={handleChange('sort_order')}
                   fullWidth
                   variant="filled"
-                  InputProps={{ sx: { bgcolor: '#121d27' } }}
+                  InputProps={{ sx: { bgcolor: '#ffffff' } }}
                 />
                 <FormControlLabel
                   control={<Switch checked={Boolean(form.is_active)} onChange={handleChange('is_active')} />}
@@ -249,7 +249,7 @@ export default function DepartmentsAdmin() {
         </Grid>
 
         <Grid item xs={12} md={8}>
-          <Card sx={{ bgcolor: '#1f2a38' }}>
+          <Card sx={{ bgcolor: '#ffffff' }}>
             <CardContent>
               <Typography variant="h6" gutterBottom>
                 Department List
@@ -257,14 +257,14 @@ export default function DepartmentsAdmin() {
               {departments.length === 0 ? (
                 <Typography color="text.secondary">No departments have been created yet.</Typography>
               ) : (
-                <TableContainer component={Paper} sx={{ bgcolor: '#14202b' }}>
+                <TableContainer component={Paper} sx={{ bgcolor: '#f7f9fc' }}>
                   <Table>
                     <TableHead>
                       <TableRow>
-                        <TableCell sx={{ color: '#90caf9' }}>Department</TableCell>
-                        <TableCell sx={{ color: '#90caf9' }}>Status</TableCell>
-                        <TableCell sx={{ color: '#90caf9' }}>Sort</TableCell>
-                        <TableCell sx={{ color: '#90caf9' }}>Actions</TableCell>
+                        <TableCell sx={{ color: '#0A2F6E' }}>Department</TableCell>
+                        <TableCell sx={{ color: '#0A2F6E' }}>Status</TableCell>
+                        <TableCell sx={{ color: '#0A2F6E' }}>Sort</TableCell>
+                        <TableCell sx={{ color: '#0A2F6E' }}>Actions</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
@@ -272,7 +272,7 @@ export default function DepartmentsAdmin() {
                         <TableRow key={department.id}>
                           <TableCell>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <Box sx={{ width: 12, height: 12, borderRadius: '50%', bgcolor: department.color || '#90caf9' }} />
+                              <Box sx={{ width: 12, height: 12, borderRadius: '50%', bgcolor: department.color || '#0A2F6E' }} />
                               <Box>
                                 <Typography>{department.name}</Typography>
                                 <Typography variant="body2" color="text.secondary">
@@ -299,7 +299,7 @@ export default function DepartmentsAdmin() {
                   </Table>
                 </TableContainer>
               )}
-              <Divider sx={{ my: 2, borderColor: '#334455' }} />
+              <Divider sx={{ my: 2, borderColor: '#e2e8f0' }} />
               <Typography variant="body2" color="text.secondary">
                 Active departments: {activeDepartments.length} • Inactive departments: {inactiveDepartments.length}
               </Typography>

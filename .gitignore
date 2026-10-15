@@ -23,6 +23,9 @@ database/*.sqlite3
 # Keep database folder
 !database/.gitkeep
 
+# Order uploads live outside the web root
+data/uploads/
+
 # =========================
 # Logs
 # =========================

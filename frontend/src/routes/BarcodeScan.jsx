@@ -111,7 +111,7 @@ export default function BarcodeScan() {
         Scan a work order barcode or type its number. A keyboard wedge scanner can type into the field and press Enter.
       </Typography>
 
-      <Card sx={{ bgcolor: '#1f2a38', mb: 3 }}>
+      <Card sx={{ bgcolor: '#ffffff', mb: 3 }}>
         <CardContent>
           <Box component="form" onSubmit={submitScan} sx={{ display: 'grid', gap: 2 }}>
             <TextField
@@ -158,7 +158,7 @@ export default function BarcodeScan() {
         </CardContent>
       </Card>
 
-      <Card sx={{ bgcolor: '#1f2a38' }}>
+      <Card sx={{ bgcolor: '#ffffff' }}>
         <CardContent>
           <Typography variant="h6" gutterBottom>
             Recent scans

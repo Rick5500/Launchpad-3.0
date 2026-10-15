@@ -159,7 +159,7 @@ export default function HomeDashboard() {
       <Grid container spacing={3}>
         {(isCustomer ? metricCards.filter((card) => card.key === 'totalWorkOrders' || card.key === 'activeWorkOrders') : metricCards).map((card) => (
           <Grid key={card.key} xs={12} sm={6} md={4}>
-            <Card sx={{ minHeight: 130, bgcolor: '#1f2a38' }}>
+            <Card sx={{ minHeight: 130, bgcolor: '#ffffff' }}>
               <CardContent>
                 <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                   {card.label}
@@ -176,32 +176,32 @@ export default function HomeDashboard() {
       <Grid container spacing={3} sx={{ mt: 3 }}>
         {!isCustomer && (
         <Grid item xs={12}>
-          <Card sx={{ bgcolor: '#1f2a38' }}>
+          <Card sx={{ bgcolor: '#ffffff' }}>
             <CardContent>
               <Typography variant="h6" gutterBottom>
                 Production Snapshot
               </Typography>
               <Grid container spacing={2}>
                 <Grid item xs={12} sm={6} md={3}>
-                  <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#14202b' }}>
+                  <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#f7f9fc' }}>
                     <Typography variant="subtitle2" color="text.secondary">Work Orders by Stage</Typography>
                     <Typography variant="h5">{productionMetrics?.workOrdersByStage?.length || 0}</Typography>
                   </Box>
                 </Grid>
                 <Grid item xs={12} sm={6} md={3}>
-                  <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#14202b' }}>
+                  <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#f7f9fc' }}>
                     <Typography variant="subtitle2" color="text.secondary">Rush Orders</Typography>
                     <Typography variant="h5">{productionMetrics?.rushOrders ?? 0}</Typography>
                   </Box>
                 </Grid>
                 <Grid item xs={12} sm={6} md={3}>
-                  <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#14202b' }}>
+                  <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#f7f9fc' }}>
                     <Typography variant="subtitle2" color="text.secondary">Late Orders</Typography>
                     <Typography variant="h5">{productionMetrics?.lateOrders ?? 0}</Typography>
                   </Box>
                 </Grid>
                 <Grid item xs={12} sm={6} md={3}>
-                  <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#14202b' }}>
+                  <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#f7f9fc' }}>
                     <Typography variant="subtitle2" color="text.secondary">Today&apos;s Shipments</Typography>
                     <Typography variant="h5">{productionMetrics?.todaysShipments ?? 0}</Typography>
                   </Box>
@@ -212,7 +212,7 @@ export default function HomeDashboard() {
         </Grid>
         )}
         <Grid item xs={12} md={isCustomer ? 12 : 8}>
-          <Card sx={{ bgcolor: '#1f2a38' }}>
+          <Card sx={{ bgcolor: '#ffffff' }}>
             <CardContent>
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
                 <Box>
@@ -234,24 +234,24 @@ export default function HomeDashboard() {
                 </Tabs>
               </Box>
 
-              <Divider sx={{ my: 2, borderColor: '#334455' }} />
+              <Divider sx={{ my: 2, borderColor: '#e2e8f0' }} />
 
-              <TableContainer component={Paper} sx={{ bgcolor: '#14202b' }}>
+              <TableContainer component={Paper} sx={{ bgcolor: '#f7f9fc' }}>
                 <Table>
                   <TableHead>
                     <TableRow>
-                      <TableCell sx={{ color: '#90caf9' }}>WO #</TableCell>
-                      <TableCell sx={{ color: '#90caf9' }}>Customer</TableCell>
-                      <TableCell sx={{ color: '#90caf9' }}>Department</TableCell>
-                      <TableCell sx={{ color: '#90caf9' }}>Status</TableCell>
-                      <TableCell sx={{ color: '#90caf9' }}>Due Date</TableCell>
-                      <TableCell sx={{ color: '#90caf9' }}>Qty</TableCell>
+                      <TableCell sx={{ color: '#0A2F6E' }}>WO #</TableCell>
+                      <TableCell sx={{ color: '#0A2F6E' }}>Customer</TableCell>
+                      <TableCell sx={{ color: '#0A2F6E' }}>Department</TableCell>
+                      <TableCell sx={{ color: '#0A2F6E' }}>Status</TableCell>
+                      <TableCell sx={{ color: '#0A2F6E' }}>Due Date</TableCell>
+                      <TableCell sx={{ color: '#0A2F6E' }}>Qty</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {filteredOrders.length ? (
                       filteredOrders.map((order) => (
-                        <TableRow key={order.id} sx={{ '&:hover': { bgcolor: '#1a2531' } }}>
+                        <TableRow key={order.id} sx={{ '&:hover': { bgcolor: '#f0f4fa' } }}>
                           <TableCell>{order.external_id || `WO-${order.id}`}</TableCell>
                           <TableCell>{order.customer_name || 'Unknown'}</TableCell>
                           <TableCell>{order.department || 'General'}</TableCell>
@@ -278,7 +278,7 @@ export default function HomeDashboard() {
         <Grid item xs={12} md={4}>
           <Grid container spacing={3}>
             <Grid item xs={12}>
-              <Card sx={{ bgcolor: '#1f2a38' }}>
+              <Card sx={{ bgcolor: '#ffffff' }}>
                 <CardContent>
                   <Typography variant="h6" gutterBottom>
                     Department Summary
@@ -300,7 +300,7 @@ export default function HomeDashboard() {
             </Grid>
 
             <Grid item xs={12}>
-              <Card sx={{ bgcolor: '#1f2a38' }}>
+              <Card sx={{ bgcolor: '#ffffff' }}>
                 <CardContent>
                   <Typography variant="h6" gutterBottom>
                     Quick Actions
@@ -321,7 +321,7 @@ export default function HomeDashboard() {
             </Grid>
 
             <Grid item xs={12}>
-              <Card sx={{ bgcolor: '#1f2a38' }}>
+              <Card sx={{ bgcolor: '#ffffff' }}>
                 <CardContent>
                   <Typography variant="h6" gutterBottom>
                     Performance Widget

@@ -112,25 +112,25 @@ export default function ProductionBoard() {
       <SectionCard title="Production Snapshot" subtitle="Live counts for production flow and shipping readiness.">
         <Grid container spacing={2}>
           <Grid item xs={12} sm={6} md={3}>
-            <Paper sx={{ p: 2, bgcolor: '#14202b' }}>
+            <Paper sx={{ p: 2, bgcolor: '#f7f9fc' }}>
               <Typography variant="subtitle2" color="text.secondary">Work Orders by Stage</Typography>
               <Typography variant="h5">{metrics?.workOrdersByStage?.length || 0}</Typography>
             </Paper>
           </Grid>
           <Grid item xs={12} sm={6} md={3}>
-            <Paper sx={{ p: 2, bgcolor: '#14202b' }}>
+            <Paper sx={{ p: 2, bgcolor: '#f7f9fc' }}>
               <Typography variant="subtitle2" color="text.secondary">Rush Orders</Typography>
               <Typography variant="h5">{metrics?.rushOrders ?? 0}</Typography>
             </Paper>
           </Grid>
           <Grid item xs={12} sm={6} md={3}>
-            <Paper sx={{ p: 2, bgcolor: '#14202b' }}>
+            <Paper sx={{ p: 2, bgcolor: '#f7f9fc' }}>
               <Typography variant="subtitle2" color="text.secondary">Late Orders</Typography>
               <Typography variant="h5">{metrics?.lateOrders ?? 0}</Typography>
             </Paper>
           </Grid>
           <Grid item xs={12} sm={6} md={3}>
-            <Paper sx={{ p: 2, bgcolor: '#14202b' }}>
+            <Paper sx={{ p: 2, bgcolor: '#f7f9fc' }}>
               <Typography variant="subtitle2" color="text.secondary">Today's Shipments</Typography>
               <Typography variant="h5">{metrics?.todaysShipments ?? 0}</Typography>
             </Paper>
@@ -143,15 +143,15 @@ export default function ProductionBoard() {
       <Grid container spacing={2} sx={{ alignItems: 'flex-start' }}>
         {stages.map((stage) => (
           <Grid item xs={12} md={6} lg={4} key={stage.id}>
-            <Paper sx={{ bgcolor: '#1f2a38', p: 2, minHeight: 480, border: '1px solid #2f3b4a' }}>
+            <Paper sx={{ bgcolor: '#ffffff', p: 2, minHeight: 480, border: '1px solid #e2e8f0' }}>
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
                 <Box>
                   <Typography variant="h6">{stage.name}</Typography>
                   <Typography variant="body2" color="text.secondary">{(groupedOrders.get(stage.id) || []).length} orders</Typography>
                 </Box>
-                <Chip label={stage.name} size="small" sx={{ bgcolor: stage.color || '#90caf9', color: '#fff' }} />
+                <Chip label={stage.name} size="small" sx={{ bgcolor: stage.color || '#0A2F6E', color: '#fff' }} />
               </Box>
-              <Divider sx={{ mb: 2, borderColor: '#334455' }} />
+              <Divider sx={{ mb: 2, borderColor: '#e2e8f0' }} />
               <Stack spacing={1.5} onDragOver={(event) => event.preventDefault()} onDrop={() => handleDrop(stage.id)}>
                 {(groupedOrders.get(stage.id) || []).length ? (
                   groupedOrders.get(stage.id).map((order) => (
@@ -161,8 +161,8 @@ export default function ProductionBoard() {
                       onDragStart={() => setActiveId(order.id)}
                       onClick={() => navigate(`/work-orders/${order.id}`)}
                       sx={{
-                        bgcolor: order.priority === 'Rush' ? '#3f1f1f' : '#14202b',
-                        border: order.priority === 'Rush' ? '1px solid #ff8a80' : '1px solid #2f3b4a',
+                        bgcolor: order.priority === 'Rush' ? '#fdecea' : '#f7f9fc',
+                        border: order.priority === 'Rush' ? '1px solid #ff8a80' : '1px solid #e2e8f0',
                         cursor: 'pointer',
                       }}
                     >
@@ -191,7 +191,7 @@ export default function ProductionBoard() {
                     </Card>
                   ))
                 ) : (
-                  <Box sx={{ p: 2, border: '1px dashed #334455', borderRadius: 2, color: 'text.secondary', textAlign: 'center' }}>
+                  <Box sx={{ p: 2, border: '1px dashed #e2e8f0', borderRadius: 2, color: 'text.secondary', textAlign: 'center' }}>
                     Drop work orders here
                   </Box>
                 )}

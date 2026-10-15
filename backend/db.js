@@ -3,5 +3,7 @@ const path = require('path');
 
 const dbFile = process.env.DATABASE_FILE || path.join(__dirname, '..', 'database', 'launchpad.db');
 const db = new sqlite3.Database(dbFile);
+db.configure('busyTimeout', 8000);
+db.filePath = dbFile;
 
 module.exports = db;
