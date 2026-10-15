@@ -1,10 +1,48 @@
 const express = require('express');
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const auth = require('../auth');
 const db = require('../db');
-const crypto = require('crypto');
-const router = express.Router();
 
-router.get('/', auth.requireAuth, (req, res) => {
+const router = express.Router();
+const BCRYPT_ROUNDS = 10;
+const MIN_PASSWORD_LENGTH = 8;
+
+function generatePassword() {
+  return crypto.randomBytes(18).toString('base64url');
+}
+
+function parsePositiveInteger(value) {
+  if (typeof value === 'number') {
+    if (!Number.isInteger(value) || value <= 0) return null;
+    return value;
+  }
+  if (typeof value === 'string' && /^[1-9]\d*$/.test(value.trim())) {
+    const parsed = Number(value.trim());
+    if (Number.isSafeInteger(parsed)) return parsed;
+  }
+  return null;
+}
+
+// Read-only directory for staff who create work orders. No role, timestamps, or secrets.
+router.get('/lookup', auth.requireAuth, auth.requireRole('admin', 'operator'), (req, res) => {
+  db.all(
+    `SELECT id, username, display_name
+     FROM users
+     WHERE role = 'customer'
+     ORDER BY display_name ASC`,
+    [],
+    (err, rows) => {
+      if (err) {
+        console.error('CUSTOMERS LOOKUP ERROR:', err);
+        return res.status(500).json({ error: 'Failed to load customers' });
+      }
+      res.json(rows);
+    }
+  );
+});
+
+router.get('/', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
   db.all(
     `SELECT id, username, display_name, role, created_at
      FROM users
@@ -12,20 +50,31 @@ router.get('/', auth.requireAuth, (req, res) => {
      ORDER BY display_name ASC`,
     [],
     (err, rows) => {
-      if (err) return res.status(500).json({ error: 'Failed to load customers' });
+      if (err) {
+        console.error('CUSTOMERS LIST ERROR:', err);
+        return res.status(500).json({ error: 'Failed to load customers' });
+      }
       res.json(rows);
     }
   );
 });
 
-// Create a new customer (admin usage). Accepts { display_name, username? }
-router.post('/', auth.requireAuth, (req, res) => {
+// Create a new customer (admin only). Accepts { display_name, username?, password? }.
+router.post('/', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
   const { display_name, username } = req.body || {};
   if (!display_name || !String(display_name).trim()) {
     return res.status(400).json({ error: 'display_name is required' });
   }
 
-  const baseName = username && String(username).trim() ? String(username).trim() : String(display_name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+  const suppliedPassword = typeof req.body?.password === 'string' ? req.body.password : '';
+  const generated = suppliedPassword.length === 0;
+  if (!generated && suppliedPassword.length < MIN_PASSWORD_LENGTH) {
+    return res.status(400).json({ error: `password must be at least ${MIN_PASSWORD_LENGTH} characters` });
+  }
+  const password = generated ? generatePassword() : suppliedPassword;
+  const baseName = username && String(username).trim()
+    ? String(username).trim()
+    : String(display_name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
   function findUnique(nameBase, counter, cb) {
     const tryName = counter > 0 ? `${nameBase}-${counter}` : nameBase;
@@ -37,23 +86,81 @@ router.post('/', auth.requireAuth, (req, res) => {
   }
 
   findUnique(baseName, 0, (err, uniqueUsername) => {
-    if (err) return res.status(500).json({ error: 'Failed to check username availability' });
+    if (err) {
+      console.error('CUSTOMER CREATE ERROR:', err);
+      return res.status(500).json({ error: 'Failed to check username availability' });
+    }
 
-    const pwd = Math.random().toString(36).slice(2, 12);
-    const hash = crypto.createHash('sha256').update(pwd).digest('hex');
-
-    db.run(
-      'INSERT INTO users (username, password_hash, role, display_name, created_at) VALUES (?,?,?,?,datetime("now"))',
-      [uniqueUsername, hash, 'customer', display_name],
-      function (err) {
-        if (err) return res.status(500).json({ error: 'Failed to create customer' });
-        const newId = this.lastID;
-        db.get('SELECT id, username, display_name FROM users WHERE id = ?', [newId], (err2, row) => {
-          if (err2) return res.status(201).json({ id: newId });
-          res.status(201).json(row || { id: newId });
-        });
+    bcrypt.hash(password, BCRYPT_ROUNDS, (hashErr, hash) => {
+      if (hashErr) {
+        console.error('CUSTOMER CREATE ERROR:', hashErr);
+        return res.status(500).json({ error: 'Failed to create customer' });
       }
-    );
+
+      db.run(
+        `INSERT INTO users (username, password_hash, role, display_name, created_at) VALUES (?,?,?,?,datetime('now'))`,
+        [uniqueUsername, hash, 'customer', display_name],
+        function (insertErr) {
+          if (insertErr) {
+            console.error('CUSTOMER CREATE ERROR:', insertErr);
+            return res.status(500).json({ error: 'Failed to create customer' });
+          }
+          const newId = this.lastID;
+          db.get('SELECT id, username, display_name FROM users WHERE id = ?', [newId], (err2, row) => {
+            const body = row || { id: newId, username: uniqueUsername, display_name };
+            if (generated) body.password = password;
+            if (err2) return res.status(201).json(body);
+            res.status(201).json(body);
+          });
+        }
+      );
+    });
+  });
+});
+
+// Replace a customer password (admin only). Omit password to generate one and return it once.
+router.put('/:id/password', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
+  const id = parsePositiveInteger(req.params.id);
+  if (!id) return res.status(400).json({ error: 'id must be a positive integer' });
+
+  const suppliedPassword = typeof req.body?.password === 'string' ? req.body.password : '';
+  const generated = suppliedPassword.length === 0;
+  if (!generated && suppliedPassword.length < MIN_PASSWORD_LENGTH) {
+    return res.status(400).json({ error: `password must be at least ${MIN_PASSWORD_LENGTH} characters` });
+  }
+  const password = generated ? generatePassword() : suppliedPassword;
+
+  db.get('SELECT id, username, role FROM users WHERE id = ?', [id], (err, row) => {
+    if (err) {
+      console.error('CUSTOMER PASSWORD RESET ERROR:', err);
+      return res.status(500).json({ error: 'Failed to reset password' });
+    }
+    if (!row || row.role !== 'customer') {
+      return res.status(404).json({ error: 'Customer not found' });
+    }
+
+    auth.hashPassword(password)
+      .then((hash) => {
+        db.run(
+          'UPDATE users SET password_hash = ? WHERE id = ? AND role = ?',
+          [hash, id, 'customer'],
+          function (updateErr) {
+            if (updateErr) {
+              console.error('CUSTOMER PASSWORD RESET ERROR:', updateErr);
+              return res.status(500).json({ error: 'Failed to reset password' });
+            }
+            if (this.changes === 0) return res.status(404).json({ error: 'Customer not found' });
+
+            auth.clearSessionsForUser(row.id);
+            auth.clearLoginFailuresForUsername(row.username);
+            res.json({ id: row.id, username: row.username, password });
+          }
+        );
+      })
+      .catch((hashErr) => {
+        console.error('CUSTOMER PASSWORD RESET ERROR:', hashErr);
+        return res.status(500).json({ error: 'Failed to reset password' });
+      });
   });
 });
 

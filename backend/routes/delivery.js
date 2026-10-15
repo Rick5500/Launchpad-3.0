@@ -4,12 +4,20 @@ const db = require('../db');
 const router = express.Router();
 
 router.get('/', auth.requireAuth, (req, res) => {
+  const params = [];
+  let where = '';
+  if (req.user.role === 'customer') {
+    where = 'WHERE wo.customer_id = ?';
+    params.push(req.user.userId);
+  }
+
   db.all(
     `SELECT d.id, wo.external_id, d.due_time, d.carrier, d.status, d.will_call
      FROM deliveries d
      LEFT JOIN work_orders wo ON d.work_order_id = wo.id
+     ${where}
      ORDER BY d.due_time ASC LIMIT 20`,
-    [],
+    params,
     (err, rows) => {
       if (err) return res.status(500).json({ error: 'Failed to load deliveries' });
       res.json(rows);

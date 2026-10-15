@@ -7,6 +7,7 @@ import WorkOrdersList from './routes/WorkOrdersList';
 import WorkOrderDetail from './routes/WorkOrderDetail';
 import WorkOrderForm from './routes/WorkOrderForm';
 import DepartmentsAdmin from './routes/DepartmentsAdmin';
+import Customers from './routes/Customers';
 import ProductionBoard from './routes/ProductionBoard';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -76,9 +77,6 @@ function LoginScreen() {
             {loginError || localError || authMessage}
           </Alert>
         )}
-        <Typography sx={{ mt: 3 }} color="text.secondary">
-          Demo credentials: <strong>admin / adminpass</strong>
-        </Typography>
       </Box>
     </Box>
   );
@@ -99,17 +97,17 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginScreen />} />
       <Route path="/" element={<Layout user={user} onLogout={logout} />}>
-        <Route index element={<ProtectedRoute><HomeDashboard /></ProtectedRoute>} />
-        <Route path="work-orders" element={<ProtectedRoute><WorkOrdersList /></ProtectedRoute>} />
-        <Route path="work-orders/new" element={<ProtectedRoute><WorkOrderForm /></ProtectedRoute>} />
-        <Route path="work-orders/:id" element={<ProtectedRoute><WorkOrderDetail /></ProtectedRoute>} />
-        <Route path="work-orders/:id/edit" element={<ProtectedRoute><WorkOrderForm /></ProtectedRoute>} />
-        <Route path="production-board" element={<ProtectedRoute><ProductionBoard /></ProtectedRoute>} />
-        <Route path="customers" element={<ProtectedRoute><PlaceholderPage title="Customers" /></ProtectedRoute>} />
-        <Route path="delivery" element={<ProtectedRoute><PlaceholderPage title="Delivery" /></ProtectedRoute>} />
-        <Route path="reports" element={<ProtectedRoute><PlaceholderPage title="Reports" /></ProtectedRoute>} />
-        <Route path="admin" element={<ProtectedRoute><PlaceholderPage title="Admin" /></ProtectedRoute>} />
-        <Route path="admin/departments" element={<ProtectedRoute><DepartmentsAdmin /></ProtectedRoute>} />
+        <Route index element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><HomeDashboard /></ProtectedRoute>} />
+        <Route path="work-orders" element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><WorkOrdersList /></ProtectedRoute>} />
+        <Route path="work-orders/new" element={<ProtectedRoute roles={['admin', 'operator']}><WorkOrderForm /></ProtectedRoute>} />
+        <Route path="work-orders/:id" element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><WorkOrderDetail /></ProtectedRoute>} />
+        <Route path="work-orders/:id/edit" element={<ProtectedRoute roles={['admin', 'operator']}><WorkOrderForm /></ProtectedRoute>} />
+        <Route path="production-board" element={<ProtectedRoute roles={['admin', 'operator']}><ProductionBoard /></ProtectedRoute>} />
+        <Route path="customers" element={<ProtectedRoute roles={['admin']}><Customers /></ProtectedRoute>} />
+        <Route path="delivery" element={<ProtectedRoute roles={['admin', 'operator']}><PlaceholderPage title="Delivery" /></ProtectedRoute>} />
+        <Route path="reports" element={<ProtectedRoute roles={['admin', 'operator']}><PlaceholderPage title="Reports" /></ProtectedRoute>} />
+        <Route path="admin" element={<ProtectedRoute roles={['admin']}><PlaceholderPage title="Admin" /></ProtectedRoute>} />
+        <Route path="admin/departments" element={<ProtectedRoute roles={['admin']}><DepartmentsAdmin /></ProtectedRoute>} />
       </Route>
       <Route path="*" element={<Navigate to={user ? '/' : '/login'} replace />} />
     </Routes>

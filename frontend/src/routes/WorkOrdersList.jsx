@@ -19,8 +19,12 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
 import { authFetch } from '../api';
+import { useAuth } from '../context/AuthContext';
+import { canonicalWorkOrderStatus } from '../workOrderStatus';
 
 export default function WorkOrdersList() {
+  const { user } = useAuth();
+  const canManageOrders = user?.role === 'admin' || user?.role === 'operator';
   const [workOrders, setWorkOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -49,12 +53,16 @@ export default function WorkOrdersList() {
             Work Orders
           </Typography>
           <Typography color="text.secondary">
-            Browse all active work orders and explore detailed records.
+            {canManageOrders
+              ? 'Browse all active work orders and explore detailed records.'
+              : 'Browse the work orders assigned to your account.'}
           </Typography>
         </Box>
-        <Button variant="contained" onClick={() => navigate('/work-orders/new')}>
-          New Work Order
-        </Button>
+        {canManageOrders && (
+          <Button variant="contained" onClick={() => navigate('/work-orders/new')}>
+            New Work Order
+          </Button>
+        )}
       </Box>
       <Card sx={{ bgcolor: '#1f2a38' }}>
         <CardContent>
@@ -90,7 +98,7 @@ export default function WorkOrdersList() {
                       <TableCell>{order.description}</TableCell>
                       <TableCell>{order.customer_name}</TableCell>
                       <TableCell>{order.department}</TableCell>
-                      <TableCell>{order.status}</TableCell>
+                      <TableCell>{canonicalWorkOrderStatus(order.status) || '-'}</TableCell>
                       <TableCell>{order.due_date || '-'}</TableCell>
                       <TableCell>
                         <Tooltip title="View details">

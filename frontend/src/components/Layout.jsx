@@ -14,19 +14,20 @@ import BusinessIcon from '@mui/icons-material/Business';
 const drawerWidth = 280;
 
 const navItems = [
-  { title: 'Dashboard', route: '/', icon: <HomeIcon /> },
-  { title: 'Work Orders', route: '/work-orders', icon: <AssignmentIcon /> },
-  { title: 'Production Board', route: '/production-board', icon: <BuildIcon /> },
-  { title: 'Customers', route: '/customers', icon: <PeopleIcon /> },
-  { title: 'Delivery', route: '/delivery', icon: <LocalShippingIcon /> },
-  { title: 'Reports', route: '/reports', icon: <BarChartIcon /> },
-  { title: 'Admin', route: '/admin', icon: <AdminPanelSettingsIcon /> },
-  { title: 'Departments', route: '/admin/departments', icon: <BusinessIcon /> },
+  { title: 'Dashboard', route: '/', icon: <HomeIcon />, roles: ['admin', 'operator', 'customer'] },
+  { title: 'Work Orders', route: '/work-orders', icon: <AssignmentIcon />, roles: ['admin', 'operator', 'customer'] },
+  { title: 'Production Board', route: '/production-board', icon: <BuildIcon />, roles: ['admin', 'operator'] },
+  { title: 'Customers', route: '/customers', icon: <PeopleIcon />, roles: ['admin'] },
+  { title: 'Delivery', route: '/delivery', icon: <LocalShippingIcon />, roles: ['admin', 'operator'] },
+  { title: 'Reports', route: '/reports', icon: <BarChartIcon />, roles: ['admin', 'operator'] },
+  { title: 'Admin', route: '/admin', icon: <AdminPanelSettingsIcon />, roles: ['admin'] },
+  { title: 'Departments', route: '/admin/departments', icon: <BusinessIcon />, roles: ['admin'] },
 ];
 
 export default function Layout({ user, onLogout }) {
   const navigate = useNavigate();
   const initials = (user?.display_name || user?.username || 'U').charAt(0).toUpperCase();
+  const visibleNavItems = navItems.filter((item) => !item.roles || item.roles.includes(user?.role));
 
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh' }}>
@@ -68,7 +69,7 @@ export default function Layout({ user, onLogout }) {
         </Toolbar>
         <Divider sx={{ borderColor: '#2f3b4a' }} />
         <List>
-          {navItems.map((item) => (
+          {visibleNavItems.map((item) => (
             <ListItemButton key={item.title} onClick={() => navigate(item.route)} sx={{ color: '#fff' }}>
               <ListItemIcon sx={{ color: '#90caf9' }}>{item.icon}</ListItemIcon>
               <ListItemText primary={item.title} />

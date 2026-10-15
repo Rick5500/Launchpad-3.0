@@ -1,7 +1,28 @@
 const express = require('express');
 const auth = require('../auth');
 const db = require('../db');
+const { WORK_ORDER_STATUSES } = require('../statuses');
 const router = express.Router();
+
+const staffRoles = auth.requireRole('admin', 'operator');
+
+function parsePositiveInteger(value) {
+  if (typeof value === 'number') {
+    if (!Number.isInteger(value) || value <= 0) return null;
+    return value;
+  }
+  if (typeof value === 'string' && /^[1-9]\d*$/.test(value.trim())) {
+    const parsed = Number(value.trim());
+    if (Number.isSafeInteger(parsed)) return parsed;
+  }
+  return null;
+}
+
+function normalizeWorkOrderStatus(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (normalized === 'complete') return 'completed';
+  return normalized;
+}
 
 const workOrderFieldList = `
   wo.id,
@@ -51,8 +72,8 @@ function validateWorkOrder(data) {
   } else if (Number(data.quantity) < 0) {
     errors.push('quantity must be 0 or greater');
   }
-  if (!data.status || !String(data.status).trim()) {
-    errors.push('status is required');
+  if (!WORK_ORDER_STATUSES.includes(normalizeWorkOrderStatus(data.status))) {
+    errors.push('status must be open, in-progress, completed, or on-hold');
   }
   if (!data.department || !String(data.department).trim()) {
     errors.push('department is required');
@@ -64,16 +85,24 @@ function validateWorkOrder(data) {
   return errors;
 }
 router.get('/', auth.requireAuth, (req, res) => {
+  const params = [];
+  let where = '';
+  if (req.user.role === 'customer') {
+    where = 'WHERE wo.customer_id = ?';
+    params.push(req.user.userId);
+  }
+
   db.all(
     `SELECT ${workOrderFieldList}
      FROM work_orders wo
      LEFT JOIN users u ON wo.customer_id = u.id
+     ${where}
      ORDER BY wo.created_at DESC`,
-    [],
+    params,
     (err, rows) => {
       if (err) {
         console.error('WORK ORDER LIST ERROR:', err);
-        return res.status(500).json({ error: err.message });
+        return res.status(500).json({ error: 'Failed to load work orders' });
       }
 
       res.json(rows);
@@ -82,16 +111,23 @@ router.get('/', auth.requireAuth, (req, res) => {
 });
 
 router.get('/:id', auth.requireAuth, (req, res) => {
+  const params = [req.params.id];
+  let customerClause = '';
+  if (req.user.role === 'customer') {
+    customerClause = ' AND wo.customer_id = ?';
+    params.push(req.user.userId);
+  }
+
   db.get(
     `SELECT ${workOrderFieldList}
      FROM work_orders wo
      LEFT JOIN users u ON wo.customer_id = u.id
-     WHERE wo.id = ?`,
-    [req.params.id],
+     WHERE wo.id = ?${customerClause}`,
+    params,
     (err, row) => {
       if (err) {
         console.error('WORK ORDER DETAIL ERROR:', err);
-        return res.status(500).json({ error: err.message });
+        return res.status(500).json({ error: 'Failed to load work order' });
       }
 
       if (!row) {
@@ -103,8 +139,9 @@ router.get('/:id', auth.requireAuth, (req, res) => {
   );
 });
 
-router.post('/', auth.requireAuth, (req, res) => {
+router.post('/', auth.requireAuth, staffRoles, (req, res) => {
   const payload = req.body || {};
+  payload.status = normalizeWorkOrderStatus(payload.status);
   const errors = validateWorkOrder(payload);
   if (errors.length) return res.status(400).json({ error: errors.join('; ') });
 
@@ -175,9 +212,10 @@ router.post('/', auth.requireAuth, (req, res) => {
   );
 });
 
-router.put('/:id', auth.requireAuth, (req, res) => {
+router.put('/:id', auth.requireAuth, staffRoles, (req, res) => {
   const id = req.params.id;
   const payload = req.body || {};
+  payload.status = normalizeWorkOrderStatus(payload.status);
   const errors = validateWorkOrder(payload);
   if (errors.length) return res.status(400).json({ error: errors.join('; ') });
 
@@ -268,23 +306,39 @@ router.put('/:id', auth.requireAuth, (req, res) => {
   );
 });
 
-router.put('/:id/stage', auth.requireAuth, (req, res) => {
-  const id = req.params.id;
-  const stageId = req.body?.stage_id == null || req.body?.stage_id === '' ? null : Number(req.body.stage_id);
+router.put('/:id/stage', auth.requireAuth, staffRoles, (req, res) => {
+  const id = parsePositiveInteger(req.params.id);
+  if (!id) return res.status(400).json({ error: 'id must be a positive integer' });
 
-  db.run(
-    `UPDATE work_orders SET stage_id = ?, updated_at = datetime('now') WHERE id = ?`,
-    [stageId, id],
-    function (err) {
-      if (err) return res.status(500).json({ error: 'Failed to update work order stage' });
-      if (this.changes === 0) return res.status(404).json({ error: 'Work order not found' });
-      res.json({ success: true, id, stage_id: stageId });
+  const stageId = parsePositiveInteger(req.body?.stage_id);
+  if (!stageId) return res.status(400).json({ error: 'stage_id must be a positive integer' });
+
+  db.get('SELECT id FROM production_stages WHERE id = ?', [stageId], (err, stage) => {
+    if (err) {
+      console.error('WORK ORDER STAGE ERROR:', err);
+      return res.status(500).json({ error: 'Failed to update work order stage' });
     }
-  );
+    if (!stage) return res.status(400).json({ error: 'stage_id is not a valid production stage' });
+
+    db.run(
+      `UPDATE work_orders SET stage_id = ?, updated_at = datetime('now') WHERE id = ?`,
+      [stageId, id],
+      function (updateErr) {
+        if (updateErr) {
+          console.error('WORK ORDER STAGE ERROR:', updateErr);
+          return res.status(500).json({ error: 'Failed to update work order stage' });
+        }
+        if (this.changes === 0) return res.status(404).json({ error: 'Work order not found' });
+        res.json({ success: true, id, stage_id: stageId });
+      }
+    );
+  });
 });
 
-router.put('/:id/priority', auth.requireAuth, (req, res) => {
-  const id = req.params.id;
+router.put('/:id/priority', auth.requireAuth, staffRoles, (req, res) => {
+  const id = parsePositiveInteger(req.params.id);
+  if (!id) return res.status(400).json({ error: 'id must be a positive integer' });
+
   const priority = String(req.body?.priority || 'Normal').trim();
   if (!['Low', 'Normal', 'High', 'Rush'].includes(priority)) {
     return res.status(400).json({ error: 'priority must be Low, Normal, High, or Rush' });

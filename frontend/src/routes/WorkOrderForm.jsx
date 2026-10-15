@@ -14,8 +14,26 @@ import {
 } from '@mui/material';
 import LoadingState from '../components/LoadingState';
 import { authFetch } from '../api';
+import { useAuth } from '../context/AuthContext';
+import { canonicalWorkOrderStatus } from '../workOrderStatus';
 
-const statusOptions = ['open', 'in-progress', 'complete', 'on-hold'];
+const statusOptions = ['open', 'in-progress', 'completed', 'on-hold'];
+const OPERATOR_CUSTOMER_MESSAGE = 'New customers must be created by an administrator.';
+
+function normalizeStatus(status) {
+  return canonicalWorkOrderStatus(status) || 'open';
+}
+
+function findCustomer(customers, name) {
+  const needle = String(name || '').trim().toLowerCase();
+  if (!needle) return null;
+  return customers.find((customer) => {
+    if (!customer) return false;
+    const displayName = (customer.display_name || '').toLowerCase();
+    const username = (customer.username || '').toLowerCase();
+    return displayName === needle || username === needle;
+  }) || null;
+}
 
 const defaultValues = {
   external_id: '',
@@ -45,6 +63,9 @@ function formatDateInput(value) {
 export default function WorkOrderForm() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const isOperator = user?.role === 'operator';
   const [values, setValues] = useState(defaultValues);
   const [customers, setCustomers] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -54,13 +75,18 @@ export default function WorkOrderForm() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [issuedLogin, setIssuedLogin] = useState(null);
+  const [customerTouched, setCustomerTouched] = useState(false);
 
   useEffect(() => {
     setLoading(true);
-    const fetchCustomers = authFetch('/api/customers').then((res) => {
-      if (!res.ok) throw new Error('Unable to load customers');
-      return res.json();
-    });
+    const customerUrl = isAdmin ? '/api/customers' : '/api/customers/lookup';
+    const fetchCustomers = (isAdmin || isOperator)
+      ? authFetch(customerUrl).then((res) => {
+          if (!res.ok) throw new Error('Unable to load customers');
+          return res.json();
+        })
+      : Promise.resolve([]);
 
     const fetchDepartments = authFetch('/api/departments').then((res) => {
       if (!res.ok) throw new Error('Unable to load departments');
@@ -81,9 +107,10 @@ export default function WorkOrderForm() {
         if (workOrderData) {
           setValues({
             external_id: workOrderData.external_id || '',
+            customer_id: workOrderData.customer_id != null ? String(workOrderData.customer_id) : '',
             description: workOrderData.description || '',
             quantity: workOrderData.quantity != null ? String(workOrderData.quantity) : '',
-            status: workOrderData.status || 'open',
+            status: normalizeStatus(workOrderData.status),
             department: workOrderData.department || 'General',
             specifications: workOrderData.specifications || '',
             start_date: formatDateInput(workOrderData.start_date),
@@ -111,7 +138,7 @@ export default function WorkOrderForm() {
       })
       .catch((err) => setError(err.message || 'Unable to load form data'))
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [id, isAdmin, isOperator]);
 
   const handleChange = (field) => (event) => {
     setValues((current) => ({ ...current, [field]: event.target.value }));
@@ -123,39 +150,51 @@ export default function WorkOrderForm() {
     setMessage('');
     setSaving(true);
 
-    // validate customer input
-    const customerName = (customerInput || '').trim();
-    if (!customerName) {
-      setError('Customer name is required');
-      setSaving(false);
-      return;
-    }
-
     let customerId = null;
-    // check existing customer match (by display_name or username)
-    const existing = customers.find((c) => {
-      if (!c) return false;
-      const dn = (c.display_name || '').toLowerCase();
-      const un = (c.username || '').toLowerCase();
-      return dn === customerName.toLowerCase() || un === customerName.toLowerCase();
-    });
+    let createdLogin = null;
 
-    try {
-      if (existing) {
-        customerId = existing.id;
-      } else {
-        // create new customer
-        const resp = await authFetch('/api/customers', { method: 'POST', body: JSON.stringify({ display_name: customerName }) });
-        const body = await resp.json();
-        if (!resp.ok) throw new Error(body.error || 'Failed to create customer');
-        customerId = body.id;
-        // refresh customers list locally
-        setCustomers((cur) => (cur ? [...cur, { id: customerId, display_name: customerName, username: body.username || customerName }] : [{ id: customerId, display_name: customerName, username: body.username || customerName }]));
+    if (isAdmin) {
+      const customerName = (customerInput || '').trim();
+      if (!customerName) {
+        setError('Customer name is required');
+        setSaving(false);
+        return;
       }
-    } catch (err) {
-      setError(err.message || 'Unable to create customer');
-      setSaving(false);
-      return;
+
+      const existing = customers.find((c) => {
+        if (!c) return false;
+        const dn = (c.display_name || '').toLowerCase();
+        const un = (c.username || '').toLowerCase();
+        return dn === customerName.toLowerCase() || un === customerName.toLowerCase();
+      });
+
+      try {
+        if (existing) {
+          customerId = existing.id;
+        } else {
+          const resp = await authFetch('/api/customers', { method: 'POST', body: JSON.stringify({ display_name: customerName }) });
+          const body = await resp.json();
+          if (!resp.ok) throw new Error(body.error || 'Failed to create customer');
+          customerId = body.id;
+          if (body.password) {
+            createdLogin = { username: body.username, password: body.password };
+          }
+          setCustomers((cur) => (cur ? [...cur, { id: customerId, display_name: customerName, username: body.username || customerName }] : [{ id: customerId, display_name: customerName, username: body.username || customerName }]));
+        }
+      } catch (err) {
+        setError(err.message || 'Unable to create customer');
+        setSaving(false);
+        return;
+      }
+    } else {
+      const existing = findCustomer(customers, customerInput);
+      if (!existing) {
+        setCustomerTouched(true);
+        setError(`No matching customer. ${OPERATOR_CUSTOMER_MESSAGE}`);
+        setSaving(false);
+        return;
+      }
+      customerId = existing.id;
     }
 
     const payload = {
@@ -171,6 +210,11 @@ export default function WorkOrderForm() {
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Failed to save work order');
+      if (createdLogin) {
+        setIssuedLogin({ ...createdLogin, workOrderId: body.id });
+        setMessage('Work order saved. Copy the customer password below before leaving this page.');
+        return;
+      }
       setMessage('Work order saved successfully. Redirecting...');
       navigate(`/work-orders/${body.id}`);
     } catch (err) {
@@ -197,6 +241,18 @@ export default function WorkOrderForm() {
           <Box component="form" onSubmit={handleSubmit} sx={{ display: 'grid', gap: 3 }}>
             {error && <Alert severity="error">{error}</Alert>}
             {message && <Alert severity="success">{message}</Alert>}
+            {issuedLogin && (
+              <Alert
+                severity="info"
+                action={(
+                  <Button color="inherit" size="small" type="button" onClick={() => navigate(`/work-orders/${issuedLogin.workOrderId}`)}>
+                    Continue
+                  </Button>
+                )}
+              >
+                Customer {issuedLogin.username} was created. Temporary password (shown once): {issuedLogin.password}
+              </Alert>
+            )}
             <Grid container spacing={2}>
               <Grid item xs={12} md={6}>
                 <TextField
@@ -210,9 +266,10 @@ export default function WorkOrderForm() {
               </Grid>
               <Grid item xs={12} md={6}>
                 <Autocomplete
-                  freeSolo
+                  freeSolo={isAdmin}
                   options={customers}
                   getOptionLabel={(option) => (typeof option === 'string' ? option : option.display_name || option.username || '')}
+                  isOptionEqualToValue={(option, value) => option.id === value.id}
                   value={selectedCustomer}
                   inputValue={customerInput}
                   onInputChange={(_, newInput) => {
@@ -220,7 +277,7 @@ export default function WorkOrderForm() {
                   }}
                   onChange={(_, newValue) => {
                     if (typeof newValue === 'string') {
-                      setSelectedCustomer(null);
+                      setSelectedCustomer(isAdmin ? null : findCustomer(customers, newValue));
                       setCustomerInput(newValue);
                     } else if (newValue && newValue.inputValue) {
                       setSelectedCustomer(null);
@@ -230,12 +287,19 @@ export default function WorkOrderForm() {
                       setCustomerInput(newValue ? newValue.display_name || newValue.username || '' : '');
                     }
                   }}
+                  onBlur={() => setCustomerTouched(true)}
                   renderInput={(params) => (
                     <TextField
                       {...params}
                       label="Customer"
                       fullWidth
                       variant="filled"
+                      error={!isAdmin && customerTouched && Boolean(customerInput.trim()) && !findCustomer(customers, customerInput)}
+                      helperText={isAdmin
+                        ? 'Choose an existing customer or type a new name to create one.'
+                        : customers.length
+                          ? `Select an existing customer. ${OPERATOR_CUSTOMER_MESSAGE}`
+                          : `No customers are available. ${OPERATOR_CUSTOMER_MESSAGE}`}
                       InputProps={{ ...params.InputProps, sx: { bgcolor: '#121d27' } }}
                     />
                   )}
