@@ -200,7 +200,7 @@ async function initFreshTwice() {
   const services = await db.get('SELECT COUNT(*) AS count FROM services');
   assert(services.count === 7, 'fresh init twice should leave 7 services');
   const fieldCount = await db.get('SELECT COUNT(*) AS count FROM service_fields');
-  assert(fieldCount.count === 54, `fresh init twice should leave 54 service fields, found ${fieldCount.count}`);
+  assert(fieldCount.count === 58, `fresh init twice should leave 58 service fields, found ${fieldCount.count}`);
   const orderColumns = await db.all(`PRAGMA table_info(orders)`);
   const orderNames = new Set(orderColumns.map((row) => row.name));
   assert(orderNames.has('payment_method') && orderNames.has('bill_to_name'), 'fresh orders should include payment and bill-to columns');

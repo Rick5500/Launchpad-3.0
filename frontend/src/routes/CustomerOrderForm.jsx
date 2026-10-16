@@ -72,10 +72,19 @@ function optionValues(field) {
   return (field.options || []).map((option) => (typeof option === 'string' ? option : option.value)).filter(Boolean);
 }
 
+function proofDefault(field) {
+  const choices = optionValues(field);
+  if (choices.includes('None')) return 'None';
+  return choices.find((option) => /digital/i.test(option)) || '';
+}
+
 function blankValues(fields) {
   const values = {};
   (fields || []).forEach((field) => {
-    values[field.key] = field.type === 'checkbox' ? false : '';
+    if (field.type === 'checkbox') values[field.key] = false;
+    else if (field.type === 'multiselect') values[field.key] = [];
+    else if (field.key === 'proof') values[field.key] = proofDefault(field);
+    else values[field.key] = '';
   });
   return values;
 }
@@ -93,6 +102,10 @@ function lineSummary(service, line) {
   const bits = (service.fields || []).map((field) => {
     const value = line.values?.[field.key];
     if (value == null || value === '' || value === false) return null;
+    if (Array.isArray(value)) {
+      if (!value.length) return null;
+      return `${field.label}: ${value.join(', ')}`;
+    }
     return `${field.label}: ${field.type === 'checkbox' ? 'Yes' : value}`;
   }).filter(Boolean);
   return bits.join(' · ') || 'New line';
@@ -118,6 +131,8 @@ function missingRequired(service, line) {
     const value = line.values?.[field.key];
     if (field.type === 'checkbox') {
       if (!value) return `${service.name}: ${field.label} is required`;
+    } else if (field.type === 'multiselect') {
+      if (!Array.isArray(value) || value.length === 0) return `${service.name}: ${field.label} is required`;
     } else if (value == null || String(value).trim() === '') {
       return `${service.name}: ${field.label} is required`;
     }
@@ -179,6 +194,36 @@ function FieldInput({ field, value, disabled, onChange }) {
         <TextField select size="small" required={field.required} value={value || ''} disabled={disabled} onChange={(event) => onChange(event.target.value)} sx={fieldSx}>
           <MenuItem value="">Select</MenuItem>
           {choices.map((option) => <MenuItem key={option} value={option}>{option}</MenuItem>)}
+        </TextField>
+      </LabelField>
+    );
+  }
+  if (field.type === 'multiselect') {
+    const selected = Array.isArray(value) ? value : [];
+    return (
+      <LabelField label={field.label} required={field.required}>
+        <TextField
+          select
+          size="small"
+          required={field.required}
+          value={selected}
+          disabled={disabled}
+          onChange={(event) => {
+            const next = event.target.value;
+            onChange(typeof next === 'string' ? next.split(',') : next);
+          }}
+          SelectProps={{
+            multiple: true,
+            renderValue: (selectedValues) => (selectedValues.length ? selectedValues.join(', ') : 'Select'),
+          }}
+          sx={fieldSx}
+        >
+          {choices.map((option) => (
+            <MenuItem key={option} value={option}>
+              <Checkbox checked={selected.includes(option)} size="small" sx={{ p: 0.5, mr: 1, pointerEvents: 'none' }} />
+              {option}
+            </MenuItem>
+          ))}
         </TextField>
       </LabelField>
     );

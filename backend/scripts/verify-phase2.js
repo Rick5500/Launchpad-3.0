@@ -349,7 +349,7 @@ async function initFreshTwice() {
   const orderColumns = await columnNames(db, 'orders');
   assert(orderColumns.has('payment_method') && orderColumns.has('bill_to_zip'), 'fresh orders should include payment and bill-to columns');
   const fieldCount = await db.get('SELECT COUNT(*) AS count FROM service_fields');
-  assert(fieldCount.count === 54, `fresh init twice should leave 54 service fields, found ${fieldCount.count}`);
+  assert(fieldCount.count === 58, `fresh init twice should leave 58 service fields, found ${fieldCount.count}`);
   const alerts = await db.get('SELECT COUNT(*) AS count FROM system_alerts');
   assert(alerts.count === 0, 'fresh init should not seed fake alerts');
   const operatorHash = await bcrypt.hash('OperatorPass1', 10);

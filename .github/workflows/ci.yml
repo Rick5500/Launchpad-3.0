@@ -36,6 +36,9 @@ jobs:
       - name: Verify phase 5
         working-directory: backend
         run: npm run verify:phase5
+      - name: Verify phase 6
+        working-directory: backend
+        run: npm run verify:phase6
       - name: Verify phase 7
         working-directory: backend
         run: npm run verify:phase7

@@ -39,7 +39,7 @@ import { brand } from '../brand';
 import NotificationBell from './NotificationBell';
 import { REPORT_NAV } from '../reportCatalog';
 
-const drawerWidth = 240;
+const drawerWidth = 280;
 
 const staffNav = [
   { title: 'Admin Board', route: '/', icon: <DashboardIcon />, roles: ['admin', 'operator'] },
@@ -122,12 +122,12 @@ export default function Layout({ user, onLogout }) {
 
   const drawer = (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <Box sx={{ px: 2, py: 2 }}>
+      <Box sx={{ px: 1, pt: 1.5, pb: 1 }}>
         <Box
           component="img"
           src="/logo.png"
-          alt="LaunchPad 3.0"
-          sx={{ width: '100%', height: 'auto', bgcolor: '#fff', borderRadius: 1, p: 0.5 }}
+          alt="Accent Imaging"
+          sx={{ width: '100%', height: 'auto', display: 'block' }}
         />
       </Box>
       <List sx={{ px: 1, flex: 1, overflow: 'auto' }}>
