@@ -187,6 +187,12 @@ function getTabContent(tab, workOrder, scanState, hideInternal) {
               ...(workOrder.ups_account_number ? { 'UPS Account': workOrder.ups_account_number } : {}),
               'Customer': workOrder.customer_name,
               'Customer Username': workOrder.customer_username,
+              'Originals Source': workOrder.originals_source_label || 'Not specified',
+              'Addr 1': workOrder.address_line1,
+              'Addr 2': workOrder.address_line2,
+              'City': workOrder.city,
+              'State': workOrder.state,
+              'Zip': workOrder.zip,
               'Created At': workOrder.created_at,
               'Updated At': workOrder.updated_at,
             }).map(([label, value]) => (
@@ -197,6 +203,11 @@ function getTabContent(tab, workOrder, scanState, hideInternal) {
               </Grid>
             ))}
           </Grid>
+          {workOrder.originals_pickup ? (
+            <Typography sx={{ mt: 2 }} color="text.secondary">
+              Inbound pickup of originals. This is separate from the delivery method.
+            </Typography>
+          ) : null}
         </Box>
       );
     case 'Specifications':

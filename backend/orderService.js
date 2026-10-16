@@ -14,6 +14,33 @@ const {
   hoursLabel,
 } = require('./deliveryRules');
 const activityLog = require('./activityLog');
+const { parsePostalAddress } = require('./fields');
+
+const CONTROL_CHARS = /[\u0000-\u001F]/;
+const CONTROL_CHARS_ALLOW_NEWLINES = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/;
+
+const FINISHING_OPTIONS = Object.freeze([
+  'None',
+  'Grommets',
+  'Easel',
+  'Cut/Trim',
+  'Velcro',
+  'Print Hanger',
+  'Framing',
+  'See Notes',
+]);
+
+const ORIGINALS_SOURCES = Object.freeze([
+  'Files attached below',
+  'Archived files at Accent Imaging',
+  'Send a vehicle to pick up originals',
+  'Hardcopy or digital media provided',
+]);
+
+const ORIGINALS_FILES = 'Files attached below';
+const ORIGINALS_UNSPECIFIED = 'Not specified';
+const ARCHIVE_SERVICE = 'Archive File Request';
+const SHIP_TO_SERVICE = 'Ship To (3rd Party)';
 
 const CUSTOMER_FORBIDDEN_FIELDS = [
   'status',
@@ -76,17 +103,23 @@ function parsePositive(value) {
   return null;
 }
 
-function requiredText(value, field, max) {
+function assertPlainText(text, field, allowNewlines) {
+  const pattern = allowNewlines ? CONTROL_CHARS_ALLOW_NEWLINES : CONTROL_CHARS;
+  if (pattern.test(text)) throw new OrderError(`${field} contains invalid characters`);
+}
+
+function requiredText(value, field, max, options = {}) {
   if (value == null || (typeof value !== 'string' && typeof value !== 'number')) {
     throw new OrderError(`${field} is required`);
   }
   const text = String(value).trim();
   if (!text) throw new OrderError(`${field} is required`);
   if (text.length > max) throw new OrderError(`${field} must be ${max} characters or fewer`);
+  assertPlainText(text, field, options.allowNewlines);
   return text;
 }
 
-function optionalText(value, field, max) {
+function optionalText(value, field, max, options = {}) {
   if (value == null || value === '') return null;
   if (typeof value !== 'string' && typeof value !== 'number') {
     throw new OrderError(`${field} is invalid`);
@@ -94,7 +127,50 @@ function optionalText(value, field, max) {
   const text = String(value).trim();
   if (!text) return null;
   if (text.length > max) throw new OrderError(`${field} must be ${max} characters or fewer`);
+  assertPlainText(text, field, options.allowNewlines);
   return text;
+}
+
+function parseFinishing(value, field) {
+  if (value == null || value === '') return null;
+  const text = requiredText(value, field, 80);
+  if (!FINISHING_OPTIONS.includes(text)) {
+    throw new OrderError(`${field} must be one of ${FINISHING_OPTIONS.join(', ')}`);
+  }
+  return text === 'None' ? null : text;
+}
+
+function parseOriginalsSource(value) {
+  const text = requiredText(value, 'originals_source', 80);
+  if (!ORIGINALS_SOURCES.includes(text)) {
+    throw new OrderError(`originals_source must be one of ${ORIGINALS_SOURCES.join(', ')}`);
+  }
+  return text;
+}
+
+function originalsLabel(value) {
+  const text = value == null ? '' : String(value).trim();
+  return text || ORIGINALS_UNSPECIFIED;
+}
+
+function emptyServiceMessage(service, lineItems, notes, shipTo) {
+  const count = lineItems.filter((item) => item.serviceId === service.id).length;
+  if (count > 0) return null;
+  if (service.name === ARCHIVE_SERVICE) {
+    if (notes) return null;
+    return 'Archive File Request is empty. Add a line, describe the archived files in Notes, or deselect it.';
+  }
+  if (service.name === SHIP_TO_SERVICE) {
+    if (shipTo) return null;
+    return 'Ship To (3rd Party) is empty. Add a line, fill in Ship To, or deselect it.';
+  }
+  return `${service.name} is empty. Please add lines or deselect it.`;
+}
+
+function requireAddress(payload) {
+  const parsed = parsePostalAddress(payload, true);
+  if (parsed.error) throw new OrderError(parsed.error);
+  return parsed.value;
 }
 
 function requiredEmail(value) {
@@ -258,7 +334,7 @@ function parseLineItems(body, serviceIds) {
       media: optionalText(item.media, `line item ${index + 1} media`, 80),
       color: optionalText(item.color, `line item ${index + 1} color`, 80),
       bindingFinish: optionalText(item.binding_finish, `line item ${index + 1} binding/finish`, 80),
-      finishing: optionalText(item.finishing, `line item ${index + 1} finishing`, 80),
+      finishing: parseFinishing(item.finishing, `line item ${index + 1} finishing`),
       mount: parseYesNo(item.mount, `line item ${index + 1} mount`),
       laminate: parseYesNo(item.laminate, `line item ${index + 1} laminate`),
       fileIds,
@@ -403,6 +479,14 @@ async function loadOrderRecord(orderId, user) {
     project_number: order.project_number,
     project_name: order.project_name,
     notes: order.notes,
+    originals_source: order.originals_source || null,
+    originals_source_label: originalsLabel(order.originals_source),
+    originals_pickup: order.originals_source === 'Send a vehicle to pick up originals',
+    address_line1: order.address_line1 || null,
+    address_line2: order.address_line2 || null,
+    city: order.city || null,
+    state: order.state || null,
+    zip: order.zip || null,
     delivery_method: order.delivery_method,
     ups_account_number: order.ups_account_number || null,
     delivery_hours: deliveryHoursFor(order.delivery_method, delivery && delivery.will_call),
@@ -461,10 +545,12 @@ async function createOrder(user, body, now = new Date()) {
   const email = requiredEmail(payload.email);
   const poNumber = optionalText(payload.po_number, 'po_number', 80);
   const projectNumber = optionalText(payload.project_number, 'project_number', 80);
-  const projectName = optionalText(payload.project_name, 'project_name', 160);
-  const notes = optionalText(payload.notes, 'notes', 2000);
-  const shipTo = optionalText(payload.ship_to, 'ship_to', 500);
+  const projectName = requiredText(payload.project_name, 'project_name', 160);
+  const notes = optionalText(payload.notes, 'notes', 2000, { allowNewlines: true });
+  const shipTo = optionalText(payload.ship_to, 'ship_to', 500, { allowNewlines: true });
   const attention = optionalText(payload.attention, 'attention', 160);
+  const address = requireAddress(payload);
+  const originalsSource = parseOriginalsSource(payload.originals_source);
   const deliveryMethodName = requiredText(payload.delivery_method, 'delivery_method', 120);
   if (retiredDeliveryMethod(deliveryMethodName)) {
     throw new OrderError(retiredDeliveryMessage(deliveryMethodName));
@@ -475,6 +561,9 @@ async function createOrder(user, body, now = new Date()) {
   const lineItems = parseLineItems(payload, serviceIds);
   const topLevelFileIds = parseTopLevelFileIds(payload);
   const fileIds = collectFileIds(lineItems, topLevelFileIds);
+  if (originalsSource === ORIGINALS_FILES && fileIds.length === 0) {
+    throw new OrderError('Attach at least one file when originals source is Files attached below');
+  }
 
   const orderId = await withTransaction(async (tx) => {
     const customer = await tx.get(
@@ -515,6 +604,10 @@ async function createOrder(user, body, now = new Date()) {
     if (services.length !== serviceIds.length) {
       throw new OrderError('One or more services are not available');
     }
+    for (const service of services) {
+      const coverageError = emptyServiceMessage(service, lineItems, notes, shipTo);
+      if (coverageError) throw new OrderError(coverageError);
+    }
 
     if (fileIds.length) {
       const filePlaceholders = fileIds.map(() => '?').join(', ');
@@ -544,8 +637,9 @@ async function createOrder(user, body, now = new Date()) {
       `INSERT INTO orders (
         order_number, customer_id, company, contact_name, phone, email,
         po_number, project_number, project_name, notes, delivery_method,
-        ups_account_number, ship_to, attention, due_date, due_time, created_by, updated_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
+        ups_account_number, originals_source, address_line1, address_line2, city, state, zip,
+        ship_to, attention, due_date, due_time, created_by, updated_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
       [
         orderNumber,
         customerId,
@@ -559,6 +653,12 @@ async function createOrder(user, body, now = new Date()) {
         notes,
         method.name,
         storedUpsAccount,
+        originalsSource,
+        address.addressLine1,
+        address.addressLine2,
+        address.city,
+        address.state,
+        address.zip,
         shipTo,
         attention,
         due.value.dueDate,
@@ -694,6 +794,8 @@ async function createOrder(user, body, now = new Date()) {
       [Number(user.userId || user.id), newOrderId, JSON.stringify({
         order_number: orderNumber,
         work_order_ids: createdWorkOrders,
+        originals_source: originalsSource,
+        message: `Created order ${orderNumber}`,
       })]
     );
 
@@ -817,6 +919,8 @@ async function orderOptions() {
       will_call: presentDueWindow(willCallHours, 'will_call'),
       delivery: presentDueWindow(deliveryHours, 'delivery'),
     },
+    finishing_options: FINISHING_OPTIONS.slice(),
+    originals_sources: ORIGINALS_SOURCES.slice(),
   };
 }
 
@@ -939,6 +1043,14 @@ async function loadWorkOrderContext(row, viewer) {
   );
   return {
     ...row,
+    originals_source: row.originals_source || null,
+    originals_source_label: originalsLabel(row.originals_source),
+    originals_pickup: row.originals_source === 'Send a vehicle to pick up originals',
+    address_line1: row.address_line1 || null,
+    address_line2: row.address_line2 || null,
+    city: row.city || null,
+    state: row.state || null,
+    zip: row.zip || null,
     line_items: lineItems.map((item) => ({
       ...publicLineItem(item),
       mount: Boolean(item.mount),
@@ -959,6 +1071,10 @@ async function loadWorkOrderContext(row, viewer) {
 module.exports = {
   OrderError,
   CUSTOMER_FORBIDDEN_FIELDS,
+  FINISHING_OPTIONS,
+  ORIGINALS_SOURCES,
+  ORIGINALS_UNSPECIFIED,
+  originalsLabel,
   withTransaction,
   createOrder,
   listOrders,

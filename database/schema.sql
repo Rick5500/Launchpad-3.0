@@ -15,6 +15,11 @@ CREATE TABLE IF NOT EXISTS users (
   contact_name TEXT,
   phone TEXT,
   email TEXT,
+  address_line1 TEXT, -- company street address, snapshotted onto orders at submission
+  address_line2 TEXT,
+  city TEXT,
+  state TEXT,
+  zip TEXT,
   is_active INTEGER DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME
@@ -82,6 +87,12 @@ CREATE TABLE IF NOT EXISTS orders (
   notes TEXT,
   delivery_method TEXT NOT NULL,
   ups_account_number TEXT, -- optional UPS shipping account; not a password
+  originals_source TEXT, -- how originals arrive; null on orders created before this column
+  address_line1 TEXT, -- company address captured at submission; null on older orders
+  address_line2 TEXT,
+  city TEXT,
+  state TEXT,
+  zip TEXT,
   ship_to TEXT,
   attention TEXT,
   due_date TEXT NOT NULL, -- YYYY-MM-DD in the shop calendar
@@ -149,7 +160,7 @@ CREATE TABLE IF NOT EXISTS order_line_items (
   media TEXT,
   color TEXT,
   binding_finish TEXT,
-  finishing TEXT,
+  finishing TEXT, -- None, Grommets, Easel, Cut/Trim, Velcro, Print Hanger, Framing, See Notes; null prints as None
   mount INTEGER DEFAULT 0,
   laminate INTEGER DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

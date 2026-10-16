@@ -14,6 +14,12 @@ All notable changes to this project will be documented in this file.
 - A barcode scan that moves a department writes the scan, the department change, production history, and the activity row in one transaction
 
 ### Added
+- Line-item finishing on the order form (None, Grommets, Easel, Cut/Trim, Velcro, Print Hanger, Framing, See Notes). The value is stored on the line and printed. None is stored blank and prints as `Finishing: None`
+- Required project name on order create. Orders that already have no project name still load and print
+- A line item for each selected service. Archive File Request can instead be described in Notes. Ship To (3rd Party) can instead be described in Ship To. An empty service returns HTTP 400 naming that service
+- Required originals source: files attached, archived files at Accent Imaging, an inbound vehicle pickup, or hardcopy or digital media. Files attached shows the upload area and requires a file. The pickup is not a delivery method. Older orders display `Not specified`
+- Company address (Addr 1, Addr 2, City, State, Zip) on the customer profile and snapshotted onto the order. Addr 1, City, State, and Zip are required on the order form. Admins edit the profile on Users and Customers. Older orders leave the address blank
+- `orders.originals_source` and address columns on `orders` and `users`, added by `schema.sql` and by an idempotent `init_db.js` pass
 - Optional UPS account number on orders when the delivery method is UPS. It is trimmed, limited to 30 characters, and allows letters, digits, spaces, and dashes. It is not required. The customer order form, order detail, work order detail, the work order edit form, the print sheet, and the deliveries CSV include it when it is set
 - `orders.ups_account_number`, added by `schema.sql` and by an idempotent `init_db.js` pass
 - Separate Will Call hours (`WILL_CALL_WINDOW_START` / `WILL_CALL_WINDOW_END`, default 8:00 AM–5:00 PM) and delivery hours (`DELIVERY_WINDOW_START` / `DELIVERY_WINDOW_END`, default 9:00 AM–4:00 PM), shown on the order form, print sheet, delivery rules, and System Settings

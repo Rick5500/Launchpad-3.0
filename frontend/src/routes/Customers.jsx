@@ -39,6 +39,17 @@ export default function Customers() {
   const [formError, setFormError] = useState('');
   const [issuedPassword, setIssuedPassword] = useState('');
   const [copied, setCopied] = useState(false);
+  const [addressCustomer, setAddressCustomer] = useState(null);
+  const [addressForm, setAddressForm] = useState({
+    address_line1: '',
+    address_line2: '',
+    city: '',
+    state: '',
+    zip: '',
+  });
+  const [addressError, setAddressError] = useState('');
+  const [addressSaving, setAddressSaving] = useState(false);
+  const [addressNotice, setAddressNotice] = useState('');
 
   useEffect(() => {
     setLoading(true);
@@ -95,6 +106,42 @@ export default function Customers() {
     }
   };
 
+  const openAddress = (customer) => {
+    setAddressCustomer(customer);
+    setAddressForm({
+      address_line1: customer.address_line1 || '',
+      address_line2: customer.address_line2 || '',
+      city: customer.city || '',
+      state: customer.state || '',
+      zip: customer.zip || '',
+    });
+    setAddressError('');
+    setAddressNotice('');
+  };
+
+  const saveAddress = async (event) => {
+    event.preventDefault();
+    if (!addressCustomer) return;
+    setAddressSaving(true);
+    setAddressError('');
+    setAddressNotice('');
+    try {
+      const response = await authFetch(`/api/customers/${addressCustomer.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(addressForm),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Failed to update address');
+      setCustomers((rows) => rows.map((row) => (row.id === payload.id ? { ...row, ...payload } : row)));
+      setAddressNotice('Address saved. New orders prefill this address. Orders already submitted keep the address they were given.');
+      setAddressCustomer((current) => (current ? { ...current, ...payload } : current));
+    } catch (err) {
+      setAddressError(err.message || 'Failed to update address');
+    } finally {
+      setAddressSaving(false);
+    }
+  };
+
   const copyPassword = async () => {
     try {
       await navigator.clipboard.writeText(issuedPassword);
@@ -125,13 +172,14 @@ export default function Customers() {
                   <TableCell>Name</TableCell>
                   <TableCell>Username</TableCell>
                   <TableCell>Created</TableCell>
-                  <TableCell align="right">Password</TableCell>
+                  <TableCell>Address</TableCell>
+                  <TableCell align="right">Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {customers.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={4} sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
+                    <TableCell colSpan={5} sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
                       No customers found.
                     </TableCell>
                   </TableRow>
@@ -141,7 +189,13 @@ export default function Customers() {
                       <TableCell>{customer.display_name || '-'}</TableCell>
                       <TableCell>{customer.username}</TableCell>
                       <TableCell>{formatCreated(customer.created_at)}</TableCell>
+                      <TableCell>
+                        {[customer.address_line1, customer.city, customer.state, customer.zip].filter(Boolean).join(', ') || '—'}
+                      </TableCell>
                       <TableCell align="right">
+                        <Button variant="outlined" size="small" onClick={() => openAddress(customer)} sx={{ mr: 1 }}>
+                          Edit address
+                        </Button>
                         <Button variant="outlined" size="small" onClick={() => openReset(customer)}>
                           Reset password
                         </Button>
@@ -154,6 +208,28 @@ export default function Customers() {
           </TableContainer>
         </CardContent>
       </Card>
+
+      <Dialog open={Boolean(addressCustomer)} onClose={() => setAddressCustomer(null)} fullWidth maxWidth="sm">
+        <Box component="form" onSubmit={saveAddress}>
+          <DialogTitle>Company address for {addressCustomer?.display_name || addressCustomer?.username}</DialogTitle>
+          <DialogContent sx={{ display: 'grid', gap: 2 }}>
+            <Typography color="text.secondary">
+              This address prefills the customer order form. Submitting an order stores a copy on that order and does not change older orders.
+            </Typography>
+            {addressError && <Alert severity="error">{addressError}</Alert>}
+            {addressNotice && <Alert severity="success">{addressNotice}</Alert>}
+            <TextField label="Addr 1" value={addressForm.address_line1} onChange={(event) => setAddressForm({ ...addressForm, address_line1: event.target.value })} fullWidth />
+            <TextField label="Addr 2" value={addressForm.address_line2} onChange={(event) => setAddressForm({ ...addressForm, address_line2: event.target.value })} fullWidth />
+            <TextField label="City" value={addressForm.city} onChange={(event) => setAddressForm({ ...addressForm, city: event.target.value })} fullWidth />
+            <TextField label="State" value={addressForm.state} onChange={(event) => setAddressForm({ ...addressForm, state: event.target.value })} fullWidth />
+            <TextField label="Zip" value={addressForm.zip} onChange={(event) => setAddressForm({ ...addressForm, zip: event.target.value })} fullWidth />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setAddressCustomer(null)} disabled={addressSaving}>Close</Button>
+            <Button type="submit" variant="contained" disabled={addressSaving}>{addressSaving ? 'Saving...' : 'Save address'}</Button>
+          </DialogActions>
+        </Box>
+      </Dialog>
 
       <Dialog open={Boolean(selected)} onClose={closeDialog} fullWidth maxWidth="sm">
         <DialogTitle>

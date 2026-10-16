@@ -97,7 +97,8 @@ app.post('/api/auth/logout', (req, res) => {
 
 app.get('/api/auth/me', auth.requireAuth, (req, res) => {
   db.get(
-    `SELECT id, username, role, display_name, company, contact_name, phone, email
+    `SELECT id, username, role, display_name, company, contact_name, phone, email,
+            address_line1, address_line2, city, state, zip
      FROM users WHERE id = ?`,
     [req.user.userId],
     (err, row) => {
@@ -116,6 +117,11 @@ app.get('/api/auth/me', auth.requireAuth, (req, res) => {
           contact_name: row.contact_name || '',
           phone: row.phone || '',
           email: row.email || '',
+          address_line1: row.address_line1 || '',
+          address_line2: row.address_line2 || '',
+          city: row.city || '',
+          state: row.state || '',
+          zip: row.zip || '',
         },
       });
     }

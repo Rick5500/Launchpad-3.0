@@ -208,6 +208,12 @@ function orderBody(serviceId, customerId, overrides = {}) {
     contact_name: 'Avery Cole',
     phone: '919-555-0144',
     email: 'avery@phasefour.example',
+    project_name: 'Phase Four Job',
+    originals_source: 'Archived files at Accent Imaging',
+    address_line1: '400 Settings Lane',
+    city: 'Raleigh',
+    state: 'NC',
+    zip: '27617',
     delivery_method: 'Accent Truck',
     due_date: weekdayIso(1),
     due_time: '10:00',
@@ -273,6 +279,11 @@ async function assertMigration(file, label) {
   const db = openDb(file);
   const userColumns = await columnNames(db, 'users');
   assert(userColumns.has('is_active'), `${label} users.is_active should exist`);
+  assert(userColumns.has('address_line1') && userColumns.has('address_line2') && userColumns.has('city') && userColumns.has('state') && userColumns.has('zip'), `${label} user address columns should exist`);
+  const orderColumns = await columnNames(db, 'orders');
+  if (orderColumns.size) {
+    assert(orderColumns.has('originals_source') && orderColumns.has('address_line1') && orderColumns.has('zip'), `${label} order originals and address columns should exist`);
+  }
   const serviceColumns = await columnNames(db, 'services');
   assert(serviceColumns.has('code') && serviceColumns.has('suffix_mode') && serviceColumns.has('default_turnaround_hours'), `${label} service columns should exist`);
   const services = await db.get('SELECT COUNT(*) AS count FROM services');
@@ -494,6 +505,8 @@ async function main() {
     assert(found.status === 200 && found.json.orders.length === 1, `search should find the order: ${found.text}`);
     assert(found.json.orders[0].detail_path === `/orders/${orderId}`, 'search should link the order');
     assert(found.json.orders[0].work_orders[0].print_path === `/work-orders/${workOrderId}/print`, 'search should link the printable work order');
+    assert(found.json.orders[0].originals_source_label === 'Archived files at Accent Imaging', 'search should show the originals source');
+    assert(found.json.orders[0].address_line1 === '400 Settings Lane' && found.json.orders[0].zip === '27617', 'search should show the snapshotted address');
 
     const badPhone = await request({
       method: 'PUT',

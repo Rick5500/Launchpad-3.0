@@ -84,12 +84,23 @@ export default function OrderDetail() {
               <Fact label="Contact" value={order.contact_name} />
               <Fact label="Phone" value={order.phone} />
               <Fact label="Email" value={order.email} />
+              <Fact label="Addr 1" value={order.address_line1} />
+              <Fact label="Addr 2" value={order.address_line2} />
+              <Fact label="City" value={order.city} />
+              <Fact label="State" value={order.state} />
+              <Fact label="Zip" value={order.zip} />
             </Box>
             <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2 }}>
               <Typography sx={{ fontWeight: 700, color: brand.navy, mb: 1 }}>Project</Typography>
               <Fact label="PO Number" value={order.po_number} />
               <Fact label="Project Number" value={order.project_number} />
               <Fact label="Project Name" value={order.project_name} />
+              <Fact label="Originals Source" value={order.originals_source_label || 'Not specified'} />
+              {order.originals_pickup ? (
+                <Typography sx={{ color: brand.muted, fontSize: 13, mt: 0.5 }}>
+                  Inbound pickup of originals. This is separate from the delivery method.
+                </Typography>
+              ) : null}
               <Fact label="Notes" value={order.notes} />
             </Box>
             <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2 }}>
@@ -131,6 +142,7 @@ export default function OrderDetail() {
                 {item.media ? ` · ${item.media}` : ''}
                 {item.color ? ` · ${item.color}` : ''}
                 {item.binding_finish ? ` · ${item.binding_finish}` : ''}
+                {` · Finishing ${item.finishing || 'None'}`}
                 {` · Mount ${item.mount ? 'Yes' : 'No'}`}
                 {` · Laminate ${item.laminate ? 'Yes' : 'No'}`}
                 {item.service_name ? ` · ${item.service_name}` : ''}

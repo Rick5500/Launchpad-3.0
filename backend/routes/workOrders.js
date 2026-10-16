@@ -61,8 +61,15 @@ const workOrderFieldList = `
   u.display_name AS customer_name,
   u.username AS customer_username,
   o.order_number,
+  o.project_name,
   o.delivery_method,
   o.ups_account_number,
+  o.originals_source,
+  o.address_line1,
+  o.address_line2,
+  o.city,
+  o.state,
+  o.zip,
   s.name AS service_name
 `;
 

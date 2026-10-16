@@ -30,6 +30,11 @@ const emptyForm = {
   contact_name: '',
   phone: '',
   email: '',
+  address_line1: '',
+  address_line2: '',
+  city: '',
+  state: '',
+  zip: '',
   password: '',
   is_active: true,
 };
@@ -85,6 +90,11 @@ export default function UsersPage() {
       contact_name: row.contact_name || '',
       phone: row.phone || '',
       email: row.email || '',
+      address_line1: row.address_line1 || '',
+      address_line2: row.address_line2 || '',
+      city: row.city || '',
+      state: row.state || '',
+      zip: row.zip || '',
       password: '',
       is_active: Boolean(row.is_active),
     });
@@ -107,6 +117,11 @@ export default function UsersPage() {
       contact_name: form.contact_name,
       phone: form.phone,
       email: form.email,
+      address_line1: form.address_line1,
+      address_line2: form.address_line2,
+      city: form.city,
+      state: form.state,
+      zip: form.zip,
       is_active: form.is_active,
     };
     if (!editingId && form.password) payload.password = form.password;
@@ -169,6 +184,11 @@ export default function UsersPage() {
           <TextField label="Contact name" value={form.contact_name} onChange={(event) => update('contact_name', event.target.value)} />
           <TextField label="Phone" value={form.phone} onChange={(event) => update('phone', event.target.value)} />
           <TextField label="Email" value={form.email} onChange={(event) => update('email', event.target.value)} />
+          <TextField label="Addr 1" value={form.address_line1} onChange={(event) => update('address_line1', event.target.value)} />
+          <TextField label="Addr 2" value={form.address_line2} onChange={(event) => update('address_line2', event.target.value)} />
+          <TextField label="City" value={form.city} onChange={(event) => update('city', event.target.value)} />
+          <TextField label="State" value={form.state} onChange={(event) => update('state', event.target.value)} />
+          <TextField label="Zip" value={form.zip} onChange={(event) => update('zip', event.target.value)} />
           {!editingId ? (
             <TextField label="Password" type="password" value={form.password} onChange={(event) => update('password', event.target.value)} helperText="Leave blank to generate a one-time password." />
           ) : null}

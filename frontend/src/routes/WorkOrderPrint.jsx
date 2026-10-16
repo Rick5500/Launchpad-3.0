@@ -129,6 +129,11 @@ function WorkOrderSheet({ payload, sheet }) {
             <Field label="Contact:" value={sheet.contact?.contact_name} />
             <Field label="Phone:" value={sheet.contact?.phone} />
             <Field label="Email:" value={sheet.contact?.email} />
+            <Field label="Addr 1:" value={sheet.address?.line1} />
+            {sheet.address?.line2 ? <Field label="Addr 2:" value={sheet.address.line2} /> : null}
+            <Field label="City:" value={sheet.address?.city} />
+            <Field label="State:" value={sheet.address?.state} />
+            <Field label="Zip:" value={sheet.address?.zip} />
           </div>
         </section>
         <section className="wo-panel">
@@ -137,6 +142,10 @@ function WorkOrderSheet({ payload, sheet }) {
             <Field label="PO Number:" value={sheet.project?.po_number} />
             <Field label="Project Number:" value={sheet.project?.project_number} />
             <Field label="Project Name:" value={sheet.project?.project_name} />
+            <Field label="Originals Source:" value={sheet.originals_source_label || 'Not specified'} />
+            {sheet.originals_pickup ? (
+              <div className="wo-note">Inbound pickup of originals. This is separate from the delivery method.</div>
+            ) : null}
             <Field label="Notes:" value={sheet.project?.notes} />
           </div>
         </section>

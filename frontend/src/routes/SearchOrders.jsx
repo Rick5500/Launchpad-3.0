@@ -130,6 +130,7 @@ export default function SearchOrders() {
                 <TableCell>Order</TableCell>
                 <TableCell>Company</TableCell>
                 <TableCell>Contact</TableCell>
+                <TableCell>Originals</TableCell>
                 <TableCell>Phone</TableCell>
                 <TableCell>Work orders</TableCell>
               </TableRow>
@@ -142,6 +143,7 @@ export default function SearchOrders() {
                   </TableCell>
                   <TableCell>{order.company}</TableCell>
                   <TableCell>{order.contact_name}</TableCell>
+                  <TableCell>{order.originals_source_label || 'Not specified'}</TableCell>
                   <TableCell>{order.phone}</TableCell>
                   <TableCell>
                     {(order.work_orders || []).map((workOrder) => (
@@ -156,7 +158,7 @@ export default function SearchOrders() {
                 </TableRow>
               ))}
               {!loading && orders.length === 0 ? (
-                <TableRow><TableCell colSpan={5}>No orders match.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={6}>No orders match.</TableCell></TableRow>
               ) : null}
             </TableBody>
           </Table>

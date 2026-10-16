@@ -189,6 +189,12 @@
   font-size: 12px;
 }
 
+.wo-note {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .wo-field {
   display: grid;
   grid-template-columns: 118px minmax(0, 1fr);
