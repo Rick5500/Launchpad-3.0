@@ -38,6 +38,7 @@ import AssignmentIcon from '@mui/icons-material/Assignment';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import { brand } from '../brand';
 import NotificationBell from './NotificationBell';
+import HeaderScan from './HeaderScan';
 import { REPORT_NAV } from '../reportCatalog';
 
 const drawerWidth = 280;
@@ -116,6 +117,7 @@ export default function Layout({ user, onLogout }) {
   const welcomeName = user?.display_name || user?.username || 'User';
   const items = (user?.role === 'customer' ? customerNav : staffNav)
     .filter((item) => !item.roles || item.roles.includes(user?.role));
+  const showHeaderScan = user?.role === 'admin' || user?.role === 'operator';
 
   function go(route) {
     navigate(route);
@@ -227,8 +229,8 @@ export default function Layout({ user, onLogout }) {
           borderBottom: `1px solid ${brand.border}`,
         }}
       >
-        <Toolbar sx={{ justifyContent: 'space-between', gap: 1 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+        <Toolbar sx={{ position: 'relative', gap: 1, flexWrap: { xs: 'wrap', md: 'nowrap' }, py: { xs: 1, md: 0 } }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0, flex: { md: '1 1 0' }, zIndex: 1 }}>
             {isMobile && (
               <IconButton aria-label="Open navigation" edge="start" onClick={() => setMobileOpen(true)} sx={{ color: brand.navy }}>
                 <MenuIcon />
@@ -238,9 +240,28 @@ export default function Layout({ user, onLogout }) {
               {pageTitle(location.pathname)}
             </Typography>
           </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 0.5, sm: 1.5 } }}>
+          {showHeaderScan && (
+            <Box
+              sx={{
+                order: { xs: 3, md: 0 },
+                flexBasis: { xs: '100%', md: 'auto' },
+                width: { xs: '100%', md: 280, lg: 400 },
+                maxWidth: { md: 420 },
+                position: { md: 'absolute' },
+                left: { md: '50%' },
+                top: { md: '50%' },
+                transform: { md: 'translate(-50%, -50%)' },
+                zIndex: 2,
+                display: 'flex',
+                justifyContent: 'center',
+              }}
+            >
+              <HeaderScan user={user} autoFocus={location.pathname === '/'} />
+            </Box>
+          )}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 0.5, sm: 1.5 }, flex: { md: '1 1 0' }, justifyContent: 'flex-end', zIndex: 1 }}>
             <NotificationBell user={user} />
-            <Typography sx={{ display: { xs: 'none', sm: 'block' }, fontSize: 14 }}>
+            <Typography sx={{ display: { xs: 'none', lg: 'block' }, fontSize: 14 }}>
               Welcome, {welcomeName}
             </Typography>
             <Avatar sx={{ bgcolor: brand.navy, width: 34, height: 34, fontSize: 15 }}>{initials}</Avatar>

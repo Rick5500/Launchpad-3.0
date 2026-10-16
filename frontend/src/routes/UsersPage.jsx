@@ -35,6 +35,7 @@ const emptyForm = {
   city: '',
   state: '',
   zip: '',
+  department: '',
   password: '',
   is_active: true,
 };
@@ -54,7 +55,18 @@ export default function UsersPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [issuedPassword, setIssuedPassword] = useState('');
+  const [departments, setDepartments] = useState([]);
   const limit = 20;
+
+  useEffect(() => {
+    authFetch('/api/departments')
+      .then(async (response) => {
+        const body = await response.json().catch(() => []);
+        if (!response.ok || !Array.isArray(body)) return;
+        setDepartments(body.map((row) => row.name).filter(Boolean));
+      })
+      .catch(() => {});
+  }, []);
 
   function load(nextOffset = offset, filters = applied) {
     setLoading(true);
@@ -77,7 +89,11 @@ export default function UsersPage() {
   }, [offset, applied]);
 
   function update(field, value) {
-    setForm((current) => ({ ...current, [field]: value }));
+    setForm((current) => {
+      const next = { ...current, [field]: value };
+      if (field === 'role' && value === 'customer') next.department = '';
+      return next;
+    });
   }
 
   function edit(row) {
@@ -95,6 +111,7 @@ export default function UsersPage() {
       city: row.city || '',
       state: row.state || '',
       zip: row.zip || '',
+      department: row.department || '',
       password: '',
       is_active: Boolean(row.is_active),
     });
@@ -122,6 +139,7 @@ export default function UsersPage() {
       city: form.city,
       state: form.state,
       zip: form.zip,
+      department: form.role === 'customer' ? null : (form.department || null),
       is_active: form.is_active,
     };
     if (!editingId && form.password) payload.password = form.password;
@@ -180,6 +198,20 @@ export default function UsersPage() {
             <MenuItem value="operator">Operator</MenuItem>
             <MenuItem value="customer">Customer</MenuItem>
           </TextField>
+          {form.role === 'admin' || form.role === 'operator' ? (
+            <TextField
+              select
+              label="Department"
+              value={form.department}
+              onChange={(event) => update('department', event.target.value)}
+              helperText="All departments shows every active work order."
+            >
+              <MenuItem value="">All departments</MenuItem>
+              {(form.department && !departments.includes(form.department) ? [form.department, ...departments] : departments).map((name) => (
+                <MenuItem key={name} value={name}>{name}</MenuItem>
+              ))}
+            </TextField>
+          ) : null}
           <TextField label="Company" value={form.company} onChange={(event) => update('company', event.target.value)} />
           <TextField label="Contact name" value={form.contact_name} onChange={(event) => update('contact_name', event.target.value)} />
           <TextField label="Phone" value={form.phone} onChange={(event) => update('phone', event.target.value)} />
@@ -219,6 +251,7 @@ export default function UsersPage() {
                 <TableCell>Username</TableCell>
                 <TableCell>Name</TableCell>
                 <TableCell>Role</TableCell>
+                <TableCell>Department</TableCell>
                 <TableCell>Email</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell>Actions</TableCell>
@@ -230,6 +263,7 @@ export default function UsersPage() {
                   <TableCell>{row.username}{row.id === user?.id ? ' (you)' : ''}</TableCell>
                   <TableCell>{row.display_name}</TableCell>
                   <TableCell>{row.role}</TableCell>
+                  <TableCell>{row.role === 'customer' ? '—' : (row.department || 'All departments')}</TableCell>
                   <TableCell>{row.email || '—'}</TableCell>
                   <TableCell><Chip size="small" label={row.is_active ? 'Active' : 'Inactive'} color={row.is_active ? 'success' : 'default'} /></TableCell>
                   <TableCell>

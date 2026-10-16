@@ -1,6 +1,8 @@
 const express = require('express');
 const auth = require('../auth');
 const db = require('../db');
+const { withTransaction } = require('../dbAsync');
+const activityLog = require('../activityLog');
 const router = express.Router();
 
 function parseBoolean(value) {
@@ -84,7 +86,7 @@ router.post('/', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
   );
 });
 
-router.put('/:id', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
+router.put('/:id', auth.requireAuth, auth.requireRole('admin'), async (req, res) => {
   const id = req.params.id;
   const payload = req.body || {};
   const name = String(payload.name || '').trim();
@@ -96,20 +98,38 @@ router.put('/:id', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
   const sortOrder = parseSortOrder(payload.sort_order);
   const isActive = parseBoolean(payload.is_active ?? 1);
 
-  db.run(
-    `UPDATE departments
-     SET name = ?, description = ?, color = ?, icon = ?, sort_order = ?, is_active = ?, updated_at = datetime('now')
-     WHERE id = ?`,
-    [name, description, color, icon, sortOrder, isActive, id],
-    function (err) {
-      if (err) return respondDepartmentWriteError(res, err, 'update');
-      if (this.changes === 0) return res.status(404).json({ error: 'Department not found' });
-      db.get('SELECT * FROM departments WHERE id = ?', [id], (err2, row) => {
-        if (err2) return res.status(500).json({ error: 'Failed to load updated department' });
-        res.json(row);
-      });
-    }
-  );
+  try {
+    const row = await withTransaction(async (tx) => {
+      const existing = await tx.get('SELECT * FROM departments WHERE id = ?', [id]);
+      if (!existing) return null;
+      await tx.run(
+        `UPDATE departments
+         SET name = ?, description = ?, color = ?, icon = ?, sort_order = ?, is_active = ?, updated_at = datetime('now')
+         WHERE id = ?`,
+        [name, description, color, icon, sortOrder, isActive, id]
+      );
+      const previousName = String(existing.name || '');
+      if (previousName !== name) {
+        const updatedUsers = await tx.run(
+          `UPDATE users
+           SET department = ?, updated_at = datetime('now')
+           WHERE lower(trim(coalesce(department, ''))) = lower(?)`,
+          [name, previousName]
+        );
+        await activityLog.recordOn(tx, req.user.userId, 'department.updated', 'department', existing.id, {
+          previous_name: previousName,
+          name,
+          users_updated: updatedUsers.changes || 0,
+          message: `Renamed department ${previousName} to ${name}`,
+        });
+      }
+      return tx.get('SELECT * FROM departments WHERE id = ?', [id]);
+    });
+    if (!row) return res.status(404).json({ error: 'Department not found' });
+    res.json(row);
+  } catch (err) {
+    return respondDepartmentWriteError(res, err, 'update');
+  }
 });
 
 router.delete('/:id', auth.requireAuth, auth.requireRole('admin'), (req, res) => {

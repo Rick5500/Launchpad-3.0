@@ -2,6 +2,7 @@ const express = require('express');
 const auth = require('../auth');
 const barcodeEvents = require('../barcodeEvents');
 const barcodeLocations = require('../barcodeLocations');
+const users = require('../userAdmin');
 const { createFixedWindowLimiter } = require('../rateLimit');
 
 const router = express.Router();
@@ -88,9 +89,17 @@ router.post('/dry-run', auth.requireAuth, auth.requireRole('admin'), (req, res) 
   });
 });
 
-router.get('/events', auth.requireAuth, staffRoles, (req, res) => {
+router.get('/events', auth.requireAuth, staffRoles, async (req, res) => {
   const parsed = barcodeEvents.parseListQuery(req.query);
   if (parsed.error) return res.status(400).json({ error: parsed.error });
+  try {
+    const access = await users.loadAccess(req.user.userId);
+    if (access.role === 'operator' && access.department) {
+      parsed.value.departmentLock = access.department;
+    }
+  } catch (err) {
+    return sendServiceError(res, err, 'BARCODE LIST ERROR:', 'Failed to load barcode events');
+  }
 
   barcodeEvents.listEvents(parsed.value, (err, result) => {
     if (err) return sendServiceError(res, err, 'BARCODE LIST ERROR:', 'Failed to load barcode events');
@@ -98,7 +107,7 @@ router.get('/events', auth.requireAuth, staffRoles, (req, res) => {
   });
 });
 
-router.post('/', auth.requireAuth, staffRoles, limitBarcodeScans, (req, res) => {
+router.post('/', auth.requireAuth, staffRoles, limitBarcodeScans, async (req, res) => {
   const body = req.body || {};
   const scanned = parseOptionalText(body.scanned_value, 'scanned_value', barcodeEvents.MAX_SCANNED_VALUE_LENGTH);
   if (scanned.error) return res.status(400).json({ error: scanned.error });
@@ -106,6 +115,13 @@ router.post('/', auth.requireAuth, staffRoles, limitBarcodeScans, (req, res) => 
 
   const location = parseOptionalText(body.location, 'location', barcodeEvents.MAX_LOCATION_LENGTH);
   if (location.error) return res.status(400).json({ error: location.error });
+  let scanLocation = location.value;
+  try {
+    const access = await users.loadAccess(req.user.userId);
+    if (access.department) scanLocation = access.department;
+  } catch (err) {
+    return sendServiceError(res, err, 'BARCODE CREATE ERROR:', 'Failed to record barcode event');
+  }
 
   const eventTime = barcodeEvents.parseEventTime(body.event_time);
   if (eventTime.error) return res.status(400).json({ error: eventTime.error });
@@ -135,7 +151,7 @@ router.post('/', auth.requireAuth, staffRoles, limitBarcodeScans, (req, res) => 
 
     barcodeEvents.recordScan({
       scannedValue: scanned.value,
-      location: location.value,
+      location: scanLocation,
       eventTime: eventTime.value,
       operatorId: req.user.userId,
     }, (err, event) => {

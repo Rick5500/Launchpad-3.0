@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- The header scan box stays focused after a scan. `readOnly` is used while a scan is posting, and barcodes entered during that request are queued and posted in order. The box clears on Enter, and each result gets its own snackbar
+- Recent Activity and pending approvals for a staff user with a department stay on work orders in that department. User and system events such as creating an operator are omitted. An admin with no department, and an admin who chooses All departments, still see the full lists
+- A login whose department is Complete defaults to work orders completed this month, newest first, instead of an empty active list. The board chip reads `Showing: Complete · completed this month`
+- Renaming a department updates `users.department` for logins assigned to the old name, in the same transaction, and writes an activity row
+- Assigning a department that is not in the departments table, including legacy board names such as Manufacturing and Assembly, returns the valid department names in the error
 - The staff drawer lists Scan (`/scan`) for admin and operator, directly after Create Order. Customers still do not see it
 - Scan locations follow department names. Quality Control maps to Quality and Shipping maps to Dispatch, so a scan moves the work order and the Admin Board shows the new department. Finishing is no longer offered as a default location. Init updates an already-seeded database once and leaves locations an admin has edited
 - Heavy mixed load no longer stalls scans. The server raises libuv's thread pool to 32 when unset, and barcode inserts, stage updates, and notification writes wait on the same writer queue as other transactions
@@ -16,6 +21,8 @@ All notable changes to this project will be documented in this file.
 - A barcode scan that moves a department writes the scan, the department change, production history, and the activity row in one transaction
 
 ### Added
+- A department on each staff login. Null means every department. The Admin Board then shows only that department's active work orders, and a scan uses the barcode location with the same name. Operators cannot widen the board or their scan list. An admin with a department can choose All departments. Staff get a scan box in the top bar. `users.department` is added by `schema.sql` and by an idempotent `init_db.js` pass
+- `backend/scripts/verify-phase8.js` for the department migration, user department updates, board restriction, department scans, and customer isolation
 - Small Format product, paper, finished size, sides/color, binding, folding, finishing, and proof lists. Product is required. Finishing accepts more than one option. Proof defaults to None, or to the digital proof when None is turned off, and prints with the other line fields. Init fills an empty or untouched list and, when an admin has edited one, only adds missing options
 - Per-service line item fields. `service_fields` stores the label, type, options, required flag, and sort order for each service. `order_line_items.field_values` stores the answers as JSON. The customer order form shows a section for each selected service. The server checks required fields and select values against the active definitions. Admins edit those lists on the Services page. A deactivated option still displays on older orders. Init adds missing seed rows and does not overwrite an admin's edits
 - Signs & Graphics product fields for flatbed, CNC router, and the rest of the widened product line. Mount and laminate are options on that service, not a separate service. Older Yes/No mount and laminate values still display
