@@ -71,6 +71,7 @@ export default function OrderDetail() {
               Due {order.due_date} at {formatClockLabel(order.due_time)}
             </Typography>
             <Box className="no-print" sx={{ display: 'flex', gap: 1, mt: 2, flexWrap: 'wrap' }}>
+              <Button variant="outlined" onClick={() => navigate(`/orders/${order.id}/print`)}>Print Work Orders</Button>
               <Button variant="outlined" onClick={() => window.print()}>Print Confirmation</Button>
               <Button variant="contained" onClick={() => navigate('/order')} sx={{ bgcolor: brand.navy }}>Create Another Order</Button>
             </Box>

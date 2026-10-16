@@ -16,6 +16,7 @@ import {
   Tooltip,
 } from '@mui/material';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import QrCode2Icon from '@mui/icons-material/QrCode2';
 import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
 import { authFetch } from '../api';
@@ -76,7 +77,7 @@ export default function WorkOrdersList() {
                   <TableCell>Department</TableCell>
                   <TableCell>Status</TableCell>
                   <TableCell>Due</TableCell>
-                  <TableCell>View</TableCell>
+                  <TableCell>Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -102,8 +103,13 @@ export default function WorkOrdersList() {
                       <TableCell>{order.due_date || '-'}</TableCell>
                       <TableCell>
                         <Tooltip title="View details">
-                          <IconButton onClick={(e) => { e.stopPropagation(); navigate(`/work-orders/${order.id}`); }}>
+                          <IconButton aria-label={`View ${order.external_id || order.id}`} onClick={(e) => { e.stopPropagation(); navigate(`/work-orders/${order.id}`); }}>
                             <VisibilityIcon />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Print work order">
+                          <IconButton aria-label={`Print ${order.external_id || order.id}`} onClick={(e) => { e.stopPropagation(); navigate(`/work-orders/${order.id}/print`); }}>
+                            <QrCode2Icon />
                           </IconButton>
                         </Tooltip>
                       </TableCell>

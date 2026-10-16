@@ -4,6 +4,7 @@ const db = require('../db');
 const { WORK_ORDER_STATUSES } = require('../statuses');
 const barcodeEvents = require('../barcodeEvents');
 const { loadWorkOrderContext } = require('../orderService');
+const { printForWorkOrder } = require('../printWorkOrder');
 const notifications = require('../notifications');
 const activityLog = require('../activityLog');
 const router = express.Router();
@@ -125,6 +126,20 @@ router.get('/', auth.requireAuth, (req, res) => {
       res.json(rows);
     }
   );
+});
+
+router.get('/:id/print', auth.requireAuth, async (req, res) => {
+  try {
+    const payload = await printForWorkOrder(req.user, req.params.id);
+    if (!payload) return res.status(404).json({ error: 'Work order not found' });
+    res.json(payload);
+  } catch (err) {
+    if (err && err.status && err.status < 500) {
+      return res.status(err.status).json({ error: err.message });
+    }
+    console.error('WORK ORDER PRINT ERROR:', err);
+    return res.status(500).json({ error: 'Failed to load work order' });
+  }
 });
 
 router.get('/:id', auth.requireAuth, (req, res) => {

@@ -41,6 +41,8 @@ API endpoints:
 - `GET /api/admin-board/work-orders` — paginated, filtered active work orders
 - `GET /api/admin-board/activity` and `GET /api/admin-board/approvals` — paged activity and pending approvals
 - `POST /api/admin-board/approvals/:id` — admin approve or reject (`decision` of `approved` or `rejected`)
+- `GET /api/workorders/:id/print` — printable work order payload. Customers only receive their own work orders (404 otherwise)
+- `GET /api/orders/:id/print` — the same payload for every work order on an order. Customers only receive their own orders (404 otherwise)
 
 Barcode scans:
 - Persist `scanned_value`, `work_order_id`, `operator_id` (the signed-in user), `location`, and `event_time`.

@@ -9,6 +9,7 @@ const {
   previewOrder,
   presentOrder,
 } = require('../orderService');
+const { printForOrder } = require('../printWorkOrder');
 
 const router = express.Router();
 const orderRoles = auth.requireRole('admin', 'operator', 'customer');
@@ -42,6 +43,16 @@ router.get('/', auth.requireAuth, orderRoles, async (req, res) => {
     res.json(await listOrders(req.user, req.query || {}));
   } catch (err) {
     sendOrderError(res, err, 'ORDER LIST ERROR:');
+  }
+});
+
+router.get('/:id/print', auth.requireAuth, orderRoles, async (req, res) => {
+  try {
+    const payload = await printForOrder(req.user, req.params.id);
+    if (!payload) return res.status(404).json({ error: 'Order not found' });
+    res.json(payload);
+  } catch (err) {
+    sendOrderError(res, err, 'ORDER PRINT ERROR:');
   }
 });
 
