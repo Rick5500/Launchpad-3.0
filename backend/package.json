@@ -10,7 +10,8 @@
     "verify:phase2": "node scripts/verify-phase2.js",
     "verify:phase3": "node scripts/verify-phase3.js",
     "verify:phase4": "node scripts/verify-phase4.js",
-    "verify:phase5": "node scripts/verify-phase5.js"
+    "verify:phase5": "node scripts/verify-phase5.js",
+    "verify:phase6": "node scripts/verify-phase6.js"
   },
   "dependencies": {
     "@xmldom/xmldom": "^0.9.12",

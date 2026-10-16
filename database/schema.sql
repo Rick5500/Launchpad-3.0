@@ -227,7 +227,8 @@ CREATE TABLE IF NOT EXISTS barcode_events (
 );
 
 -- Location names the scan endpoint maps to a department move and/or a production stage.
--- Seeded from department names and BARCODE_LOCATION_STAGES. Later edits live here.
+-- Seeded from active department names. Quality also advances Quality Control, and
+-- Dispatch advances Shipping. Finishing is not a default selectable location.
 CREATE TABLE IF NOT EXISTS barcode_locations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   location TEXT NOT NULL UNIQUE,

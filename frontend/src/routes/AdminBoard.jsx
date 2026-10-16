@@ -219,6 +219,21 @@ export default function AdminBoard() {
     }
   }, [summary, department]);
 
+  useEffect(() => {
+    function refresh() {
+      setRefreshKey((value) => value + 1);
+    }
+    function onVisible() {
+      if (document.visibilityState === 'visible') refresh();
+    }
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
+
   const tabs = summary?.tabs?.length ? summary.tabs : [{ key: 'All', label: 'All', count: 0 }];
   const activeTab = tabs.some((tab) => tab.key === department) ? department : 'All';
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -555,7 +570,7 @@ export default function AdminBoard() {
                         <TableCell sx={{ fontSize: 12 }}>{scan.from_department || '—'}</TableCell>
                         <TableCell sx={{ fontSize: 12 }}>
                           {scan.to_department || '—'}
-                          {!scan.to_department && scan.location ? (
+                          {scan.to_department ? null : scan.location ? (
                             <Typography component="div" sx={{ fontSize: 11, color: brand.muted }}>location: {scan.location}</Typography>
                           ) : null}
                         </TableCell>

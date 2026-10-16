@@ -1,12 +1,12 @@
 const db = require('./db');
 const activityLog = require('./activityLog');
 const { withTransaction } = require('./dbAsync');
+const { DEFAULT_LOCATION_STAGES, isLegacyInactiveAlias } = require('./barcodeLocationDefaults');
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 const MAX_SCANNED_VALUE_LENGTH = 255;
 const MAX_LOCATION_LENGTH = 120;
-const DEFAULT_LOCATION_STAGES = 'Shipping=Shipping;Quality Control=Quality Control;Finishing=Finishing';
 
 const missingStageNames = new Set();
 
@@ -40,7 +40,8 @@ function httpError(status, publicMessage) {
   return error;
 }
 
-// Unset BARCODE_LOCATION_STAGES uses the default map. An empty value disables advancement.
+// Unset BARCODE_LOCATION_STAGES uses the default map: Quality advances Quality Control,
+// and Dispatch advances Shipping. An empty value disables advancement.
 // Format: Location=Stage Name pairs separated by semicolons. Later duplicates win.
 function locationStageEntries() {
   const raw = process.env.BARCODE_LOCATION_STAGES;
@@ -223,6 +224,7 @@ function resolveStage(location, cb) {
 
 // An empty barcode_locations table keeps the environment stage map and department-name match.
 // Once any row exists, only active rows in that table move a department or advance a stage.
+// Inactive Quality Control and Shipping aliases still resolve after the legacy migration.
 function fallbackPolicy(location) {
   const text = location ? String(location).trim() : '';
   return {
@@ -234,6 +236,26 @@ function fallbackPolicy(location) {
   };
 }
 
+function unmatchedPolicy() {
+  return {
+    mode: 'table',
+    matched: false,
+    configuredLocation: null,
+    departmentName: null,
+    stageName: null,
+  };
+}
+
+function policyFromRow(found) {
+  return {
+    mode: 'table',
+    matched: true,
+    configuredLocation: found.location,
+    departmentName: found.department_name || null,
+    stageName: found.stage_name || null,
+  };
+}
+
 function resolvePolicy(location, cb) {
   const text = location ? String(location).trim() : '';
   db.get('SELECT COUNT(*) AS count FROM barcode_locations', [], (err, row) => {
@@ -242,41 +264,42 @@ function resolvePolicy(location, cb) {
       return cb(err);
     }
     if (!row || !row.count) return cb(null, fallbackPolicy(text));
-    if (!text) {
-      return cb(null, {
-        mode: 'table',
-        matched: false,
-        configuredLocation: null,
-        departmentName: null,
-        stageName: null,
-      });
-    }
+    if (!text) return cb(null, unmatchedPolicy());
     db.get(
-      `SELECT location, department_name, stage_name
+      `SELECT location, department_name, stage_name, is_active
        FROM barcode_locations
        WHERE is_active = 1 AND lower(location) = lower(?)`,
       [text],
       (err2, found) => {
         if (err2) return cb(err2);
-        if (!found) {
-          return cb(null, {
-            mode: 'table',
-            matched: false,
-            configuredLocation: null,
-            departmentName: null,
-            stageName: null,
-          });
-        }
-        cb(null, {
-          mode: 'table',
-          matched: true,
-          configuredLocation: found.location,
-          departmentName: found.department_name || null,
-          stageName: found.stage_name || null,
-        });
+        if (found) return cb(null, policyFromRow(found));
+        db.get(
+          `SELECT location, department_name, stage_name, is_active
+           FROM barcode_locations
+           WHERE lower(location) = lower(?)`,
+          [text],
+          (err3, inactive) => {
+            if (err3) return cb(err3);
+            if (isLegacyInactiveAlias(inactive)) return cb(null, policyFromRow(inactive));
+            cb(null, unmatchedPolicy());
+          }
+        );
       }
     );
   });
+}
+
+function departmentMoveReason({ location, policy, moved, fromDepartment, toDepartment }) {
+  if (moved) return 'moved';
+  const text = location ? String(location).trim() : '';
+  if (!text) return 'no_location';
+  if (!policy || !policy.matched) return 'unknown_location';
+  if (!policy.departmentName) return 'stage_only';
+  if (!toDepartment) return 'department_not_found';
+  if (String(fromDepartment || '').trim().toLowerCase() === String(toDepartment).trim().toLowerCase()) {
+    return 'same_department';
+  }
+  return 'unchanged';
 }
 
 function isCompleteDepartment(name) {
@@ -454,7 +477,16 @@ function recordScan({ scannedValue, location, eventTime, operatorId }, cb) {
           stage,
           departmentName: policy.departmentName,
         })
-          .then((payload) => cb(null, payload))
+          .then((payload) => {
+            payload.department_move_reason = departmentMoveReason({
+              location,
+              policy,
+              moved: payload.department_moved,
+              fromDepartment: payload.from_department,
+              toDepartment: payload.to_department,
+            });
+            cb(null, payload);
+          })
           .catch(cb);
       });
     });

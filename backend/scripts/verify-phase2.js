@@ -610,9 +610,10 @@ async function runApiChecks() {
       token: operator.token,
       json: { scanned_value: createdIds[2].external_id, location: 'Shipping' },
     });
-    assert(stageScan.status === 201 && stageScan.json.to_department == null, 'Shipping should not be treated as a department');
+    assert(stageScan.status === 201 && stageScan.json.to_department == null, 'an unconfigured Shipping scan should not move the department');
+    assert(stageScan.json.department_move_reason === 'unknown_location', 'an unconfigured location should explain that the department stayed');
     const stillLarge = await db.get('SELECT department FROM work_orders WHERE id = ?', [createdIds[2].id]);
-    assert(stillLarge.department === 'Large Format', 'a stage location should leave the department in place');
+    assert(stillLarge.department === 'Large Format', 'an unconfigured location should leave the department in place');
 
     const finishScan = await request({
       method: 'POST',

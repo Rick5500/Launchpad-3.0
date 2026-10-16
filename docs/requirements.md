@@ -63,8 +63,8 @@ Barcode scans:
 - Resolve `scanned_value` to `work_orders.external_id` first, then to `work_orders.id` when the value is a positive integer.
 - Return 400 for invalid input and 404 when no work order matches.
 - `GET /api/barcode/events` accepts `work_order_id`, `operator`, `from`, `to`, `limit`, and `offset`.
-- A configured location can move the work order to a production stage (`BARCODE_LOCATION_STAGES`). The default map is Shipping, Quality Control, and Finishing. An empty value turns advancement off.
-- When `barcode_locations` has any row, only an active matching location moves the department or advances the stage. An empty table keeps the environment stage map and a department-name match. Complete also marks the work order completed. The scan stores the department it left and the department it entered.
+- A configured location can move the work order to a production stage (`BARCODE_LOCATION_STAGES`). The default map advances Quality Control from Quality and Shipping from Dispatch. Finishing is not a default scan location. An empty value turns advancement off.
+- When `barcode_locations` has any row, an active matching location moves the department or advances the stage. Scan location names follow department names. Init maps an untouched legacy Quality Control row to Quality and an untouched legacy Shipping row to Dispatch, and turns those rows off when the department-named location already exists. An inactive Quality Control or Shipping row that still has that original stage still moves the department. Finishing is turned off. A location an admin edited is not changed. An empty table keeps the environment stage map and a department-name match. Complete also marks the work order completed. The scan stores the department it left and the department it entered. `department_move_reason` says whether the department moved.
 - `POST /api/barcode` is rate limited per signed-in user.
 
 Delivery / will-call:
