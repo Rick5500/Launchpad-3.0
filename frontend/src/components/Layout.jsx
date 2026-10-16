@@ -30,6 +30,7 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import HistoryIcon from '@mui/icons-material/History';
 import QrCode2Icon from '@mui/icons-material/QrCode2';
+import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner';
 import LogoutIcon from '@mui/icons-material/Logout';
 import ExpandLess from '@mui/icons-material/ExpandLess';
 import ExpandMore from '@mui/icons-material/ExpandMore';
@@ -44,6 +45,7 @@ const drawerWidth = 280;
 const staffNav = [
   { title: 'Admin Board', route: '/', icon: <DashboardIcon />, roles: ['admin', 'operator'] },
   { title: 'Create Order', route: '/order', icon: <NoteAddIcon />, roles: ['admin', 'operator'] },
+  { title: 'Scan', route: '/scan', icon: <QrCodeScannerIcon />, roles: ['admin', 'operator'] },
   { title: 'Search Orders', route: '/search', icon: <SearchIcon />, roles: ['admin', 'operator'] },
   {
     title: 'Reports',
