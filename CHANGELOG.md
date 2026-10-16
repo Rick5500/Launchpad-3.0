@@ -5,6 +5,9 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Admin writes no longer share one SQLite transaction. Concurrent user, settings, and notification updates each take a queued connection, and the last-admin check runs inside that transaction
+- Creating a customer from the older customers API records activity and uses the same username rules as the Users page. Customer lookup omits deactivated accounts
+- Passwords longer than 72 bytes are rejected. Init does not restore a barcode location an admin deleted
 - Staff cannot save a work order number that Code 128 cannot draw. `external_id` must be 1 to 80 printable ASCII characters, or be left blank. A value already stored that cannot be encoded prints "barcode unavailable" instead of failing that sheet or the rest of the order
 - A barcode scan that moves a department writes the scan, the department change, production history, and the activity row in one transaction
 

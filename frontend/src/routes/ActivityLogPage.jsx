@@ -20,6 +20,7 @@ import { authFetch } from '../api';
 
 const TYPES = [
   '',
+  'order.created',
   'work_order.created',
   'work_order.moved',
   'work_order.completed',
@@ -32,6 +33,7 @@ const TYPES = [
   'user.created',
   'user.updated',
   'user.deactivated',
+  'user.reactivated',
   'user.password_reset',
   'settings.updated',
   'notification_settings.updated',
@@ -110,7 +112,7 @@ export default function ActivityLogPage() {
     <Box data-testid="activity-log-page">
       <Typography variant="h4" gutterBottom>Activity Log</Typography>
       <Typography color="text.secondary" sx={{ mb: 2 }}>
-        Work order events and administrator changes. Export respects the current filters.
+        Work order events and administrator changes. CSV export uses the current filters and includes at most 200 rows.
       </Typography>
       {error ? <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert> : null}
       <SectionCard title="Filters">

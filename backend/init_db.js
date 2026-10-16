@@ -468,6 +468,15 @@ async function seedSystemSettings() {
 }
 
 async function seedBarcodeLocations() {
+  const flagged = await get(`SELECT key FROM system_settings WHERE key = 'barcode_locations_seeded'`);
+  if (flagged) return;
+  const countRow = await get('SELECT COUNT(*) AS count FROM barcode_locations');
+  if (countRow && countRow.count > 0) {
+    await run(
+      `INSERT INTO system_settings (key, value, updated_at) VALUES ('barcode_locations_seeded', '1', datetime('now'))`
+    );
+    return;
+  }
   const stages = parseStageMap(process.env.BARCODE_LOCATION_STAGES);
   let sort = 1;
   for (const entry of stages) {
@@ -499,6 +508,9 @@ async function seedBarcodeLocations() {
       [department.name, department.name, null, department.sort_order || sort]
     );
   }
+  await run(
+    `INSERT INTO system_settings (key, value, updated_at) VALUES ('barcode_locations_seeded', '1', datetime('now'))`
+  );
 }
 
 async function main() {

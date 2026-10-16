@@ -1,5 +1,5 @@
 const activityLog = require('./activityLog');
-const { get, all, run, withTransaction } = require('./dbAsync');
+const { get, all, withTransaction } = require('./dbAsync');
 const { httpError } = require('./httpError');
 const { parseText, parseBool, parseInteger } = require('./fields');
 
@@ -79,13 +79,13 @@ async function assertUnique(location, exceptId) {
 async function createLocation(actorId, body) {
   const value = await parsePayload(body);
   await assertUnique(value.location, null);
-  const id = await withTransaction(async () => {
-    const inserted = await run(
+  const id = await withTransaction(async (tx) => {
+    const inserted = await tx.run(
       `INSERT INTO barcode_locations (location, department_name, stage_name, sort_order, is_active, updated_at)
        VALUES (?,?,?,?,?,datetime('now'))`,
       [value.location, value.departmentName, value.stageName, value.sortOrder, value.isActive]
     );
-    await activityLog.record(actorId, 'barcode_location.created', 'barcode_location', inserted.lastID, {
+    await activityLog.recordOn(tx, actorId, 'barcode_location.created', 'barcode_location', inserted.lastID, {
       location: value.location,
       department_name: value.departmentName,
       stage_name: value.stageName,
@@ -104,14 +104,14 @@ async function updateLocation(actorId, id, body) {
   if (!existing) throw httpError(404, 'Location not found');
   const value = await parsePayload(body);
   await assertUnique(value.location, existing.id);
-  await withTransaction(async () => {
-    await run(
+  await withTransaction(async (tx) => {
+    await tx.run(
       `UPDATE barcode_locations
        SET location = ?, department_name = ?, stage_name = ?, sort_order = ?, is_active = ?, updated_at = datetime('now')
        WHERE id = ?`,
       [value.location, value.departmentName, value.stageName, value.sortOrder, value.isActive, existing.id]
     );
-    await activityLog.record(actorId, 'barcode_location.updated', 'barcode_location', existing.id, {
+    await activityLog.recordOn(tx, actorId, 'barcode_location.updated', 'barcode_location', existing.id, {
       location: value.location,
       department_name: value.departmentName,
       stage_name: value.stageName,
@@ -128,9 +128,9 @@ async function removeLocation(actorId, id) {
   if (parsedId.error || !parsedId.value) throw httpError(400, 'id must be a positive integer');
   const existing = await get('SELECT * FROM barcode_locations WHERE id = ?', [parsedId.value]);
   if (!existing) throw httpError(404, 'Location not found');
-  await withTransaction(async () => {
-    await run('DELETE FROM barcode_locations WHERE id = ?', [existing.id]);
-    await activityLog.record(actorId, 'barcode_location.removed', 'barcode_location', existing.id, {
+  await withTransaction(async (tx) => {
+    await tx.run('DELETE FROM barcode_locations WHERE id = ?', [existing.id]);
+    await activityLog.recordOn(tx, actorId, 'barcode_location.removed', 'barcode_location', existing.id, {
       location: existing.location,
       department_name: existing.department_name,
       stage_name: existing.stage_name,

@@ -1,5 +1,5 @@
 const activityLog = require('./activityLog');
-const { all, run, withTransaction } = require('./dbAsync');
+const { all, withTransaction } = require('./dbAsync');
 const { httpError } = require('./httpError');
 
 const IN_APP_EVENTS = [
@@ -74,9 +74,9 @@ async function updateSettings(actorId, body) {
   if (!changes.length) {
     return getSettings();
   }
-  await withTransaction(async () => {
+  await withTransaction(async (tx) => {
     for (const [key, enabled] of changes) {
-      await run(
+      await tx.run(
         `INSERT INTO notification_settings (event_key, enabled, channel, updated_at)
          VALUES (?,?, 'in_app', datetime('now'))
          ON CONFLICT(event_key) DO UPDATE SET
@@ -86,7 +86,7 @@ async function updateSettings(actorId, body) {
         [key, enabled]
       );
     }
-    await activityLog.record(actorId, 'notification_settings.updated', 'notification_settings', null, {
+    await activityLog.recordOn(tx, actorId, 'notification_settings.updated', 'notification_settings', null, {
       events: Object.fromEntries(changes.map(([key, enabled]) => [key, enabled === 1])),
       message: `Updated notification settings`,
     });

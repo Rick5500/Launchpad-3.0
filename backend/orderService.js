@@ -1,19 +1,10 @@
-const sqlite3 = require('sqlite3').verbose();
 const db = require('./db');
+const { withTransaction } = require('./dbAsync');
 const {
   businessToday,
   validateOrderDue,
 } = require('./deliveryRules');
-const { BUSY_TIMEOUT_MS, BUSY_ATTEMPTS, isBusyError, delay, backoffMs } = require('./sqliteBusy');
 const activityLog = require('./activityLog');
-
-let transactionQueue = Promise.resolve();
-
-function enqueueTransaction(task) {
-  const run = transactionQueue.then(task, task);
-  transactionQueue = run.then(() => {}, () => {});
-  return run;
-}
 
 const CUSTOMER_FORBIDDEN_FIELDS = [
   'status',
@@ -61,69 +52,6 @@ function getOn(conn, sql, params = []) {
 function allOn(conn, sql, params = []) {
   return new Promise((resolve, reject) => {
     conn.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows || [])));
-  });
-}
-
-function openTransactionConnection() {
-  return new Promise((resolve, reject) => {
-    const conn = new sqlite3.Database(db.filePath, (openErr) => {
-      if (openErr) {
-        reject(openErr);
-        return;
-      }
-      conn.configure('busyTimeout', BUSY_TIMEOUT_MS);
-      conn.run(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`, (pragmaErr) => {
-        if (pragmaErr) {
-          conn.close(() => reject(pragmaErr));
-          return;
-        }
-        resolve(conn);
-      });
-    });
-  });
-}
-
-async function withTransactionOnce(fn) {
-  const conn = await openTransactionConnection();
-  const tx = {
-    run: (sql, params) => runOn(conn, sql, params),
-    get: (sql, params) => getOn(conn, sql, params),
-    all: (sql, params) => allOn(conn, sql, params),
-  };
-  const close = () => new Promise((resolve) => conn.close(() => resolve()));
-
-  try {
-    await tx.run('BEGIN IMMEDIATE');
-  } catch (beginErr) {
-    await close();
-    throw beginErr;
-  }
-
-  try {
-    const result = await fn(tx);
-    await tx.run('COMMIT');
-    await close();
-    return result;
-  } catch (err) {
-    try { await tx.run('ROLLBACK'); } catch (rollbackErr) { /* already aborted */ }
-    await close();
-    throw err;
-  }
-}
-
-function withTransaction(fn) {
-  return enqueueTransaction(async () => {
-    let lastErr;
-    for (let attempt = 0; attempt < BUSY_ATTEMPTS; attempt += 1) {
-      try {
-        return await withTransactionOnce(fn);
-      } catch (err) {
-        lastErr = err;
-        if (!isBusyError(err) || attempt + 1 >= BUSY_ATTEMPTS) throw err;
-        await delay(backoffMs(attempt));
-      }
-    }
-    throw lastErr;
   });
 }
 

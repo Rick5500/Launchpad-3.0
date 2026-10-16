@@ -1,5 +1,5 @@
 const activityLog = require('./activityLog');
-const { get, all, run, withTransaction } = require('./dbAsync');
+const { get, all, withTransaction } = require('./dbAsync');
 const { httpError } = require('./httpError');
 const {
   parseText,
@@ -178,8 +178,8 @@ async function createService(actorId, body) {
   if (value.suffixMode === 'code' && !value.code) throw httpError(400, 'code is required when suffix_mode is code');
   const departmentName = await assertDepartment(value.departmentName);
   await assertUnique(value.name, value.code, null);
-  const id = await withTransaction(async () => {
-    const inserted = await run(
+  const id = await withTransaction(async (tx) => {
+    const inserted = await tx.run(
       `INSERT INTO services (
          name, description, department_name, sort_order, is_active, requires_approval,
          code, suffix_mode, default_turnaround_hours, updated_at
@@ -196,7 +196,7 @@ async function createService(actorId, body) {
         value.turnaround,
       ]
     );
-    await activityLog.record(actorId, 'service.created', 'service', inserted.lastID, {
+    await activityLog.recordOn(tx, actorId, 'service.created', 'service', inserted.lastID, {
       name: value.name,
       code: value.code,
       department_name: departmentName,
@@ -223,8 +223,8 @@ async function updateService(actorId, id, body) {
   const action = wasActive && value.isActive === 0
     ? 'service.deactivated'
     : (!wasActive && value.isActive === 1 ? 'service.reactivated' : 'service.updated');
-  await withTransaction(async () => {
-    await run(
+  await withTransaction(async (tx) => {
+    await tx.run(
       `UPDATE services
        SET name = ?, description = ?, department_name = ?, sort_order = ?, is_active = ?,
            requires_approval = ?, code = ?, suffix_mode = ?, default_turnaround_hours = ?,
@@ -243,7 +243,7 @@ async function updateService(actorId, id, body) {
         existing.id,
       ]
     );
-    await activityLog.record(actorId, action, 'service', existing.id, {
+    await activityLog.recordOn(tx, actorId, action, 'service', existing.id, {
       name: value.name,
       code: value.code,
       department_name: departmentName,

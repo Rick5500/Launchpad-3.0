@@ -107,6 +107,16 @@ function record(actorId, action, entityType, entityId, detail) {
   });
 }
 
+function recordOn(runner, actorId, action, entityType, entityId, detail) {
+  return runner.run(INSERT_SQL, bindParams({
+    actorId,
+    action,
+    entityType,
+    entityId,
+    detail,
+  }));
+}
+
 function insertEntries(conn, entries, cb) {
   const pending = entries.slice();
   const step = () => {
@@ -129,4 +139,5 @@ module.exports = {
   decisionEntry,
   insertEntries,
   record,
+  recordOn,
 };

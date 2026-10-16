@@ -3,11 +3,13 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const auth = require('../auth');
 const db = require('../db');
-const { resetUserPassword } = require('../passwordReset');
+const activityLog = require('../activityLog');
+const { withTransaction } = require('../dbAsync');
+const { parseUsername } = require('../userAdmin');
+const { resetUserPassword, passwordPolicyError } = require('../passwordReset');
 
 const router = express.Router();
 const BCRYPT_ROUNDS = 10;
-const MIN_PASSWORD_LENGTH = 8;
 
 function generatePassword() {
   return crypto.randomBytes(18).toString('base64url');
@@ -30,7 +32,7 @@ router.get('/lookup', auth.requireAuth, auth.requireRole('admin', 'operator'), (
   db.all(
     `SELECT id, username, display_name, company, contact_name, phone, email
      FROM users
-     WHERE role = 'customer'
+     WHERE role = 'customer' AND COALESCE(is_active, 1) = 1
      ORDER BY display_name ASC`,
     [],
     (err, rows) => {
@@ -60,19 +62,30 @@ router.get('/', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
   );
 });
 
+function optionalProfile(value, field, max) {
+  if (value == null || value === '') return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  if (text.length > max) return { error: `${field} must be ${max} characters or fewer` };
+  return text;
+}
+
+function findUniqueUsername(nameBase, counter) {
+  const tryName = counter > 0 ? `${nameBase}-${counter}` : nameBase;
+  return new Promise((resolve, reject) => {
+    db.get('SELECT id FROM users WHERE username = ?', [tryName], (err, row) => {
+      if (err) return reject(err);
+      if (!row) return resolve(tryName);
+      resolve(findUniqueUsername(nameBase, counter + 1));
+    });
+  });
+}
+
 // Create a new customer (admin only). Accepts { display_name, username?, password? }.
-router.post('/', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
+router.post('/', auth.requireAuth, auth.requireRole('admin'), async (req, res) => {
   const { display_name, username } = req.body || {};
   if (!display_name || !String(display_name).trim()) {
     return res.status(400).json({ error: 'display_name is required' });
-  }
-
-  function optionalProfile(value, field, max) {
-    if (value == null || value === '') return null;
-    const text = String(value).trim();
-    if (!text) return null;
-    if (text.length > max) return { error: `${field} must be ${max} characters or fewer` };
-    return text;
   }
 
   const company = optionalProfile(req.body?.company, 'company', 160);
@@ -87,55 +100,46 @@ router.post('/', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
 
   const suppliedPassword = typeof req.body?.password === 'string' ? req.body.password : '';
   const generated = suppliedPassword.length === 0;
-  if (!generated && suppliedPassword.length < MIN_PASSWORD_LENGTH) {
-    return res.status(400).json({ error: `password must be at least ${MIN_PASSWORD_LENGTH} characters` });
+  if (!generated) {
+    const policyError = passwordPolicyError(suppliedPassword);
+    if (policyError) return res.status(400).json({ error: policyError });
   }
   const password = generated ? generatePassword() : suppliedPassword;
-  const baseName = username && String(username).trim()
-    ? String(username).trim()
-    : String(display_name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-
-  function findUnique(nameBase, counter, cb) {
-    const tryName = counter > 0 ? `${nameBase}-${counter}` : nameBase;
-    db.get('SELECT id FROM users WHERE username = ?', [tryName], (err, row) => {
-      if (err) return cb(err);
-      if (!row) return cb(null, tryName);
-      findUnique(nameBase, counter + 1, cb);
-    });
+  const suppliedName = username && String(username).trim() ? String(username).trim() : '';
+  if (suppliedName) {
+    const parsed = parseUsername(suppliedName, true);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+  }
+  const baseName = suppliedName
+    || String(display_name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+  if (!suppliedName) {
+    const parsed = parseUsername(baseName, true);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
   }
 
-  findUnique(baseName, 0, (err, uniqueUsername) => {
-    if (err) {
-      console.error('CUSTOMER CREATE ERROR:', err);
-      return res.status(500).json({ error: 'Failed to check username availability' });
-    }
-
-    bcrypt.hash(password, BCRYPT_ROUNDS, (hashErr, hash) => {
-      if (hashErr) {
-        console.error('CUSTOMER CREATE ERROR:', hashErr);
-        return res.status(500).json({ error: 'Failed to create customer' });
-      }
-
-      db.run(
+  try {
+    const uniqueUsername = await findUniqueUsername(baseName, 0);
+    const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+    const row = await withTransaction(async (tx) => {
+      const inserted = await tx.run(
         `INSERT INTO users (username, password_hash, role, display_name, company, contact_name, phone, email, created_at)
          VALUES (?,?,?,?,?,?,?,?,datetime('now'))`,
-        [uniqueUsername, hash, 'customer', display_name, company, contactName, phone, email],
-        function (insertErr) {
-          if (insertErr) {
-            console.error('CUSTOMER CREATE ERROR:', insertErr);
-            return res.status(500).json({ error: 'Failed to create customer' });
-          }
-          const newId = this.lastID;
-          db.get('SELECT id, username, display_name FROM users WHERE id = ?', [newId], (err2, row) => {
-            const body = row || { id: newId, username: uniqueUsername, display_name };
-            if (generated) body.password = password;
-            if (err2) return res.status(201).json(body);
-            res.status(201).json(body);
-          });
-        }
+        [uniqueUsername, hash, 'customer', String(display_name).trim(), company, contactName, phone, email]
       );
+      await activityLog.recordOn(tx, req.user.userId, 'user.created', 'user', inserted.lastID, {
+        username: uniqueUsername,
+        role: 'customer',
+        message: `Created customer ${uniqueUsername}`,
+      });
+      return tx.get('SELECT id, username, display_name FROM users WHERE id = ?', [inserted.lastID]);
     });
-  });
+    const body = row || { username: uniqueUsername, display_name: String(display_name).trim() };
+    if (generated) body.password = password;
+    return res.status(201).json(body);
+  } catch (err) {
+    console.error('CUSTOMER CREATE ERROR:', err);
+    return res.status(500).json({ error: 'Failed to create customer' });
+  }
 });
 
 // Replace a customer password (admin only). Omit password to generate one and return it once.
@@ -145,8 +149,9 @@ router.put('/:id/password', auth.requireAuth, auth.requireRole('admin'), (req, r
 
   const suppliedPassword = typeof req.body?.password === 'string' ? req.body.password : '';
   const generated = suppliedPassword.length === 0;
-  if (!generated && suppliedPassword.length < MIN_PASSWORD_LENGTH) {
-    return res.status(400).json({ error: `password must be at least ${MIN_PASSWORD_LENGTH} characters` });
+  if (!generated) {
+    const policyError = passwordPolicyError(suppliedPassword);
+    if (policyError) return res.status(400).json({ error: policyError });
   }
   const password = generated ? generatePassword() : suppliedPassword;
 

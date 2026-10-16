@@ -308,6 +308,18 @@ async function main() {
   await initDatabase(freshDb);
   await initDatabase(freshDb);
   await assertMigration(freshDb, 'fresh database');
+  const seeded = openDb(freshDb);
+  const seedFlag = await seeded.get(`SELECT value FROM system_settings WHERE key = 'barcode_locations_seeded'`);
+  assert(seedFlag && seedFlag.value === '1', 'barcode location seed should be recorded');
+  await seeded.run(`DELETE FROM barcode_locations WHERE lower(location) = 'shipping'`);
+  await seeded.close();
+  await initDatabase(freshDb);
+  const reseeded = openDb(freshDb);
+  const restored = await reseeded.get(`SELECT id FROM barcode_locations WHERE lower(location) = 'shipping'`);
+  assert(!restored, 'init should not restore a barcode location an admin deleted');
+  const kept = await reseeded.get(`SELECT COUNT(*) AS count FROM barcode_locations WHERE lower(location) = 'large format'`);
+  assert(kept.count === 1, 'other seeded locations should remain after init');
+  await reseeded.close();
 
   const server = startServer();
   await server.ready;
@@ -573,6 +585,9 @@ async function main() {
       json: { username: 'phase4cust', display_name: 'Phase Four Customer', role: 'customer', is_active: false },
     });
     assert(inactive.status === 200, `customer deactivate failed: ${inactive.text}`);
+    const hiddenLookup = await request({ method: 'GET', path: '/api/customers/lookup', token: operator.token });
+    assert(hiddenLookup.status === 200 && Array.isArray(hiddenLookup.json), 'customer lookup should load');
+    assert(!hiddenLookup.json.some((row) => row.username === 'phase4cust'), 'deactivated customers should leave lookup');
     const locked = await request({ method: 'POST', path: '/api/auth/login', json: { username: 'phase4cust', password: reset.json.password } });
     assert(locked.status === 401, 'deactivated user should not log in');
     await request({
@@ -680,6 +695,118 @@ async function main() {
       json: { scanned_value: externalId, location: 'Packing' },
     });
     assert(missing.status === 200 && missing.json.location.matched === false && missing.json.location.would_move_department === false, 'removed locations should not resolve');
+
+    const customerActivity = await db.get(
+      `SELECT id FROM activity_log WHERE action = 'user.created' AND detail LIKE '%phase4cust%'`
+    );
+    assert(customerActivity, 'customer create should write activity');
+    const badUsername = await request({
+      method: 'POST',
+      path: '/api/customers',
+      token: admin.token,
+      json: { display_name: 'Bad Name', username: 'bad name', password: 'CustomerPass1' },
+    });
+    assert(badUsername.status === 400 && /username/.test(badUsername.json.error || ''), `bad customer username should be rejected: ${badUsername.text}`);
+    const longPassword = 'a'.repeat(73);
+    const longUser = await request({
+      method: 'POST',
+      path: '/api/users',
+      token: admin.token,
+      json: { username: 'longpass', display_name: 'Long Pass', role: 'operator', password: longPassword },
+    });
+    assert(longUser.status === 400 && /72 bytes/.test(longUser.json.error || ''), `long password should be rejected: ${longUser.text}`);
+    const longReset = await request({
+      method: 'PUT',
+      path: `/api/users/${customerResponse.json.id}/password`,
+      token: admin.token,
+      json: { password: longPassword },
+    });
+    assert(longReset.status === 400 && /72 bytes/.test(longReset.json.error || ''), `long reset should be rejected: ${longReset.text}`);
+    const longChange = await request({
+      method: 'PUT',
+      path: `/api/customers/${customerResponse.json.id}/password`,
+      token: admin.token,
+      json: { password: longPassword },
+    });
+    assert(longChange.status === 400 && /72 bytes/.test(longChange.json.error || ''), `long customer password change should be rejected: ${longChange.text}`);
+
+    const createdUsers = await Promise.all(Array.from({ length: 20 }, (_, index) => request({
+      method: 'POST',
+      path: '/api/users',
+      token: admin.token,
+      json: {
+        username: `stress${String(index).padStart(2, '0')}`,
+        display_name: `Stress ${index}`,
+        role: 'operator',
+        password: 'StressPass123',
+      },
+    })));
+    assert(createdUsers.every((row) => row.status === 201), `concurrent user creates should succeed: ${createdUsers.map((row) => row.status).join(',')}`);
+    const mixed = await Promise.all([
+      request({
+        method: 'PUT',
+        path: '/api/settings',
+        token: admin.token,
+        json: { company_phone: '919-782-3332' },
+      }),
+      request({
+        method: 'PUT',
+        path: '/api/notifications/settings',
+        token: admin.token,
+        json: { events: { work_order_on_hold: true } },
+      }),
+      request({
+        method: 'POST',
+        path: '/api/users',
+        token: admin.token,
+        json: { username: 'stressmix1', display_name: 'Stress Mix 1', role: 'operator', password: 'StressPass123' },
+      }),
+      request({
+        method: 'POST',
+        path: '/api/users',
+        token: admin.token,
+        json: { username: 'stressmix2', display_name: 'Stress Mix 2', role: 'operator', password: 'StressPass123' },
+      }),
+    ]);
+    assert(mixed.every((row) => row.status < 500), `mixed admin writes should not 500: ${mixed.map((row) => `${row.status} ${row.text}`).join(' | ')}`);
+
+    const rivalA = await request({
+      method: 'POST',
+      path: '/api/users',
+      token: admin.token,
+      json: { username: 'rivala', display_name: 'Rival A', role: 'admin', password: 'RivalPass123' },
+    });
+    const rivalB = await request({
+      method: 'POST',
+      path: '/api/users',
+      token: admin.token,
+      json: { username: 'rivalb', display_name: 'Rival B', role: 'admin', password: 'RivalPass123' },
+    });
+    assert(rivalA.status === 201 && rivalB.status === 201, 'rival admins should be created');
+    await db.run(`UPDATE users SET role = 'operator' WHERE username IN ('admin', 'admin2')`);
+    const loginA = await login('rivala', 'RivalPass123');
+    const loginB = await login('rivalb', 'RivalPass123');
+    const [demoteB, deactivateA] = await Promise.all([
+      request({
+        method: 'PUT',
+        path: `/api/users/${rivalB.json.id}`,
+        token: loginA.token,
+        json: { username: 'rivalb', display_name: 'Rival B', role: 'operator', is_active: true },
+      }),
+      request({
+        method: 'PUT',
+        path: `/api/users/${rivalA.json.id}`,
+        token: loginB.token,
+        json: { username: 'rivala', display_name: 'Rival A', role: 'admin', is_active: false },
+      }),
+    ]);
+    const rivalResults = [demoteB, deactivateA];
+    assert(rivalResults.every((row) => row.status < 500), `rival admin writes should not 500: ${rivalResults.map((row) => row.text).join(' | ')}`);
+    assert(rivalResults.some((row) => row.status === 200), 'one rival admin change should succeed');
+    assert(rivalResults.some((row) => row.status >= 400 && row.status < 500), `the losing rival change should be a 4xx: ${rivalResults.map((row) => row.status).join(',')}`);
+    const activeAdmins = await db.get(`SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND COALESCE(is_active, 1) = 1`);
+    assert(activeAdmins.count >= 1, 'concurrent demotion must leave an active administrator');
+    await db.run(`UPDATE users SET role = 'admin', is_active = 1 WHERE username IN ('admin', 'admin2')`);
 
     const csv = await request({ method: 'GET', path: '/api/activity?format=csv&type=service.created', token: admin.token });
     assert(csv.status === 200 && /text\/csv/.test(String(csv.headers['content-type'])) && csv.text.includes('service.created'), 'activity csv should export the filtered rows');

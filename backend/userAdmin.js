@@ -1,8 +1,8 @@
 const crypto = require('crypto');
 const auth = require('./auth');
 const activityLog = require('./activityLog');
-const { resetUserPassword } = require('./passwordReset');
-const { get, all, run, withTransaction } = require('./dbAsync');
+const { resetUserPassword, passwordPolicyError } = require('./passwordReset');
+const { get, all, withTransaction } = require('./dbAsync');
 const { httpError } = require('./httpError');
 const {
   parseText,
@@ -93,8 +93,8 @@ function bearerToken(req) {
   return null;
 }
 
-async function countOtherActiveAdmins(userId) {
-  const row = await get(
+async function countOtherActiveAdmins(tx, userId) {
+  const row = await tx.get(
     `SELECT COUNT(*) AS count
      FROM users
      WHERE role = 'admin' AND COALESCE(is_active, 1) = 1 AND id != ?`,
@@ -191,15 +191,16 @@ async function createUser(actorId, body) {
   if (active.error) throw httpError(400, active.error);
   const supplied = typeof source.password === 'string' ? source.password : '';
   const generated = supplied.length === 0;
-  if (!generated && supplied.length < MIN_PASSWORD_LENGTH) {
-    throw httpError(400, `password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+  if (!generated) {
+    const policyError = passwordPolicyError(supplied);
+    if (policyError) throw httpError(400, policyError);
   }
   const password = generated ? generatePassword() : supplied;
-  const taken = await get('SELECT id FROM users WHERE lower(username) = lower(?)', [username.value]);
-  if (taken) throw httpError(409, 'Username is already in use');
   const hash = await auth.hashPassword(password);
-  const id = await withTransaction(async () => {
-    const inserted = await run(
+  const id = await withTransaction(async (tx) => {
+    const taken = await tx.get('SELECT id FROM users WHERE lower(username) = lower(?)', [username.value]);
+    if (taken) throw httpError(409, 'Username is already in use');
+    const inserted = await tx.run(
       `INSERT INTO users (
          username, password_hash, role, display_name, company, contact_name, phone, email, is_active, created_at, updated_at
        ) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))`,
@@ -215,7 +216,7 @@ async function createUser(actorId, body) {
         active.value,
       ]
     );
-    await activityLog.record(actorId, 'user.created', 'user', inserted.lastID, {
+    await activityLog.recordOn(tx, actorId, 'user.created', 'user', inserted.lastID, {
       username: username.value,
       role: role.value,
       message: `Created ${role.value} ${username.value}`,
@@ -231,8 +232,6 @@ async function createUser(actorId, body) {
 async function updateUser(actorId, id, body) {
   const parsedId = parseInteger(id, 'id', { min: 1, max: Number.MAX_SAFE_INTEGER, required: true });
   if (parsedId.error || !parsedId.value) throw httpError(400, 'id must be a positive integer');
-  const existing = await get(`SELECT ${PUBLIC_COLUMNS} FROM users WHERE id = ?`, [parsedId.value]);
-  if (!existing) throw httpError(404, 'User not found');
   const source = body || {};
   const displayName = parseText(source.display_name, 'display_name', { required: true, max: 160 });
   if (displayName.error) throw httpError(400, displayName.error);
@@ -242,41 +241,44 @@ async function updateUser(actorId, id, body) {
   if (profile.error) throw httpError(400, profile.error);
   const active = parseBool(source.is_active, 'is_active', true);
   if (active.error) throw httpError(400, active.error);
-  const username = parseUsername(source.username == null || source.username === '' ? existing.username : source.username, true);
-  if (username.error) throw httpError(400, username.error);
   if (source.password != null && source.password !== '') {
     throw httpError(400, 'Use the password reset action to change a password');
   }
 
   const actor = Number(actorId);
-  const currentlyActive = existing.is_active !== 0;
-  if (existing.id === actor && existing.role === 'admin' && role.value !== 'admin') {
-    throw httpError(400, 'You cannot change your own role');
-  }
-  if (existing.id === actor && currentlyActive && active.value === 0) {
-    throw httpError(400, 'You cannot deactivate your own account');
-  }
-  const leavingAdmin = existing.role === 'admin' && currentlyActive && (role.value !== 'admin' || active.value === 0);
-  if (leavingAdmin) {
-    const others = await countOtherActiveAdmins(existing.id);
-    if (others < 1) {
-      throw httpError(400, 'The last active administrator cannot be demoted or deactivated');
+  const outcome = await withTransaction(async (tx) => {
+    const existing = await tx.get(`SELECT ${PUBLIC_COLUMNS} FROM users WHERE id = ?`, [parsedId.value]);
+    if (!existing) throw httpError(404, 'User not found');
+    const username = parseUsername(source.username == null || source.username === '' ? existing.username : source.username, true);
+    if (username.error) throw httpError(400, username.error);
+
+    const currentlyActive = existing.is_active !== 0;
+    if (existing.id === actor && existing.role === 'admin' && role.value !== 'admin') {
+      throw httpError(400, 'You cannot change your own role');
     }
-  }
+    if (existing.id === actor && currentlyActive && active.value === 0) {
+      throw httpError(400, 'You cannot deactivate your own account');
+    }
+    const leavingAdmin = existing.role === 'admin' && currentlyActive && (role.value !== 'admin' || active.value === 0);
+    if (leavingAdmin) {
+      const others = await countOtherActiveAdmins(tx, existing.id);
+      if (others < 1) {
+        throw httpError(400, 'The last active administrator cannot be demoted or deactivated');
+      }
+    }
 
-  const taken = await get(
-    'SELECT id FROM users WHERE lower(username) = lower(?) AND id != ?',
-    [username.value, existing.id]
-  );
-  if (taken) throw httpError(409, 'Username is already in use');
+    const taken = await tx.get(
+      'SELECT id FROM users WHERE lower(username) = lower(?) AND id != ?',
+      [username.value, existing.id]
+    );
+    if (taken) throw httpError(409, 'Username is already in use');
 
-  const wasActive = currentlyActive;
-  const action = wasActive && active.value === 0
-    ? 'user.deactivated'
-    : (!wasActive && active.value === 1 ? 'user.reactivated' : 'user.updated');
+    const wasActive = currentlyActive;
+    const action = wasActive && active.value === 0
+      ? 'user.deactivated'
+      : (!wasActive && active.value === 1 ? 'user.reactivated' : 'user.updated');
 
-  await withTransaction(async () => {
-    await run(
+    await tx.run(
       `UPDATE users
        SET username = ?, role = ?, display_name = ?, company = ?, contact_name = ?, phone = ?, email = ?,
            is_active = ?, updated_at = datetime('now')
@@ -293,7 +295,7 @@ async function updateUser(actorId, id, body) {
         existing.id,
       ]
     );
-    await activityLog.record(actorId, action, 'user', existing.id, {
+    await activityLog.recordOn(tx, actorId, action, 'user', existing.id, {
       username: username.value,
       role: role.value,
       previous_role: existing.role,
@@ -304,12 +306,17 @@ async function updateUser(actorId, id, body) {
           ? `Reactivated ${username.value}`
           : `Updated ${username.value}`,
     });
+    return {
+      id: existing.id,
+      previousRole: existing.role,
+      wasActive,
+    };
   });
 
-  if (role.value !== existing.role || (wasActive && active.value === 0)) {
-    auth.clearSessionsForUser(existing.id);
+  if (role.value !== outcome.previousRole || (outcome.wasActive && active.value === 0)) {
+    auth.clearSessionsForUser(outcome.id);
   }
-  const row = await get(`SELECT ${PUBLIC_COLUMNS} FROM users WHERE id = ?`, [existing.id]);
+  const row = await get(`SELECT ${PUBLIC_COLUMNS} FROM users WHERE id = ?`, [outcome.id]);
   return present(row);
 }
 
@@ -320,8 +327,9 @@ async function resetPassword(actorId, id, body, exceptToken) {
   if (!existing) throw httpError(404, 'User not found');
   const supplied = typeof body?.password === 'string' ? body.password : '';
   const generated = supplied.length === 0;
-  if (!generated && supplied.length < MIN_PASSWORD_LENGTH) {
-    throw httpError(400, `password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+  if (!generated) {
+    const policyError = passwordPolicyError(supplied);
+    if (policyError) throw httpError(400, policyError);
   }
   const password = generated ? generatePassword() : supplied;
   const keepToken = existing.id === Number(actorId) ? exceptToken : null;
@@ -341,5 +349,6 @@ module.exports = {
   resetPassword,
   present,
   bearerToken,
+  parseUsername,
   MIN_PASSWORD_LENGTH,
 };

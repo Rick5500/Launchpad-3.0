@@ -1,5 +1,5 @@
 const activityLog = require('./activityLog');
-const { get, run, all, withTransaction } = require('./dbAsync');
+const { get, all, withTransaction } = require('./dbAsync');
 const { httpError } = require('./httpError');
 const { parseText, parseInteger } = require('./fields');
 const { getRules, orderWindow } = require('./deliveryRules');
@@ -174,19 +174,19 @@ async function updateSettings(actorId, body) {
   }
   if (!changes.length) throw httpError(400, 'No settings to update');
 
-  await withTransaction(async () => {
+  await withTransaction(async (tx) => {
     for (const [key, value] of changes) {
       if (value == null) {
-        await run('DELETE FROM system_settings WHERE key = ?', [key]);
+        await tx.run('DELETE FROM system_settings WHERE key = ?', [key]);
       } else {
-        await run(
+        await tx.run(
           `INSERT INTO system_settings (key, value, updated_at) VALUES (?,?,datetime('now'))
            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
           [key, value]
         );
       }
     }
-    await activityLog.record(actorId, 'settings.updated', 'system_settings', null, {
+    await activityLog.recordOn(tx, actorId, 'settings.updated', 'system_settings', null, {
       keys: changes.map(([key]) => key),
       message: `Updated ${changes.map(([key]) => key).join(', ')}`,
       previous: Object.fromEntries(changes.map(([key]) => [key, current[key] == null ? null : current[key]])),
