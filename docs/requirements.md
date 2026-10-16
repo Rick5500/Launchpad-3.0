@@ -12,7 +12,7 @@ Scope (v1 scaffold):
 High-level data model notes:
 - `users` table with `role` (admin, customer, operator), plus optional company, contact name, phone, and email for order prefill
 - `orders` group work orders. Order numbers are `YYYYMMDD-NNN` and reset daily. Each selected service becomes a work order suffixed `-A`, `-B`, `-C`
-- `services` map to a department queue. Archive file requests are flagged for later approval
+- `services` map to a department queue and store a code, suffix mode (`sequence` or `code`), default turnaround hours, and an active flag. Archive file requests are flagged for later approval. Inactive services are hidden from new orders
 - `order_line_items` hold size, quantity, media, color, binding/finish, mount, and laminate, and link to the matching service's work order
 - `order_files` store upload metadata. Bytes live under `UPLOAD_DIR`, outside the web root
 - `work_orders` table capturing items, quantities, due dates, status, plus `order_id`, `service_id`, and `next_department`
@@ -20,7 +20,11 @@ High-level data model notes:
 - `barcode_events` to log scans (timestamp, operator, location, payload)
 - `production_history` starts with an "Order Created" row for printable work orders
 - `deliveries` table with will-call flags, due-time rules, and an optional `order_id`
-- `activity_log` records work order create, move, and complete events for the Admin Board. `system_settings.last_backup_at` is the backup status placeholder. `system_alerts` holds real stored alerts. `notification_settings` stays for a later admin screen
+- `users.is_active` deactivates an account without deleting it. Inactive users cannot sign in
+- `activity_log` records work order create, move, and complete events, plus admin changes to services, users, settings, notification preferences, and barcode locations
+- `system_settings` stores company letterhead (`company_name`, `company_address`, `company_phone`), optional `due_soon_hours`, and `last_backup_at`. Cutoffs, timezone, and upload limits stay in the environment
+- `system_alerts` holds stored alerts. `notification_settings` turns in-app events on or off. Email rows stay disabled
+- `barcode_locations` maps a scan location to a department name, a stage name, or both
 
 API endpoints:
 - `POST /api/auth/login` — authenticate users
@@ -41,6 +45,18 @@ API endpoints:
 - `GET /api/admin-board/work-orders` — paginated, filtered active work orders
 - `GET /api/admin-board/activity` and `GET /api/admin-board/approvals` — paged activity and pending approvals
 - `POST /api/admin-board/approvals/:id` — admin approve or reject (`decision` of `approved` or `rejected`)
+- `GET /api/workorders/:id/print` — printable work order payload. Customers only receive their own work orders (404 otherwise)
+- `GET /api/orders/:id/print` — the same payload for every work order on an order. Customers only receive their own orders (404 otherwise)
+- A staff `external_id` is 1 to 80 printable ASCII characters, or blank. Otherwise `POST` and `PUT /api/workorders` return HTTP 400. An older unprintable id still prints, with `barcode_error` set, and the other work orders on that order still print
+- A department-move barcode scan commits the event, department update, production history row, and activity row together
+- `GET` and `PUT /api/services` — admin service catalog. Customers and operators receive HTTP 403
+- `GET` and `PUT /api/users`, `POST /api/users/:id/password` — admin user management. Password hashes are omitted
+- `GET` and `PUT /api/settings` — admin letterhead, due-soon hours, and last backup time. Environment values are read-only in the response
+- `GET` and `PUT /api/notifications/settings` — admin in-app toggles. Email events cannot be enabled
+- `GET /api/activity` — admin activity log, with `format=csv`
+- `GET`, `POST`, `PUT`, and `DELETE /api/barcode/locations` — admin location map. Operators may `GET`
+- `POST /api/barcode/dry-run` — admin resolution of a scan value with no writes
+- `GET /api/search/orders` — admin and operator order search
 
 Barcode scans:
 - Persist `scanned_value`, `work_order_id`, `operator_id` (the signed-in user), `location`, and `event_time`.
@@ -48,7 +64,7 @@ Barcode scans:
 - Return 400 for invalid input and 404 when no work order matches.
 - `GET /api/barcode/events` accepts `work_order_id`, `operator`, `from`, `to`, `limit`, and `offset`.
 - A configured location can move the work order to a production stage (`BARCODE_LOCATION_STAGES`). The default map is Shipping, Quality Control, and Finishing. An empty value turns advancement off.
-- A location that matches a department name moves the work order into that department. Complete also marks the work order completed. The scan stores the department it left and the department it entered.
+- When `barcode_locations` has any row, only an active matching location moves the department or advances the stage. An empty table keeps the environment stage map and a department-name match. Complete also marks the work order completed. The scan stores the department it left and the department it entered.
 - `POST /api/barcode` is rate limited per signed-in user.
 
 Delivery / will-call:
@@ -72,7 +88,7 @@ Notifications:
 - Generated when a delivery is overdue or due within `DELIVERY_DUE_SOON_MINUTES` (default 60). When that variable is unset, the window matches `DUE_SOON_HOURS` (default 1 hour). Also generated when a work order is put on hold or completed, and when a rush-priority work order is created.
 - Admin and operator see all notifications. Customers see only notifications for their own work orders and deliveries.
 - A scheduler checks delivery times in process and does not insert the same delivery event twice.
-- Email notifications are off by default and are not sent.
+- Email notifications are off by default and are not sent. Admins can disable individual in-app event types. Email setting rows cannot be turned on.
 
 Security & auth:
 - Start with simple session or JWT-based auth; keep roles in `users.role`.

@@ -484,9 +484,9 @@ async function main() {
       path: '/api/settings',
       token: admin.token,
       json: {
-        company_name: 'Accent Imaging, Inc.',
-        company_address: '8121 Brownleigh Drive\nRaleigh, NC 27617',
-        company_phone: '919-782-3332',
+        company_name: 'Phase Four Press',
+        company_address: '100 Settings Lane\nRaleigh, NC 27617',
+        company_phone: '919-555-0199',
         due_soon_hours: 4,
         last_backup_at: '2026-06-09 02:00:00',
       },
@@ -496,6 +496,16 @@ async function main() {
     assert(savedSettings.json.last_backup_at === '2026-06-09 02:00:00', 'backup timestamp should be stored');
     assert(savedSettings.json.read_only.delivery_timezone === 'UTC', 'timezone should stay read from the environment');
     assert(savedSettings.json.read_only.max_upload_mb != null, 'upload limit should be displayed');
+    assert(savedSettings.json.letterhead.company_name === 'Phase Four Press', 'letterhead name should be stored');
+    const printed = await request({
+      method: 'GET',
+      path: `/api/workorders/${workOrderId}/print`,
+      token: admin.token,
+    });
+    assert(printed.status === 200, `print failed: ${printed.status} ${printed.text}`);
+    assert(printed.json.shop.name === 'Phase Four Press', 'print should use the saved company name');
+    assert(printed.json.shop.address_lines[0] === '100 Settings Lane', 'print should use the saved street');
+    assert(printed.json.shop.phone === '919-555-0199', 'print should use the saved phone');
     const rules = await request({ method: 'GET', path: '/api/delivery/rules', token: admin.token });
     assert(rules.json.rules.dueSoonHours === 4, 'stored due-soon hours should drive delivery rules');
     const settingsActivity = await db.get(`SELECT id FROM activity_log WHERE action = 'settings.updated' AND actor_id = ?`, [admin.user.id]);
