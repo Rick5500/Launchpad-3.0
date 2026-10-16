@@ -376,12 +376,17 @@
   .work-order-sheet {
     width: auto;
     max-width: none;
-    min-height: 10in;
+    min-height: 0;
     margin: 0;
     box-shadow: none;
     border: 1px solid #000;
+    display: block;
     page-break-after: always;
     break-after: page;
+  }
+
+  .wo-footer {
+    margin-top: 12px;
   }
 
   .work-order-sheet:last-child {
