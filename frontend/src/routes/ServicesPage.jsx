@@ -17,6 +17,7 @@ import {
   Typography,
 } from '@mui/material';
 import SectionCard from '../components/SectionCard';
+import ServiceFieldsEditor from '../components/ServiceFieldsEditor';
 import LoadingState from '../components/LoadingState';
 import Pager from '../components/Pager';
 import { authFetch } from '../api';
@@ -44,6 +45,7 @@ export default function ServicesPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [fieldService, setFieldService] = useState(null);
   const limit = 20;
 
   function load(nextOffset = offset) {
@@ -211,6 +213,7 @@ export default function ServicesPage() {
                   </TableCell>
                   <TableCell>
                     <Button size="small" onClick={() => edit(service)}>Edit</Button>
+                    <Button size="small" onClick={() => setFieldService(service)}>Fields</Button>
                     <Button size="small" onClick={() => setActive(service, !service.is_active)}>
                       {service.is_active ? 'Deactivate' : 'Reactivate'}
                     </Button>
@@ -222,6 +225,7 @@ export default function ServicesPage() {
         </TableContainer>
         <Pager offset={offset} limit={limit} total={total} onChange={setOffset} />
       </SectionCard>
+      <ServiceFieldsEditor service={fieldService} open={Boolean(fieldService)} onClose={() => setFieldService(null)} />
     </Box>
   );
 }

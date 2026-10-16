@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const sqlite3 = require('sqlite3').verbose();
 
+const { seedServiceFields } = require('./serviceFields');
 const BCRYPT_ROUNDS = 10;
 const schemaPath = path.join(__dirname, '..', 'database', 'schema.sql');
 const schema = fs.readFileSync(schemaPath, 'utf8');
@@ -583,7 +584,22 @@ async function main() {
     { name: 'city', definition: 'TEXT' },
     { name: 'state', definition: 'TEXT' },
     { name: 'zip', definition: 'TEXT' },
+    { name: 'payment_method', definition: 'TEXT' },
+    { name: 'return_to', definition: 'TEXT' },
+    { name: 'bill_to_name', definition: 'TEXT' },
+    { name: 'bill_to_phone', definition: 'TEXT' },
+    { name: 'bill_to_email', definition: 'TEXT' },
+    { name: 'bill_to_company', definition: 'TEXT' },
+    { name: 'bill_to_address_line1', definition: 'TEXT' },
+    { name: 'bill_to_address_line2', definition: 'TEXT' },
+    { name: 'bill_to_city', definition: 'TEXT' },
+    { name: 'bill_to_state', definition: 'TEXT' },
+    { name: 'bill_to_zip', definition: 'TEXT' },
   ]);
+  await ensureColumns('order_line_items', [
+    { name: 'field_values', definition: 'TEXT' },
+  ]);
+  await run('CREATE INDEX IF NOT EXISTS idx_service_fields_service ON service_fields(service_id)');
   await run('CREATE INDEX IF NOT EXISTS idx_work_orders_order_id ON work_orders(order_id)');
   await run('CREATE INDEX IF NOT EXISTS idx_work_orders_service_id ON work_orders(service_id)');
   await run('CREATE INDEX IF NOT EXISTS idx_deliveries_order_id ON deliveries(order_id)');
@@ -593,6 +609,7 @@ async function main() {
   await seedDepartments();
   await applyDepartmentRoutes();
   await seedServices();
+  await seedServiceFields(run, get);
   await backfillServiceCodes();
   await ensureServiceCodeIndex();
   await seedDeliveryMethods();

@@ -16,6 +16,27 @@ function Fact({ label, value }) {
   );
 }
 
+function lineDetail(item) {
+  if (item.fields && item.fields.length) {
+    const covered = new Set(item.fields.map((field) => field.key));
+    const bits = item.fields.map((field) => `${field.label}: ${field.display || '—'}`);
+    if (!covered.has('finishing')) bits.push(`Finishing: ${item.finishing || 'None'}`);
+    if (!covered.has('mount')) bits.push(`Mount: ${item.mount_label || (item.mount ? 'Yes' : 'No')}`);
+    if (!covered.has('laminate')) bits.push(`Laminate: ${item.laminate_label || (item.laminate ? 'Yes' : 'No')}`);
+    return bits.join(' · ');
+  }
+  return [
+    item.size,
+    item.quantity,
+    item.media,
+    item.color,
+    item.binding_finish,
+    `Finishing ${item.finishing || 'None'}`,
+    `Mount ${item.mount_label || (item.mount ? 'Yes' : 'No')}`,
+    `Laminate ${item.laminate_label || (item.laminate ? 'Yes' : 'No')}`,
+  ].filter(Boolean).join(' · ');
+}
+
 export default function OrderDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -77,6 +98,21 @@ export default function OrderDetail() {
             </Box>
           </Box>
 
+          {order.bill_to ? (
+            <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2 }}>
+              <Typography sx={{ fontWeight: 700, color: brand.navy, mb: 1 }}>Bill To</Typography>
+              <Fact label="Person" value={order.bill_to.name} />
+              <Fact label="Phone" value={order.bill_to.phone} />
+              <Fact label="Email" value={order.bill_to.email} />
+              <Fact label="Company" value={order.bill_to.company} />
+              <Fact label="Addr 1" value={order.bill_to.address_line1} />
+              <Fact label="Addr 2" value={order.bill_to.address_line2} />
+              <Fact label="City" value={order.bill_to.city} />
+              <Fact label="State" value={order.bill_to.state} />
+              <Fact label="Zip" value={order.bill_to.zip} />
+            </Box>
+          ) : null}
+
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr 1fr' }, gap: 2 }}>
             <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2 }}>
               <Typography sx={{ fontWeight: 700, color: brand.navy, mb: 1 }}>Contact</Typography>
@@ -102,9 +138,11 @@ export default function OrderDetail() {
                 </Typography>
               ) : null}
               <Fact label="Notes" value={order.notes} />
+              <Fact label="Payment" value={order.payment_method_label || 'Not specified'} />
             </Box>
             <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2 }}>
               <Typography sx={{ fontWeight: 700, color: brand.navy, mb: 1 }}>Delivery</Typography>
+              <Fact label="Return" value={order.return_to_label || order.return_to || 'Not specified'} />
               <Fact label="Method" value={order.delivery_method} />
               {order.ups_account_number ? <Fact label="UPS Account" value={order.ups_account_number} /> : null}
               <Fact label="Hours" value={order.delivery_hours?.label} />
@@ -137,15 +175,8 @@ export default function OrderDetail() {
             {(order.line_items || []).map((item) => (
               <Typography key={item.id} sx={{ fontSize: 14, mb: 0.75 }}>
                 {item.line_number}. {item.description}
-                {item.size ? ` · ${item.size}` : ''}
-                {item.quantity ? ` · ${item.quantity}` : ''}
-                {item.media ? ` · ${item.media}` : ''}
-                {item.color ? ` · ${item.color}` : ''}
-                {item.binding_finish ? ` · ${item.binding_finish}` : ''}
-                {` · Finishing ${item.finishing || 'None'}`}
-                {` · Mount ${item.mount ? 'Yes' : 'No'}`}
-                {` · Laminate ${item.laminate ? 'Yes' : 'No'}`}
                 {item.service_name ? ` · ${item.service_name}` : ''}
+                {` · ${lineDetail(item)}`}
               </Typography>
             ))}
           </Box>

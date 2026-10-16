@@ -15,6 +15,20 @@ const {
 } = require('./deliveryRules');
 const activityLog = require('./activityLog');
 const { parsePostalAddress } = require('./fields');
+const {
+  PAYMENT_METHODS,
+  PAYMENT_UNSPECIFIED,
+  RETURN_TO_ME,
+  RETURN_SEE_SHIP,
+  RETURN_UNSPECIFIED,
+  validateLineFields,
+  displayFieldList,
+  describeLine,
+  mirrorLegacy,
+  methodFromVia,
+  readFieldValues,
+  presentField,
+} = require('./serviceFields');
 
 const CONTROL_CHARS = /[\u0000-\u001F]/;
 const CONTROL_CHARS_ALLOW_NEWLINES = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/;
@@ -243,20 +257,37 @@ function yesNoLabel(value) {
   return value ? 'Yes' : 'No';
 }
 
+const LEGACY_SPEC_COVER = {
+  size: 'Size',
+  sets: 'Quantity',
+  copies: 'Quantity',
+  qty: 'Quantity',
+  quantity: 'Quantity',
+  media: 'Media',
+  material: 'Media',
+  process: 'Color',
+  ink: 'Color',
+  binding: 'Binding / Finish',
+  mount: 'Mounting',
+  laminate: 'Lamination',
+  finishing: 'Finishing',
+};
+
 function specificationText(items, notes) {
   const blocks = (items || []).map((item, index) => {
     const title = items.length > 1 ? `Item ${index + 1}: ${item.description}` : item.description;
-    return [
-      title,
+    const dynamic = (item.fields || []).map((field) => `${field.label}: ${field.display || '—'}`);
+    const lines = dynamic.length ? dynamic : [
       `Size: ${item.size || '—'}`,
       `Quantity: ${item.quantity || '—'}`,
       `Media: ${item.media || '—'}`,
       `Color: ${item.color || '—'}`,
-      `Binding / Finish: ${item.binding_finish || '—'}`,
-      `Mounting: ${yesNoLabel(item.mount)}`,
-      `Lamination: ${yesNoLabel(item.laminate)}`,
+      `Binding / Finish: ${item.bindingFinish || item.binding_finish || '—'}`,
+      `Mounting: ${item.mountLabel || yesNoLabel(item.mount)}`,
+      `Lamination: ${item.laminateLabel || yesNoLabel(item.laminate)}`,
       `Finishing: ${item.finishing || 'None'}`,
-    ].join('\n');
+    ];
+    return [title, ...lines].join('\n');
   });
   if (notes) blocks.push(`Special Instructions: ${notes}`);
   return blocks.length ? blocks.join('\n\n') : null;
@@ -325,21 +356,183 @@ function parseLineItems(body, serviceIds) {
         fileIds.push(parsed);
       }
     }
+    const rawFields = parseRawFields(item.field_values, index + 1);
+    const description = item.description == null || String(item.description).trim() === ''
+      ? null
+      : requiredText(item.description, `line item ${index + 1} description`, 200);
     return {
       lineNumber: index + 1,
       serviceId,
-      description: requiredText(item.description, `line item ${index + 1} description`, 200),
-      size: optionalText(item.size, `line item ${index + 1} size`, 40),
+      description,
+      size: optionalText(item.size, `line item ${index + 1} size`, 80),
       quantity: optionalText(item.quantity, `line item ${index + 1} quantity`, 40),
       media: optionalText(item.media, `line item ${index + 1} media`, 80),
       color: optionalText(item.color, `line item ${index + 1} color`, 80),
       bindingFinish: optionalText(item.binding_finish, `line item ${index + 1} binding/finish`, 80),
-      finishing: parseFinishing(item.finishing, `line item ${index + 1} finishing`),
+      finishing: Object.prototype.hasOwnProperty.call(rawFields, 'finishing')
+        ? null
+        : parseFinishing(item.finishing, `line item ${index + 1} finishing`),
       mount: parseYesNo(item.mount, `line item ${index + 1} mount`),
       laminate: parseYesNo(item.laminate, `line item ${index + 1} laminate`),
+      rawFields,
       fileIds,
     };
   });
+}
+
+function parseRawFields(value, lineNumber) {
+  if (value == null || value === '') return {};
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new OrderError(`line item ${lineNumber} field_values must be an object`);
+  }
+  const raw = {};
+  for (const key of Object.keys(value)) {
+    if (!/^[a-z][a-z0-9_]{0,31}$/.test(key)) {
+      throw new OrderError(`line item ${lineNumber} field ${key} is invalid`);
+    }
+    raw[key] = value[key];
+  }
+  return raw;
+}
+
+async function applyServiceFields(tx, lineItems, services) {
+  const ids = services.map((service) => service.id);
+  const rows = ids.length
+    ? await tx.all(
+      `SELECT id, service_id, key, label, type, options_json, required, sort_order, is_active
+       FROM service_fields
+       WHERE service_id IN (${ids.map(() => '?').join(', ')})
+       ORDER BY sort_order, id`,
+      ids
+    )
+    : [];
+  const byService = new Map();
+  for (const row of rows) {
+    if (!byService.has(row.service_id)) byService.set(row.service_id, []);
+    byService.get(row.service_id).push(row);
+  }
+  for (const item of lineItems) {
+    const definitions = byService.get(item.serviceId) || [];
+    const parsed = validateLineFields(definitions, item.rawFields, `line item ${item.lineNumber}`);
+    if (parsed.error) throw new OrderError(parsed.error);
+    const mirrored = mirrorLegacy(parsed.value, item);
+    item.size = mirrored.size;
+    item.quantity = mirrored.quantity;
+    item.media = mirrored.media;
+    item.color = mirrored.color;
+    item.bindingFinish = mirrored.bindingFinish;
+    item.finishing = mirrored.finishing;
+    item.mount = mirrored.mount;
+    item.laminate = mirrored.laminate;
+    item.fieldValues = parsed.value;
+    item.fields = displayFieldList(definitions, parsed.value);
+    item.mountLabel = Object.prototype.hasOwnProperty.call(parsed.value, 'mount')
+      ? String(parsed.value.mount)
+      : yesNoLabel(item.mount);
+    item.laminateLabel = Object.prototype.hasOwnProperty.call(parsed.value, 'laminate')
+      ? String(parsed.value.laminate)
+      : yesNoLabel(item.laminate);
+    item.description = describeLine(definitions, parsed.value, item.description);
+    item.fieldValuesJson = JSON.stringify(parsed.value);
+  }
+}
+
+function parsePaymentMethod(value) {
+  const text = requiredText(value, 'payment_method', 40);
+  if (!PAYMENT_METHODS.includes(text)) {
+    throw new OrderError(`payment_method must be one of ${PAYMENT_METHODS.join(', ')}`);
+  }
+  return text;
+}
+
+function parseReturnTo(value, shipSelected) {
+  if (value == null || String(value).trim() === '') {
+    return shipSelected ? RETURN_SEE_SHIP : RETURN_TO_ME;
+  }
+  const text = requiredText(value, 'return_to', 20);
+  if (text !== RETURN_TO_ME && text !== RETURN_SEE_SHIP) {
+    throw new OrderError(`return_to must be ${RETURN_TO_ME} or ${RETURN_SEE_SHIP}`);
+  }
+  if (text === RETURN_SEE_SHIP && !shipSelected) {
+    throw new OrderError('return_to See ShipTo requires the Ship To (3rd Party) service');
+  }
+  return text;
+}
+
+function billToError(message) {
+  return String(message)
+    .replace(/^address_line1/, 'bill_to_address_line1')
+    .replace(/^address_line2/, 'bill_to_address_line2')
+    .replace(/^city/, 'bill_to_city')
+    .replace(/^state/, 'bill_to_state')
+    .replace(/^zip/, 'bill_to_zip');
+}
+
+function parseBillTo(payload) {
+  const name = optionalText(payload.bill_to_name, 'bill_to_name', 160);
+  const phone = optionalText(payload.bill_to_phone, 'bill_to_phone', 40);
+  if (phone && !/\d/.test(phone)) throw new OrderError('bill_to_phone is invalid');
+  let email = null;
+  if (payload.bill_to_email != null && String(payload.bill_to_email).trim() !== '') {
+    email = requiredText(payload.bill_to_email, 'bill_to_email', 160);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new OrderError('bill_to_email is invalid');
+  }
+  const company = optionalText(payload.bill_to_company, 'bill_to_company', 160);
+  const addressSource = {
+    address_line1: payload.bill_to_address_line1,
+    address_line2: payload.bill_to_address_line2,
+    city: payload.bill_to_city,
+    state: payload.bill_to_state,
+    zip: payload.bill_to_zip,
+  };
+  const anyAddress = ['address_line1', 'address_line2', 'city', 'state', 'zip'].some((key) => {
+    const value = addressSource[key];
+    return value != null && String(value).trim() !== '';
+  });
+  let address = { addressLine1: null, addressLine2: null, city: null, state: null, zip: null };
+  if (anyAddress) {
+    const parsed = parsePostalAddress(addressSource, true);
+    if (parsed.error) throw new OrderError(billToError(parsed.error));
+    address = parsed.value;
+  }
+  return {
+    name,
+    phone,
+    email,
+    company,
+    addressLine1: address.addressLine1,
+    addressLine2: address.addressLine2,
+    city: address.city,
+    state: address.state,
+    zip: address.zip,
+  };
+}
+
+function billToPresent(row) {
+  if (!row) return null;
+  const bill = {
+    name: row.bill_to_name || null,
+    phone: row.bill_to_phone || null,
+    email: row.bill_to_email || null,
+    company: row.bill_to_company || null,
+    address_line1: row.bill_to_address_line1 || null,
+    address_line2: row.bill_to_address_line2 || null,
+    city: row.bill_to_city || null,
+    state: row.bill_to_state || null,
+    zip: row.bill_to_zip || null,
+  };
+  const present = Object.values(bill).some((value) => value);
+  return present ? bill : null;
+}
+
+function paymentLabel(value) {
+  const text = value == null ? '' : String(value).trim();
+  return text || PAYMENT_UNSPECIFIED;
+}
+
+function returnLabel(value) {
+  const text = value == null ? '' : String(value).trim();
+  return text || RETURN_UNSPECIFIED;
 }
 
 function parseTopLevelFileIds(body) {
@@ -392,7 +585,15 @@ function publicFile(row) {
   };
 }
 
-function publicLineItem(row) {
+function publicLineItem(row, definitions) {
+  const values = readFieldValues(row.field_values);
+  const fields = displayFieldList(definitions || [], values);
+  const mountLabel = Object.prototype.hasOwnProperty.call(values, 'mount')
+    ? String(values.mount)
+    : yesNoLabel(row.mount);
+  const laminateLabel = Object.prototype.hasOwnProperty.call(values, 'laminate')
+    ? String(values.laminate)
+    : yesNoLabel(row.laminate);
   return {
     id: row.id,
     line_number: row.line_number,
@@ -408,7 +609,30 @@ function publicLineItem(row) {
     finishing: row.finishing || null,
     mount: Boolean(row.mount),
     laminate: Boolean(row.laminate),
+    mount_label: mountLabel,
+    laminate_label: laminateLabel,
+    field_values: values,
+    fields,
   };
+}
+
+async function definitionsFor(serviceIds) {
+  const ids = [...new Set((serviceIds || []).filter((id) => id))];
+  if (!ids.length) return new Map();
+  const rows = await allOn(
+    db,
+    `SELECT id, service_id, key, label, type, options_json, required, sort_order, is_active
+     FROM service_fields
+     WHERE service_id IN (${ids.map(() => '?').join(', ')})
+     ORDER BY sort_order, id`,
+    ids
+  );
+  const grouped = new Map();
+  for (const row of rows) {
+    if (!grouped.has(row.service_id)) grouped.set(row.service_id, []);
+    grouped.get(row.service_id).push(row);
+  }
+  return grouped;
 }
 
 async function loadOrderRecord(orderId, user) {
@@ -465,6 +689,8 @@ async function loadOrderRecord(orderId, user) {
     [order.id]
   );
 
+  const fieldDefs = await definitionsFor(lineItems.map((item) => item.service_id));
+
   return {
     id: order.id,
     order_number: order.order_number,
@@ -492,12 +718,17 @@ async function loadOrderRecord(orderId, user) {
     delivery_hours: deliveryHoursFor(order.delivery_method, delivery && delivery.will_call),
     ship_to: order.ship_to,
     attention: order.attention,
+    payment_method: order.payment_method || null,
+    payment_method_label: paymentLabel(order.payment_method),
+    return_to: order.return_to || null,
+    return_to_label: returnLabel(order.return_to),
+    bill_to: billToPresent(order),
     due_date: order.due_date,
     due_time: order.due_time,
     created_by: order.created_by,
     created_at: order.created_at,
     updated_at: order.updated_at,
-    line_items: lineItems.map(publicLineItem),
+    line_items: lineItems.map((row) => publicLineItem(row, fieldDefs.get(row.service_id))),
     files: files.map(publicFile),
     work_orders: workOrders.map((row) => ({
       id: row.id,
@@ -551,9 +782,14 @@ async function createOrder(user, body, now = new Date()) {
   const attention = optionalText(payload.attention, 'attention', 160);
   const address = requireAddress(payload);
   const originalsSource = parseOriginalsSource(payload.originals_source);
-  const deliveryMethodName = requiredText(payload.delivery_method, 'delivery_method', 120);
-  if (retiredDeliveryMethod(deliveryMethodName)) {
-    throw new OrderError(retiredDeliveryMessage(deliveryMethodName));
+  const paymentMethod = parsePaymentMethod(payload.payment_method);
+  const billTo = parseBillTo(payload);
+  let requestedMethod = null;
+  if (payload.delivery_method != null && String(payload.delivery_method).trim() !== '') {
+    requestedMethod = requiredText(payload.delivery_method, 'delivery_method', 120);
+    if (retiredDeliveryMethod(requestedMethod)) {
+      throw new OrderError(retiredDeliveryMessage(requestedMethod));
+    }
   }
   const upsAccount = parseUpsAccountNumber(payload.ups_account_number);
   if (upsAccount.error) throw new OrderError(upsAccount.error);
@@ -572,6 +808,37 @@ async function createOrder(user, body, now = new Date()) {
     );
     if (!customer || customer.role !== 'customer' || customer.is_active === 0) {
       throw new OrderError('customer_id must be an existing customer', 400);
+    }
+
+    const placeholders = serviceIds.map(() => '?').join(', ');
+    const services = await tx.all(
+      `SELECT id, name, description, department_name, sort_order, requires_approval, code, suffix_mode
+       FROM services
+       WHERE is_active = 1 AND id IN (${placeholders})
+       ORDER BY sort_order, id`,
+      serviceIds
+    );
+    if (services.length !== serviceIds.length) {
+      throw new OrderError('One or more services are not available');
+    }
+    await applyServiceFields(tx, lineItems, services);
+    const shipSelected = services.some((service) => service.name === SHIP_TO_SERVICE);
+    const returnTo = parseReturnTo(payload.return_to, shipSelected);
+    let deliveryMethodName = requestedMethod;
+    if (!deliveryMethodName && returnTo === RETURN_SEE_SHIP) {
+      const shipService = services.find((service) => service.name === SHIP_TO_SERVICE);
+      const firstShip = lineItems.find((item) => item.serviceId === shipService.id);
+      const via = firstShip && firstShip.fieldValues ? firstShip.fieldValues.via : null;
+      if (via) {
+        deliveryMethodName = methodFromVia(via);
+        if (!deliveryMethodName) {
+          throw new OrderError(`Ship To Via ${via} does not map to a delivery method. Choose a delivery method, or use Pickup at Accent, Accent Truck, Ground, 1 day, or 2 day.`);
+        }
+      }
+    }
+    if (!deliveryMethodName) throw new OrderError('delivery_method is required');
+    if (retiredDeliveryMethod(deliveryMethodName)) {
+      throw new OrderError(retiredDeliveryMessage(deliveryMethodName));
     }
 
     const method = await tx.get(
@@ -593,17 +860,6 @@ async function createOrder(user, body, now = new Date()) {
     }
     const storedUpsAccount = isUpsMethod(method.name) ? upsAccount.value : null;
 
-    const placeholders = serviceIds.map(() => '?').join(', ');
-    const services = await tx.all(
-      `SELECT id, name, description, department_name, sort_order, requires_approval, code, suffix_mode
-       FROM services
-       WHERE is_active = 1 AND id IN (${placeholders})
-       ORDER BY sort_order, id`,
-      serviceIds
-    );
-    if (services.length !== serviceIds.length) {
-      throw new OrderError('One or more services are not available');
-    }
     for (const service of services) {
       const coverageError = emptyServiceMessage(service, lineItems, notes, shipTo);
       if (coverageError) throw new OrderError(coverageError);
@@ -638,8 +894,11 @@ async function createOrder(user, body, now = new Date()) {
         order_number, customer_id, company, contact_name, phone, email,
         po_number, project_number, project_name, notes, delivery_method,
         ups_account_number, originals_source, address_line1, address_line2, city, state, zip,
-        ship_to, attention, due_date, due_time, created_by, updated_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
+        ship_to, attention, payment_method, return_to,
+        bill_to_name, bill_to_phone, bill_to_email, bill_to_company,
+        bill_to_address_line1, bill_to_address_line2, bill_to_city, bill_to_state, bill_to_zip,
+        due_date, due_time, created_by, updated_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
       [
         orderNumber,
         customerId,
@@ -661,6 +920,17 @@ async function createOrder(user, body, now = new Date()) {
         address.zip,
         shipTo,
         attention,
+        paymentMethod,
+        returnTo,
+        billTo.name,
+        billTo.phone,
+        billTo.email,
+        billTo.company,
+        billTo.addressLine1,
+        billTo.addressLine2,
+        billTo.city,
+        billTo.state,
+        billTo.zip,
         due.value.dueDate,
         due.value.dueTime,
         Number(user.userId || user.id),
@@ -673,8 +943,8 @@ async function createOrder(user, body, now = new Date()) {
       const result = await tx.run(
         `INSERT INTO order_line_items (
           order_id, service_id, line_number, description, size, quantity, media, color,
-          binding_finish, finishing, mount, laminate
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+          binding_finish, finishing, mount, laminate, field_values
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           newOrderId,
           item.serviceId,
@@ -688,6 +958,7 @@ async function createOrder(user, body, now = new Date()) {
           item.finishing,
           item.mount,
           item.laminate,
+          item.fieldValuesJson || null,
         ]
       );
       lineItemIds.push(result.lastID);
@@ -905,11 +1176,30 @@ async function orderOptions() {
   const deliveryHours = deliveryWindow();
   const willCallHours = willCallWindow();
   const selectable = methods.filter((method) => !retiredDeliveryMethod(method.name));
+  const serviceIds = services.map((service) => service.id);
+  const fieldRows = serviceIds.length
+    ? await allOn(
+      db,
+      `SELECT id, service_id, key, label, type, options_json, required, sort_order, is_active
+       FROM service_fields
+       WHERE is_active = 1 AND service_id IN (${serviceIds.map(() => '?').join(', ')})
+       ORDER BY sort_order, id`,
+      serviceIds
+    )
+    : [];
+  const fieldsByService = new Map();
+  for (const row of fieldRows) {
+    if (!fieldsByService.has(row.service_id)) fieldsByService.set(row.service_id, []);
+    fieldsByService.get(row.service_id).push(presentField(row, false));
+  }
   return {
     services: services.map((service) => ({
       ...service,
       requires_approval: Boolean(service.requires_approval),
+      fields: fieldsByService.get(service.id) || [],
     })),
+    payment_methods: PAYMENT_METHODS.slice(),
+    return_options: [RETURN_TO_ME, RETURN_SEE_SHIP],
     delivery_methods: selectable.map((method) => ({
       ...method,
       will_call: Boolean(method.will_call),
@@ -989,21 +1279,29 @@ function routingStatusLabel(status) {
 }
 
 function specificationLines(items, notes) {
-  return (items || []).map((item) => ({
-    title: item.description,
-    line_number: item.line_number,
-    fields: [
+  return (items || []).map((item) => {
+    const dynamic = item.fields || [];
+    const covered = new Set(dynamic.map((field) => LEGACY_SPEC_COVER[field.key] || field.label));
+    const legacy = [
       { label: 'Size', value: item.size || '—' },
       { label: 'Quantity', value: item.quantity || '—' },
       { label: 'Media', value: item.media || '—' },
       { label: 'Color', value: item.color || '—' },
       { label: 'Binding / Finish', value: item.binding_finish || '—' },
-      { label: 'Mounting', value: yesNoLabel(item.mount) },
-      { label: 'Lamination', value: yesNoLabel(item.laminate) },
+      { label: 'Mounting', value: item.mount_label || yesNoLabel(item.mount) },
+      { label: 'Lamination', value: item.laminate_label || yesNoLabel(item.laminate) },
       { label: 'Finishing', value: item.finishing || 'None' },
-      { label: 'Special Instructions', value: notes || '—' },
-    ],
-  }));
+    ].filter((field) => !covered.has(field.label));
+    return {
+      title: item.description,
+      line_number: item.line_number,
+      fields: [
+        ...dynamic.map((field) => ({ label: field.label, value: field.display || '—' })),
+        ...legacy,
+        { label: 'Special Instructions', value: notes || '—' },
+      ],
+    };
+  });
 }
 
 function customerHistory(entry) {
@@ -1019,12 +1317,14 @@ async function loadWorkOrderContext(row, viewer) {
   const lineItems = await allOn(
     db,
     `SELECT id, line_number, description, size, quantity, media, color, binding_finish,
-            finishing, mount, laminate, service_id, work_order_id
+            finishing, mount, laminate, field_values, service_id, work_order_id
      FROM order_line_items
      WHERE work_order_id = ?
      ORDER BY line_number, id`,
     [row.id]
   );
+  const fieldDefs = await definitionsFor(lineItems.map((item) => item.service_id));
+  const publicItems = lineItems.map((item) => publicLineItem(item, fieldDefs.get(item.service_id)));
   const files = await allOn(
     db,
     `SELECT id, line_item_id, work_order_id, original_name, mime_type, size_bytes, uploaded_at
@@ -1051,11 +1351,12 @@ async function loadWorkOrderContext(row, viewer) {
     city: row.city || null,
     state: row.state || null,
     zip: row.zip || null,
-    line_items: lineItems.map((item) => ({
-      ...publicLineItem(item),
-      mount: Boolean(item.mount),
-      laminate: Boolean(item.laminate),
-    })),
+    payment_method: row.payment_method || null,
+    payment_method_label: paymentLabel(row.payment_method),
+    return_to: row.return_to || null,
+    return_to_label: returnLabel(row.return_to),
+    bill_to: billToPresent(row),
+    line_items: publicItems,
     files: files.map(publicFile),
     production_history: viewer && viewer.role === 'customer' ? history.map(customerHistory) : history,
     routing: {
@@ -1064,7 +1365,46 @@ async function loadWorkOrderContext(row, viewer) {
       current_status_label: routingStatusLabel(row.status),
       next_department: row.next_department || null,
     },
-    specification_lines: specificationLines(lineItems, row.notes),
+    specification_lines: specificationLines(publicItems, row.notes),
+  };
+}
+
+async function listBillTos(user, query) {
+  let customerId;
+  if (user.role === 'customer') {
+    customerId = Number(user.userId || user.id);
+  } else {
+    customerId = parsePositive((query || {}).customer_id);
+    if (!customerId) throw new OrderError('customer_id is required');
+    const customer = await getOn(
+      db,
+      `SELECT id FROM users WHERE id = ? AND role = 'customer' AND COALESCE(is_active, 1) = 1`,
+      [customerId]
+    );
+    if (!customer) throw new OrderError('customer_id must be an existing customer', 404);
+  }
+  const rows = await allOn(
+    db,
+    `SELECT bill_to_name, bill_to_phone, bill_to_email, bill_to_company,
+            bill_to_address_line1, bill_to_address_line2, bill_to_city, bill_to_state, bill_to_zip,
+            MAX(id) AS id
+     FROM orders
+     WHERE customer_id = ?
+       AND (
+         IFNULL(trim(bill_to_name), '') != ''
+         OR IFNULL(trim(bill_to_phone), '') != ''
+         OR IFNULL(trim(bill_to_email), '') != ''
+         OR IFNULL(trim(bill_to_company), '') != ''
+         OR IFNULL(trim(bill_to_address_line1), '') != ''
+       )
+     GROUP BY bill_to_name, bill_to_phone, bill_to_email, bill_to_company,
+              bill_to_address_line1, bill_to_address_line2, bill_to_city, bill_to_state, bill_to_zip
+     ORDER BY id DESC
+     LIMIT 20`,
+    [customerId]
+  );
+  return {
+    bill_tos: rows.map((row) => ({ id: row.id, ...billToPresent(row) })),
   };
 }
 
@@ -1078,6 +1418,7 @@ module.exports = {
   withTransaction,
   createOrder,
   listOrders,
+  listBillTos,
   getOrder,
   orderOptions,
   previewOrder,

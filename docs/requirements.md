@@ -11,9 +11,9 @@ Scope (v1 scaffold):
 
 High-level data model notes:
 - `users` table with `role` (admin, customer, operator), plus optional company, contact name, phone, email, and company address (`address_line1`, `address_line2`, `city`, `state`, `zip`) for order prefill
-- `orders` group work orders. Order numbers are `YYYYMMDD-NNN` and reset daily. Each selected service becomes a work order suffixed `-A`, `-B`, `-C`. An order stores a required project name, originals source, and a snapshot of the company address. Null originals on older rows display as Not specified. Archive File Request may be satisfied by notes, and Ship To (3rd Party) by the ship-to address, instead of a line item
+- `orders` group work orders. Order numbers are `YYYYMMDD-NNN` and reset daily. Each selected service becomes a work order suffixed `-A`, `-B`, `-C`. An order stores a required project name, originals source, payment method, optional Bill To, return (`To Me` or `See ShipTo`), and a snapshot of the company address. Null originals and a null payment method on older rows display as Not specified. Archive File Request may be satisfied by notes, and Ship To (3rd Party) by the ship-to address, instead of a line item. Archive requests stay pending approval
 - `services` map to a department queue and store a code, suffix mode (`sequence` or `code`), default turnaround hours, and an active flag. Archive file requests are flagged for later approval. Inactive services are hidden from new orders
-- `order_line_items` hold size, quantity, media, color, binding/finish, finishing, mount, and laminate, and link to the matching service's work order
+- `order_line_items` hold size, quantity, media, color, binding/finish, finishing, mount, and laminate, plus `field_values` JSON, and link to the matching service's work order. `service_fields` defines each service's inputs. Signs & Graphics includes mount and laminate options. Older Yes/No mount and laminate values stay on the row
 - `order_files` store upload metadata. Bytes live under `UPLOAD_DIR`, outside the web root
 - `work_orders` table capturing items, quantities, due dates, status, plus `order_id`, `service_id`, and `next_department`
 - `production_board` records or derived from `work_orders` status
@@ -21,7 +21,7 @@ High-level data model notes:
 - `production_history` starts with an "Order Created" row for printable work orders
 - `deliveries` table with will-call flags, due-time rules, and an optional `order_id`
 - `users.is_active` deactivates an account without deleting it. Inactive users cannot sign in
-- `activity_log` records work order create, move, and complete events, plus admin changes to services, users, settings, notification preferences, and barcode locations
+- `activity_log` records work order create, move, and complete events, plus admin changes to services, service line-item fields, users, settings, notification preferences, and barcode locations
 - `system_settings` stores company letterhead (`company_name`, `company_address`, `company_phone`), optional `due_soon_hours`, and `last_backup_at`. Cutoffs, timezone, and upload limits stay in the environment
 - `system_alerts` holds stored alerts. `notification_settings` turns in-app events on or off. Email rows stay disabled
 - `barcode_locations` maps a scan location to a department name, a stage name, or both

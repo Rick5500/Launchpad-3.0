@@ -253,6 +253,8 @@ function presentWorkOrder(row, timeZone) {
     contact_name: row.contact_name || '',
     originals_source: row.originals_source || null,
     originals_source_label: row.originals_source ? String(row.originals_source) : 'Not specified',
+    payment_method: row.payment_method || null,
+    payment_method_label: row.payment_method ? String(row.payment_method) : 'Not specified',
     department: row.department || '',
     department_color: row.department_color || '#90caf9',
     arrived_at: row.created_at || null,
@@ -295,6 +297,7 @@ const workOrderSelect = `
     ''
   ) AS contact_name,
   o.originals_source AS originals_source,
+  o.payment_method AS payment_method,
   ${DUE_AT_SQL} AS due_at,
   CASE
     WHEN s.name IS NOT NULL AND trim(s.name) != '' THEN s.name

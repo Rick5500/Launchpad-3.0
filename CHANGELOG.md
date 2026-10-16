@@ -14,6 +14,13 @@ All notable changes to this project will be documented in this file.
 - A barcode scan that moves a department writes the scan, the department change, production history, and the activity row in one transaction
 
 ### Added
+- Per-service line item fields. `service_fields` stores the label, type, options, required flag, and sort order for each service. `order_line_items.field_values` stores the answers as JSON. The customer order form shows a section for each selected service. The server checks required fields and select values against the active definitions. Admins edit those lists on the Services page. A deactivated option still displays on older orders. Init adds missing seed rows and does not overwrite an admin's edits
+- Signs & Graphics product fields for flatbed, CNC router, and the rest of the widened product line. Mount and laminate are options on that service, not a separate service. Older Yes/No mount and laminate values still display
+- Required payment method on new orders: Accent Account, Cash, Check, AMEX, Master Card, Visa, or Discover. Only the method label is stored. Older orders display `Not specified`
+- Optional Bill To person and company address, shown on the order and the print sheet when present. Customers can prefill from their own earlier Bill To entries
+- Return `To Me` or `See ShipTo`. Selecting Ship To (3rd Party) defaults return to See ShipTo. An omitted delivery method then follows the first recipient's Via
+- `backend/scripts/verify-phase5.js` for field validation, the admin editor, payment, Bill To, legacy rows, and concurrent saves
+- The order form starts with no payment method selected. Service field edits record a short added, removed, and changed summary. Ship To Via options must map to Will Call, Accent Truck, or UPS, and an unmapped Via names itself in the error. Field keys cannot be constructor, prototype, or __proto__
 - Line-item finishing on the order form (None, Grommets, Easel, Cut/Trim, Velcro, Print Hanger, Framing, See Notes). The value is stored on the line and printed. None is stored blank and prints as `Finishing: None`
 - Required project name on order create. Orders that already have no project name still load and print
 - A line item for each selected service. Archive File Request can instead be described in Notes. Ship To (3rd Party) can instead be described in Ship To. An empty service returns HTTP 400 naming that service

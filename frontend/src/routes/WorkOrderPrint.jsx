@@ -62,22 +62,49 @@ function Field({ label, value }) {
   );
 }
 
+function billToPresent(bill) {
+  if (!bill) return false;
+  return ['name', 'phone', 'email', 'company', 'line1', 'line2', 'city', 'state', 'zip'].some((key) => String(bill[key] || '').trim());
+}
+
 function SpecBlock({ item, special }) {
+  const dynamic = Array.isArray(item.fields) && item.fields.length ? item.fields : null;
+  if (!dynamic) {
+    return (
+      <div className="wo-spec-block">
+        {item.description ? <div className="wo-spec-title">{item.description}</div> : null}
+        <div className="wo-spec-grid">
+          <div>
+            <Field label="Size:" value={item.size} />
+            <Field label="Quantity:" value={item.quantity} />
+            <Field label="Media:" value={item.media} />
+            <Field label="Color:" value={item.color} />
+            <Field label="Binding / Finish:" value={item.binding_finish} />
+          </div>
+          <div>
+            <Field label="Mounting:" value={item.mount_label || yesNo(item.mount)} />
+            <Field label="Lamination:" value={item.laminate_label || yesNo(item.laminate)} />
+            <Field label="Finishing:" value={finishingLabel(item.finishing)} />
+            {special != null ? <Field label="Special Instructions:" value={special} /> : null}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  const keys = new Set(dynamic.map((field) => field.key));
   return (
     <div className="wo-spec-block">
       {item.description ? <div className="wo-spec-title">{item.description}</div> : null}
       <div className="wo-spec-grid">
         <div>
-          <Field label="Size:" value={item.size} />
-          <Field label="Quantity:" value={item.quantity} />
-          <Field label="Media:" value={item.media} />
-          <Field label="Color:" value={item.color} />
-          <Field label="Binding / Finish:" value={item.binding_finish} />
+          {dynamic.map((field) => (
+            <Field key={field.key} label={`${field.label}:`} value={field.display} />
+          ))}
         </div>
         <div>
-          <Field label="Mounting:" value={yesNo(item.mount)} />
-          <Field label="Lamination:" value={yesNo(item.laminate)} />
-          <Field label="Finishing:" value={finishingLabel(item.finishing)} />
+          {!keys.has('mount') ? <Field label="Mounting:" value={item.mount_label || yesNo(item.mount)} /> : null}
+          {!keys.has('laminate') ? <Field label="Lamination:" value={item.laminate_label || yesNo(item.laminate)} /> : null}
+          {!keys.has('finishing') ? <Field label="Finishing:" value={finishingLabel(item.finishing)} /> : null}
           {special != null ? <Field label="Special Instructions:" value={special} /> : null}
         </div>
       </div>
@@ -143,6 +170,8 @@ function WorkOrderSheet({ payload, sheet }) {
             <Field label="Project Number:" value={sheet.project?.project_number} />
             <Field label="Project Name:" value={sheet.project?.project_name} />
             <Field label="Originals Source:" value={sheet.originals_source_label || 'Not specified'} />
+            <Field label="Payment Method:" value={sheet.payment_method_label || 'Not specified'} />
+            <Field label="Return:" value={sheet.return_to_label || 'Not specified'} />
             {sheet.originals_pickup ? (
               <div className="wo-note">Inbound pickup of originals. This is separate from the delivery method.</div>
             ) : null}
@@ -162,6 +191,23 @@ function WorkOrderSheet({ payload, sheet }) {
           </div>
         </section>
       </div>
+
+      {billToPresent(sheet.bill_to) ? (
+        <section className="wo-section">
+          <h2 className="wo-section-title">BILL TO</h2>
+          <div className="wo-panel-body">
+            <Field label="Person:" value={sheet.bill_to.name} />
+            <Field label="Phone:" value={sheet.bill_to.phone} />
+            <Field label="Email:" value={sheet.bill_to.email} />
+            <Field label="Company:" value={sheet.bill_to.company} />
+            <Field label="Addr 1:" value={sheet.bill_to.line1} />
+            {sheet.bill_to.line2 ? <Field label="Addr 2:" value={sheet.bill_to.line2} /> : null}
+            <Field label="City:" value={sheet.bill_to.city} />
+            <Field label="State:" value={sheet.bill_to.state} />
+            <Field label="Zip:" value={sheet.bill_to.zip} />
+          </div>
+        </section>
+      ) : null}
 
       <section className="wo-section">
         <h2 className="wo-section-title">SPECIFICATIONS ({String(serviceLabel).toUpperCase()})</h2>

@@ -10,6 +10,7 @@ const {
   parseDateBound,
   likePattern,
 } = require('./fields');
+const { displayFieldList, readFieldValues, PAYMENT_UNSPECIFIED } = require('./serviceFields');
 
 const SORTS = {
   created_at: 'o.created_at',
@@ -100,12 +101,22 @@ function buildWhere(filters) {
       OR o.phone LIKE ? ESCAPE '\\'
       OR o.email LIKE ? ESCAPE '\\'
       OR IFNULL(o.project_name, '') LIKE ? ESCAPE '\\'
+      OR IFNULL(o.payment_method, '') LIKE ? ESCAPE '\\'
       OR EXISTS (
         SELECT 1 FROM work_orders wo
         WHERE wo.order_id = o.id AND IFNULL(wo.external_id, '') LIKE ? ESCAPE '\\'
       )
+      OR EXISTS (
+        SELECT 1 FROM order_line_items li
+        WHERE li.order_id = o.id AND (
+          IFNULL(li.description, '') LIKE ? ESCAPE '\\'
+          OR IFNULL(li.field_values, '') LIKE ? ESCAPE '\\'
+          OR IFNULL(li.size, '') LIKE ? ESCAPE '\\'
+          OR IFNULL(li.media, '') LIKE ? ESCAPE '\\'
+        )
+      )
     )`);
-    params.push(pattern, pattern, pattern, pattern, pattern, pattern, pattern);
+    params.push(pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern);
   }
   if (filters.from) {
     clauses.push('o.created_at >= ?');
@@ -147,6 +158,54 @@ function buildWhere(filters) {
   };
 }
 
+async function lineDetailsFor(orderIds) {
+  const grouped = new Map();
+  if (!orderIds.length) return grouped;
+  const placeholders = orderIds.map(() => '?').join(', ');
+  const rows = await all(
+    `SELECT li.order_id, li.line_number, li.description, li.service_id, li.field_values, li.size, li.quantity,
+            li.media, li.mount, li.laminate, s.name AS service_name
+     FROM order_line_items li
+     LEFT JOIN services s ON s.id = li.service_id
+     WHERE li.order_id IN (${placeholders})
+     ORDER BY li.order_id, li.line_number, li.id`,
+    orderIds
+  );
+  const serviceIds = [...new Set(rows.map((row) => row.service_id).filter(Boolean))];
+  const definitions = serviceIds.length
+    ? await all(
+      `SELECT id, service_id, key, label, type, options_json, required, sort_order, is_active
+       FROM service_fields
+       WHERE service_id IN (${serviceIds.map(() => '?').join(', ')})
+       ORDER BY sort_order, id`,
+      serviceIds
+    )
+    : [];
+  const byService = new Map();
+  for (const field of definitions) {
+    if (!byService.has(field.service_id)) byService.set(field.service_id, []);
+    byService.get(field.service_id).push(field);
+  }
+  for (const row of rows) {
+    const values = readFieldValues(row.field_values);
+    const fields = displayFieldList(byService.get(row.service_id) || [], values);
+    const bits = fields.map((field) => `${field.label}: ${field.display}`).filter((bit) => bit && !bit.endsWith(': No') && !bit.endsWith(': '));
+    const summary = [`${row.line_number}. ${row.description || 'Line'}`];
+    if (row.service_name) summary.push(row.service_name);
+    if (bits.length) summary.push(bits.join(', '));
+    else {
+      const legacy = [row.size, row.quantity, row.media].filter(Boolean).join(' · ');
+      if (legacy) summary.push(legacy);
+      if (row.mount || row.laminate) summary.push(`Mount ${row.mount ? 'Yes' : 'No'}, Laminate ${row.laminate ? 'Yes' : 'No'}`);
+    }
+    const text = summary.join(' — ').slice(0, 400);
+    const list = grouped.get(row.order_id) || [];
+    list.push(text);
+    grouped.set(row.order_id, list);
+  }
+  return grouped;
+}
+
 function presentWorkOrder(row) {
   return {
     id: row.id,
@@ -169,7 +228,8 @@ async function searchOrders(query) {
   const orders = await all(
     `SELECT o.id, o.order_number, o.company, o.contact_name, o.phone, o.email,
             o.due_date, o.due_time, o.created_at, o.delivery_method, o.ups_account_number, o.project_name,
-            o.originals_source, o.address_line1, o.address_line2, o.city, o.state, o.zip
+            o.originals_source, o.address_line1, o.address_line2, o.city, o.state, o.zip,
+            o.payment_method, o.return_to, o.bill_to_company
      FROM orders o
      ${where.sql}
      ORDER BY ${SORTS[filters.sort]} ${filters.dir.toUpperCase()}, o.id DESC
@@ -197,6 +257,7 @@ async function searchOrders(query) {
     list.push(presentWorkOrder(row));
     grouped.set(row.order_id, list);
   }
+  const lineDetails = await lineDetailsFor(ids);
   return {
     orders: orders.map((row) => ({
       id: row.id,
@@ -218,6 +279,11 @@ async function searchOrders(query) {
       city: row.city || '',
       state: row.state || '',
       zip: row.zip || '',
+      payment_method: row.payment_method || null,
+      payment_method_label: row.payment_method ? String(row.payment_method) : PAYMENT_UNSPECIFIED,
+      return_to: row.return_to || null,
+      bill_to_company: row.bill_to_company || '',
+      line_details: lineDetails.get(row.id) || [],
       detail_path: `/orders/${row.id}`,
       work_orders: grouped.get(row.id) || [],
     })),

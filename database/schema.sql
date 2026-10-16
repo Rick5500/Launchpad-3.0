@@ -95,6 +95,17 @@ CREATE TABLE IF NOT EXISTS orders (
   zip TEXT,
   ship_to TEXT,
   attention TEXT,
+  payment_method TEXT, -- Accent Account, Cash, Check, AMEX, Master Card, Visa, Discover; null on older orders
+  return_to TEXT, -- To Me, or See ShipTo when a third-party ship-to line carries the delivery
+  bill_to_name TEXT,
+  bill_to_phone TEXT,
+  bill_to_email TEXT,
+  bill_to_company TEXT,
+  bill_to_address_line1 TEXT,
+  bill_to_address_line2 TEXT,
+  bill_to_city TEXT,
+  bill_to_state TEXT,
+  bill_to_zip TEXT,
   due_date TEXT NOT NULL, -- YYYY-MM-DD in the shop calendar
   due_time TEXT NOT NULL, -- HH:MM slot inside the method window (Will Call 08:00-17:00, delivery 09:00-16:00)
   created_by INTEGER,
@@ -161,8 +172,9 @@ CREATE TABLE IF NOT EXISTS order_line_items (
   color TEXT,
   binding_finish TEXT,
   finishing TEXT, -- None, Grommets, Easel, Cut/Trim, Velcro, Print Hanger, Framing, See Notes; null prints as None
-  mount INTEGER DEFAULT 0,
-  laminate INTEGER DEFAULT 0,
+  mount INTEGER DEFAULT 0, -- legacy Yes/No; new Signs & Graphics lines also store the mount option in field_values
+  laminate INTEGER DEFAULT 0, -- legacy Yes/No; new Signs & Graphics lines also store the laminate option in field_values
+  field_values TEXT, -- JSON object of service-specific line values; null on rows created before this column
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(order_id) REFERENCES orders(id),
   FOREIGN KEY(service_id) REFERENCES services(id),
@@ -296,6 +308,26 @@ CREATE TABLE IF NOT EXISTS system_alerts (
 
 CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
 CREATE INDEX IF NOT EXISTS idx_orders_created ON orders(created_at);
+-- Per-service line item fields. options_json is [{value, active}].
+-- Deactivated options stay in the definition so the editor can turn them back on.
+-- Orders store the chosen string, so an option removed later still displays.
+CREATE TABLE IF NOT EXISTS service_fields (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  service_id INTEGER NOT NULL,
+  key TEXT NOT NULL,
+  label TEXT NOT NULL,
+  type TEXT NOT NULL, -- text, select, number, checkbox, textarea
+  options_json TEXT,
+  required INTEGER DEFAULT 0,
+  sort_order INTEGER DEFAULT 0,
+  is_active INTEGER DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME,
+  FOREIGN KEY(service_id) REFERENCES services(id),
+  UNIQUE(service_id, key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_service_fields_service ON service_fields(service_id);
 CREATE INDEX IF NOT EXISTS idx_order_line_items_order ON order_line_items(order_id);
 CREATE INDEX IF NOT EXISTS idx_order_line_items_work_order ON order_line_items(work_order_id);
 CREATE INDEX IF NOT EXISTS idx_order_files_order ON order_files(order_id);

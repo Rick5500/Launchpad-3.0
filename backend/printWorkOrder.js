@@ -3,6 +3,7 @@ const { getOrder } = require('./orderService');
 const { deliveryWindow, willCallWindow, hoursLabel, usesWillCallHours } = require('./deliveryRules');
 const { code128Svg } = require('./barcodeSvg');
 const { loadLetterhead, DEFAULT_NAME, DEFAULT_ADDRESS, DEFAULT_PHONE, addressLines } = require('./shopProfile');
+const { displayFieldList, readFieldValues, PAYMENT_UNSPECIFIED, RETURN_UNSPECIFIED } = require('./serviceFields');
 
 const SCAN_INSTRUCTIONS = [
   'Scan this barcode at each department.',
@@ -182,6 +183,17 @@ async function buildSheet(workOrderId, viewer) {
        o.ups_account_number,
        o.ship_to,
        o.attention,
+       o.payment_method,
+       o.return_to,
+       o.bill_to_name,
+       o.bill_to_phone,
+       o.bill_to_email,
+       o.bill_to_company,
+       o.bill_to_address_line1,
+       o.bill_to_address_line2,
+       o.bill_to_city,
+       o.bill_to_state,
+       o.bill_to_zip,
        o.due_date AS order_due_date,
        o.due_time AS order_due_time,
        o.created_at AS order_created_at,
@@ -202,12 +214,27 @@ async function buildSheet(workOrderId, viewer) {
 
   const lineItems = await all(
     `SELECT id, line_number, description, size, quantity, media, color, binding_finish,
-            finishing, mount, laminate
+            finishing, mount, laminate, field_values, service_id
      FROM order_line_items
      WHERE work_order_id = ?
      ORDER BY line_number, id`,
     [row.id]
   );
+  const serviceIds = [...new Set(lineItems.map((item) => item.service_id).filter(Boolean))];
+  const fieldRows = serviceIds.length
+    ? await all(
+      `SELECT id, service_id, key, label, type, options_json, required, sort_order, is_active
+       FROM service_fields
+       WHERE service_id IN (${serviceIds.map(() => '?').join(', ')})
+       ORDER BY sort_order, id`,
+      serviceIds
+    )
+    : [];
+  const fieldsByService = new Map();
+  for (const field of fieldRows) {
+    if (!fieldsByService.has(field.service_id)) fieldsByService.set(field.service_id, []);
+    fieldsByService.get(field.service_id).push(field);
+  }
   const files = await all(
     `SELECT id, original_name, size_bytes, uploaded_at
      FROM order_files
@@ -280,23 +307,45 @@ async function buildSheet(workOrderId, viewer) {
       ups_account_number: upsAccount || null,
       hours_label: deliveryHoursLabel(methodName, willCallFlag),
     },
+    payment_method: row.payment_method || '',
+    payment_method_label: row.payment_method ? String(row.payment_method) : PAYMENT_UNSPECIFIED,
+    return_to: row.return_to || '',
+    return_to_label: row.return_to ? String(row.return_to) : RETURN_UNSPECIFIED,
+    bill_to: {
+      name: row.bill_to_name || '',
+      phone: row.bill_to_phone || '',
+      email: row.bill_to_email || '',
+      company: row.bill_to_company || '',
+      line1: row.bill_to_address_line1 || '',
+      line2: row.bill_to_address_line2 || '',
+      city: row.bill_to_city || '',
+      state: row.bill_to_state || '',
+      zip: row.bill_to_zip || '',
+    },
     service_name: row.service_name || null,
     stage_name: row.stage_name || null,
     process: process || null,
     quantity: row.quantity,
-    line_items: lineItems.map((item) => ({
-      id: item.id,
-      line_number: item.line_number,
-      description: item.description,
-      size: item.size || '',
-      quantity: item.quantity || '',
-      media: item.media || '',
-      color: item.color || '',
-      binding_finish: item.binding_finish || '',
-      finishing: item.finishing || '',
-      mount: Boolean(item.mount),
-      laminate: Boolean(item.laminate),
-    })),
+    line_items: lineItems.map((item) => {
+      const values = readFieldValues(item.field_values);
+      const fields = displayFieldList(fieldsByService.get(item.service_id) || [], values);
+      return {
+        id: item.id,
+        line_number: item.line_number,
+        description: item.description,
+        size: item.size || '',
+        quantity: item.quantity || '',
+        media: item.media || '',
+        color: item.color || '',
+        binding_finish: item.binding_finish || '',
+        finishing: item.finishing || '',
+        mount: Boolean(item.mount),
+        laminate: Boolean(item.laminate),
+        mount_label: Object.prototype.hasOwnProperty.call(values, 'mount') ? String(values.mount) : (item.mount ? 'Yes' : 'No'),
+        laminate_label: Object.prototype.hasOwnProperty.call(values, 'laminate') ? String(values.laminate) : (item.laminate ? 'Yes' : 'No'),
+        fields,
+      };
+    }),
     special_instructions: specialInstructions,
     specifications: lineItems.length ? null : (row.specifications || ''),
     files: files.map((file) => ({

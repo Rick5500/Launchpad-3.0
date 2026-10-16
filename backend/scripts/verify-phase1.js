@@ -10,6 +10,7 @@ const path = require('path');
 const bcrypt = require('bcryptjs');
 const sqlite3 = require('sqlite3').verbose();
 
+const { fillOrderLines, setServiceNames } = require('./orderLineDefaults');
 const backendDir = path.join(__dirname, '..');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-phase1-'));
 const oldDb = path.join(tmp, 'old.db');
@@ -308,6 +309,29 @@ async function migrateOldDatabase() {
       order_number, customer_id, company, contact_name, phone, email, delivery_method, due_date, due_time
     ) VALUES ('LEGACY-FEDEX', 1, 'Legacy Co', 'Pat', '919-555-0100', 'pat@legacy.example', 'FedEx', '2020-01-06', '16:30')`
   );
+  await db.exec(`
+    CREATE TABLE order_line_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id INTEGER NOT NULL,
+      service_id INTEGER,
+      work_order_id INTEGER,
+      line_number INTEGER NOT NULL,
+      description TEXT NOT NULL,
+      size TEXT,
+      quantity TEXT,
+      media TEXT,
+      color TEXT,
+      binding_finish TEXT,
+      finishing TEXT,
+      mount INTEGER DEFAULT 0,
+      laminate INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await db.run(
+    `INSERT INTO order_line_items (order_id, line_number, description, mount, laminate)
+     SELECT id, 1, 'Legacy banner', 1, 0 FROM orders WHERE order_number = 'LEGACY-PICKUP'`
+  );
   await db.close();
 
   await initDatabase(oldDb);
@@ -355,6 +379,17 @@ async function migrateOldDatabase() {
   const pickup = await check.get(`SELECT delivery_method, due_time, ups_account_number FROM orders WHERE order_number = 'LEGACY-PICKUP'`);
   assert(pickup && pickup.delivery_method === 'Customer Pickup' && pickup.due_time === '18:00', 'legacy Customer Pickup label and time should stay');
   assert(pickup.ups_account_number == null, 'migrated orders should leave the new account column empty');
+  assert(orderColumns.has('payment_method') && orderColumns.has('return_to') && orderColumns.has('bill_to_name') && orderColumns.has('bill_to_zip'), 'payment, return, and bill-to columns should be added on an older database');
+  const pickupPayment = await check.get(`SELECT payment_method, bill_to_company FROM orders WHERE order_number = 'LEGACY-PICKUP'`);
+  assert(pickupPayment.payment_method == null && pickupPayment.bill_to_company == null, 'migrated orders should leave payment and bill-to empty');
+  const lineColumns = await columnNames(check, 'order_line_items');
+  assert(lineColumns.has('field_values'), 'order_line_items.field_values should be added on an older database');
+  const banner = await check.get(`SELECT description, mount, laminate, field_values FROM order_line_items WHERE description = 'Legacy banner'`);
+  assert(banner && banner.description === 'Legacy banner' && banner.mount === 1 && banner.laminate === 0 && banner.field_values == null, 'a pre-existing line item should stay intact with a null field_values column');
+  const fieldCount = await check.get('SELECT COUNT(*) AS count FROM service_fields');
+  assert(fieldCount.count === 54, `expected 54 seeded service fields after two inits, found ${fieldCount.count}`);
+  const fieldsTable = await check.get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'service_fields'`);
+  assert(fieldsTable, 'service_fields should exist after migrating an older database');
   const fedex = await check.get(`SELECT delivery_method, due_time FROM orders WHERE order_number = 'LEGACY-FEDEX'`);
   assert(fedex && fedex.delivery_method === 'FedEx' && fedex.due_time === '16:30', 'legacy FedEx label should stay');
   const methodRows = await check.all(`SELECT name, is_active FROM delivery_methods ORDER BY name`);
@@ -457,6 +492,11 @@ async function initFreshTwice() {
   const orderColumns = await columnNames(db, 'orders');
   assert(orderColumns.has('ups_account_number'), 'fresh orders table should include ups_account_number');
   assert(orderColumns.has('originals_source') && orderColumns.has('address_line1') && orderColumns.has('address_line2') && orderColumns.has('city') && orderColumns.has('state') && orderColumns.has('zip'), 'fresh orders table should include originals and address columns');
+  assert(orderColumns.has('payment_method') && orderColumns.has('return_to') && orderColumns.has('bill_to_company') && orderColumns.has('bill_to_zip'), 'fresh orders table should include payment, return, and bill-to columns');
+  const lineColumns = await columnNames(db, 'order_line_items');
+  assert(lineColumns.has('field_values'), 'fresh line items should include field_values');
+  const fieldCount = await db.get('SELECT COUNT(*) AS count FROM service_fields');
+  assert(fieldCount.count === 54, `fresh init twice should leave 54 service fields, found ${fieldCount.count}`);
   const freshUsers = await columnNames(db, 'users');
   assert(freshUsers.has('address_line1') && freshUsers.has('zip'), 'fresh users table should include address columns');
   const externalIndex = await db.get(
@@ -521,7 +561,7 @@ async function login(username, password) {
 }
 
 function orderBody(overrides = {}) {
-  return {
+  return fillOrderLines({
     company: 'Acme Construction',
     contact_name: 'John Smith',
     phone: '919-555-1234',
@@ -544,7 +584,7 @@ function orderBody(overrides = {}) {
     service_ids: [],
     line_items: [{ description: 'Default line', quantity: '1' }],
     ...overrides,
-  };
+  });
 }
 
 async function runApiChecks() {
@@ -620,6 +660,7 @@ async function runApiChecks() {
     const servicesResponse = await request({ method: 'GET', path: '/api/orders/options', token: customerToken });
     assert(servicesResponse.status === 200, 'options should load for a customer');
     const byName = Object.fromEntries(servicesResponse.json.services.map((service) => [service.name, service]));
+    setServiceNames(byName);
     assert(byName['Large Format'] && byName['Small Format'] && byName['Signs & Graphics'], 'seeded services should be listed');
     assert(servicesResponse.json.due_window.slots.includes('09:00'), 'window should include 9:00 AM');
     assert(servicesResponse.json.due_window.slots.includes('14:00'), 'window should include 2:00 PM');
@@ -917,7 +958,7 @@ async function runApiChecks() {
     const spec = (detail.json.specification_lines || []).find((line) => line.title === 'Civil Plans');
     assert(spec, 'large format line item should be on its work order');
     const specMap = Object.fromEntries(spec.fields.map((field) => [field.label, field.value]));
-    assert(specMap.Size === '24x36' && specMap.Media === 'Bond' && specMap.Mounting === 'No' && specMap.Lamination === 'No', 'spec fields should match the line item');
+    assert(specMap.Size === 'Full Size' && specMap.Media === 'Bond' && specMap.Mounting === 'No' && specMap.Lamination === 'No', 'spec fields should match the line item');
     assert((detail.json.files || []).some((file) => file.original_name === 'passwd.pdf'), 'line item file should show on the work order');
     const customerHistory = detail.json.production_history || [];
     assert(customerHistory.some((row) => row.department === 'Submitted' && row.status === 'Submitted' && row.event_time), 'customer history should include department, status, and time');
@@ -1139,14 +1180,23 @@ async function runApiChecks() {
        VALUES (?, ?, 1, ?, 'Customer Pickup', 'pending')`,
       [legacyWorkOrder.lastID, legacyOrder.lastID, `${isoDate(utcDate(0))} 18:00:00`]
     );
+    await legacyDb.run(
+      `INSERT INTO order_line_items (order_id, work_order_id, line_number, description, mount, laminate)
+       VALUES (?, ?, 1, 'Legacy banner', 1, 0)`,
+      [legacyOrder.lastID, legacyWorkOrder.lastID]
+    );
     await legacyDb.close();
     const legacyLoaded = await request({ method: 'GET', path: `/api/orders/${legacyOrder.lastID}`, token: customerToken });
     assert(legacyLoaded.status === 200 && legacyLoaded.json.order.delivery_method === 'Customer Pickup', `legacy Customer Pickup should load: ${legacyLoaded.text}`);
+    assert(legacyLoaded.json.order.payment_method == null && legacyLoaded.json.order.payment_method_label === 'Not specified', 'legacy orders should show payment as Not specified');
     assert(legacyLoaded.json.order.due_time === '18:00', 'legacy due time outside the new window should stay');
     assert(legacyLoaded.json.order.delivery_hours.start === '08:00', 'Customer Pickup should use Will Call hours');
     assert(legacyLoaded.json.order.project_name == null, 'an older order without a project name should still load');
     assert(legacyLoaded.json.order.originals_source == null && legacyLoaded.json.order.originals_source_label === 'Not specified', 'legacy originals should display as Not specified');
     assert(legacyLoaded.json.order.address_line1 == null && legacyLoaded.json.order.city == null && legacyLoaded.json.order.zip == null, 'legacy address should stay blank');
+    const legacyLine = (legacyLoaded.json.order.line_items || []).find((item) => item.description === 'Legacy banner');
+    assert(legacyLine && legacyLine.mount === true && legacyLine.mount_label === 'Yes' && legacyLine.laminate_label === 'No', 'legacy mount Yes/No should still display');
+    assert(legacyLine.field_values && Object.keys(legacyLine.field_values).length === 0, 'a legacy line should keep an empty field_values object');
     const legacyEdited = await request({
       method: 'PUT',
       path: `/api/workorders/${legacyWorkOrder.lastID}`,

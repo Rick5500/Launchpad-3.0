@@ -8,6 +8,7 @@ const {
   orderOptions,
   previewOrder,
   presentOrder,
+  listBillTos,
 } = require('../orderService');
 const { printForOrder } = require('../printWorkOrder');
 
@@ -27,6 +28,14 @@ router.get('/options', auth.requireAuth, orderRoles, async (req, res) => {
     res.json(await orderOptions());
   } catch (err) {
     sendOrderError(res, err, 'ORDER OPTIONS ERROR:');
+  }
+});
+
+router.get('/bill-tos', auth.requireAuth, orderRoles, async (req, res) => {
+  try {
+    res.json(await listBillTos(req.user, req.query || {}));
+  } catch (err) {
+    sendOrderError(res, err, 'ORDER BILL TO ERROR:');
   }
 });
 
