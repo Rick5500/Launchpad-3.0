@@ -169,11 +169,20 @@ export default function OrderDetail() {
             ))}
           </Box>
 
-          <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2, overflowX: 'auto' }}>
+          <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2, minWidth: 0 }}>
             <Typography sx={{ fontWeight: 700, color: brand.navy, mb: 1 }}>Line Items</Typography>
             {(order.line_items || []).length === 0 && <Typography color="text.secondary">No line items.</Typography>}
             {(order.line_items || []).map((item) => (
-              <Typography key={item.id} sx={{ fontSize: 14, mb: 0.75 }}>
+              <Typography
+                key={item.id}
+                sx={{
+                  fontSize: 14,
+                  mb: 0.75,
+                  whiteSpace: 'normal',
+                  overflowWrap: 'break-word',
+                  wordWrap: 'break-word',
+                }}
+              >
                 {item.line_number}. {item.description}
                 {item.service_name ? ` · ${item.service_name}` : ''}
                 {` · ${lineDetail(item)}`}

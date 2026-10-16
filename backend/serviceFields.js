@@ -413,6 +413,36 @@ function displayFieldList(definitions, values) {
   return fields;
 }
 
+// order_line_items.description is unbounded TEXT. A caller-supplied description
+// is still limited to 200 characters in orderService, and there is no frontend
+// maxLength on the generated summary. Notes may be 2000 characters and the
+// field payload 12000, so 1000 keeps a full Small Format spec (about 900
+// characters before notes) and still wraps on a letter sheet.
+const LINE_SUMMARY_MAX = 1000;
+const SUMMARY_SEPARATOR = ' · ';
+
+function clipSummary(parts, max = LINE_SUMMARY_MAX) {
+  const full = parts.join(SUMMARY_SEPARATOR);
+  if (full.length <= max) return full;
+  const ellipsis = '…';
+  const budget = max - ellipsis.length;
+  if (budget <= 0) return ellipsis.slice(0, max);
+  let kept = '';
+  for (const part of parts) {
+    const next = kept ? `${kept}${SUMMARY_SEPARATOR}${part}` : part;
+    if (next.length <= budget) {
+      kept = next;
+      continue;
+    }
+    if (kept) return `${kept}${ellipsis}`;
+    const window = part.slice(0, budget);
+    const space = window.lastIndexOf(' ');
+    const clipped = space > 0 ? window.slice(0, space).trimEnd() : '';
+    return clipped ? `${clipped}${ellipsis}` : ellipsis;
+  }
+  return kept;
+}
+
 function describeLine(definitions, values, explicit) {
   if (explicit) return explicit;
   const parts = [];
@@ -420,8 +450,7 @@ function describeLine(definitions, values, explicit) {
     if (!field.display || field.display === 'No') continue;
     parts.push(`${field.label}: ${field.display}`);
   }
-  const text = parts.join(' · ').slice(0, 200);
-  return text || 'Line item';
+  return clipSummary(parts) || 'Line item';
 }
 
 function mirrorLegacy(values, legacy) {
@@ -781,6 +810,7 @@ module.exports = {
   readFieldValues,
   validateLineFields,
   displayFieldList,
+  LINE_SUMMARY_MAX,
   describeLine,
   mirrorLegacy,
   methodFromVia,
