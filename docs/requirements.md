@@ -43,6 +43,8 @@ API endpoints:
 - `POST /api/admin-board/approvals/:id` — admin approve or reject (`decision` of `approved` or `rejected`)
 - `GET /api/workorders/:id/print` — printable work order payload. Customers only receive their own work orders (404 otherwise)
 - `GET /api/orders/:id/print` — the same payload for every work order on an order. Customers only receive their own orders (404 otherwise)
+- A staff `external_id` is 1 to 80 printable ASCII characters, or blank. Otherwise `POST` and `PUT /api/workorders` return HTTP 400. An older unprintable id still prints, with `barcode_error` set, and the other work orders on that order still print
+- A department-move barcode scan commits the event, department update, production history row, and activity row together
 
 Barcode scans:
 - Persist `scanned_value`, `work_order_id`, `operator_id` (the signed-in user), `location`, and `event_time`.

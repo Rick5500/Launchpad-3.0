@@ -965,6 +965,7 @@ async function loadWorkOrderContext(row, viewer) {
 module.exports = {
   OrderError,
   CUSTOMER_FORBIDDEN_FIELDS,
+  withTransaction,
   createOrder,
   listOrders,
   getOrder,

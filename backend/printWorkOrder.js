@@ -225,6 +225,14 @@ async function buildSheet(workOrderId, viewer) {
   );
   const delivery = await loadDelivery(row.order_id, row.id);
   const barcodeValue = barcodeValueFor(row);
+  let barcodeSvg = null;
+  let barcodeError = null;
+  try {
+    barcodeSvg = code128Svg(barcodeValue);
+  } catch (err) {
+    barcodeSvg = null;
+    barcodeError = 'barcode unavailable';
+  }
   const specialInstructions = textOrEmpty(row.notes).trim() || textOrEmpty(row.order_notes).trim();
   const process = uniqueParts([row.service_name, row.stage_name, row.department]).join(' · ');
 
@@ -232,7 +240,8 @@ async function buildSheet(workOrderId, viewer) {
     id: row.id,
     external_id: row.external_id || null,
     barcode_value: barcodeValue,
-    barcode_svg: code128Svg(barcodeValue),
+    barcode_svg: barcodeSvg,
+    barcode_error: barcodeError,
     order_id: row.order_id || null,
     order_number: row.order_number || null,
     description: row.description || null,

@@ -1,5 +1,6 @@
 const db = require('./db');
 const activityLog = require('./activityLog');
+const orderService = require('./orderService');
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -236,80 +237,29 @@ function isCompleteDepartment(name) {
   return String(name || '').trim().toLowerCase() === 'complete';
 }
 
-// A scan location that names a department moves the work order there.
-// Shipping / Quality Control / Finishing still advance production stages and do not match a department.
-async function applyScan({ scannedValue, location, eventTime, operatorId, workOrder, stage }) {
-  const storedTime = eventTime || utcNowNaive();
-  const [matchedDepartment, operator] = await Promise.all([
-    location
-      ? getSql(
-        `SELECT id, name, next_department FROM departments
-         WHERE is_active = 1 AND lower(name) = lower(?)`,
-        [String(location).trim()]
-      )
-      : Promise.resolve(null),
-    operatorId
-      ? getSql('SELECT id, display_name, username FROM users WHERE id = ?', [operatorId])
-      : Promise.resolve(null),
-  ]);
+const EVENT_INSERT_SQL = `INSERT INTO barcode_events
+  (scanned_value, work_order_id, operator_id, location, event_time, stage_id, from_department, to_department)
+ VALUES (?,?,?,?,?,?,?,?)`;
 
-  const fromDepartment = workOrder.department || null;
-  const toDepartment = matchedDepartment ? matchedDepartment.name : null;
-  const inserted = await runSql(
-    `INSERT INTO barcode_events
-      (scanned_value, work_order_id, operator_id, location, event_time, stage_id, from_department, to_department)
-     VALUES (?,?,?,?,?,?,?,?)`,
-    [
-      scannedValue,
-      workOrder.id,
-      operatorId,
-      location || null,
-      storedTime,
-      stage ? stage.id : null,
-      fromDepartment,
-      toDepartment,
-    ]
-  );
+function eventParams({ scannedValue, workOrder, operatorId, location, storedTime, stage, fromDepartment, toDepartment }) {
+  return [
+    scannedValue,
+    workOrder.id,
+    operatorId,
+    location || null,
+    storedTime,
+    stage ? stage.id : null,
+    fromDepartment,
+    toDepartment,
+  ];
+}
 
-  const payload = {
-    id: inserted.lastID,
-    scanned_value: scannedValue,
-    work_order_id: workOrder.id,
-    external_id: workOrder.external_id,
-    description: workOrder.description,
-    operator_id: operatorId,
-    location: location || null,
-    event_time: storedTime,
-    stage_id: stage ? stage.id : null,
-    stage_name: stage ? stage.name : null,
-    stage_advanced: false,
-    from_department: fromDepartment,
-    to_department: toDepartment,
-    department_moved: false,
-  };
+// Event, department, history, and activity commit together. A failure rolls all four back.
+async function writeDepartmentMove(tx, move) {
+  const inserted = await tx.run(EVENT_INSERT_SQL, eventParams(move));
+  const { matchedDepartment, nextStatus, workOrder, operator, operatorId, fromDepartment } = move;
 
-  if (stage) {
-    try {
-      const stageUpdate = await runSql(
-        `UPDATE work_orders SET stage_id = ?, updated_at = datetime('now') WHERE id = ?`,
-        [stage.id, workOrder.id]
-      );
-      payload.stage_advanced = stageUpdate.changes > 0;
-    } catch (stageErr) {
-      console.error('BARCODE STAGE UPDATE ERROR:', stageErr);
-    }
-  }
-
-  const moved = Boolean(matchedDepartment)
-    && String(fromDepartment || '').trim() !== matchedDepartment.name;
-  if (!moved) return payload;
-
-  let nextStatus = workOrder.status || 'open';
-  if (isCompleteDepartment(matchedDepartment.name) && !activityLog.isFinishedStatus(nextStatus)) {
-    nextStatus = 'completed';
-  }
-
-  await runSql(
+  await tx.run(
     `UPDATE work_orders
      SET department = ?,
          assigned_department_id = ?,
@@ -327,7 +277,7 @@ async function applyScan({ scannedValue, location, eventTime, operatorId, workOr
   );
 
   const scannedBy = operator?.display_name || operator?.username || 'Staff';
-  await runSql(
+  await tx.run(
     `INSERT INTO production_history (work_order_id, department, status, scanned_by, user_id, notes)
      VALUES (?, ?, ?, ?, ?, ?)`,
     [
@@ -350,12 +300,85 @@ async function applyScan({ scannedValue, location, eventTime, operatorId, workOr
       status: nextStatus,
     },
   });
-  await new Promise((resolve, reject) => {
-    activityLog.insertEntries(db, entries, (err) => (err ? reject(err) : resolve()));
-  });
+  for (const entry of entries) {
+    await tx.run(activityLog.INSERT_SQL, activityLog.bindParams(entry));
+  }
+  return inserted;
+}
 
-  payload.department_moved = true;
-  payload.status = nextStatus;
+// A scan location that names a department moves the work order there.
+// Shipping / Quality Control / Finishing still advance production stages and do not match a department.
+async function applyScan({ scannedValue, location, eventTime, operatorId, workOrder, stage }) {
+  const storedTime = eventTime || utcNowNaive();
+  const [matchedDepartment, operator] = await Promise.all([
+    location
+      ? getSql(
+        `SELECT id, name, next_department FROM departments
+         WHERE is_active = 1 AND lower(name) = lower(?)`,
+        [String(location).trim()]
+      )
+      : Promise.resolve(null),
+    operatorId
+      ? getSql('SELECT id, display_name, username FROM users WHERE id = ?', [operatorId])
+      : Promise.resolve(null),
+  ]);
+
+  const fromDepartment = workOrder.department || null;
+  const toDepartment = matchedDepartment ? matchedDepartment.name : null;
+  const moved = Boolean(matchedDepartment)
+    && String(fromDepartment || '').trim() !== matchedDepartment.name;
+  let nextStatus = workOrder.status || 'open';
+  if (moved && isCompleteDepartment(matchedDepartment.name) && !activityLog.isFinishedStatus(nextStatus)) {
+    nextStatus = 'completed';
+  }
+
+  const move = {
+    scannedValue,
+    location,
+    storedTime,
+    operatorId,
+    workOrder,
+    stage,
+    matchedDepartment,
+    operator,
+    fromDepartment,
+    toDepartment,
+    nextStatus,
+  };
+  const inserted = moved
+    ? await orderService.withTransaction((tx) => writeDepartmentMove(tx, move))
+    : await runSql(EVENT_INSERT_SQL, eventParams(move));
+
+  const payload = {
+    id: inserted.lastID,
+    scanned_value: scannedValue,
+    work_order_id: workOrder.id,
+    external_id: workOrder.external_id,
+    description: workOrder.description,
+    operator_id: operatorId,
+    location: location || null,
+    event_time: storedTime,
+    stage_id: stage ? stage.id : null,
+    stage_name: stage ? stage.name : null,
+    stage_advanced: false,
+    from_department: fromDepartment,
+    to_department: toDepartment,
+    department_moved: moved,
+  };
+  if (moved) payload.status = nextStatus;
+
+  if (stage) {
+    try {
+      const stageUpdate = await runSql(
+        `UPDATE work_orders SET stage_id = ?, updated_at = datetime('now') WHERE id = ?`,
+        [stage.id, workOrder.id]
+      );
+      payload.stage_advanced = stageUpdate.changes > 0;
+    } catch (stageErr) {
+      console.error('BARCODE STAGE UPDATE ERROR:', stageErr);
+    }
+  }
+
   return payload;
 }
 

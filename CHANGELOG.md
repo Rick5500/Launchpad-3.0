@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Staff cannot save a work order number that Code 128 cannot draw. `external_id` must be 1 to 80 printable ASCII characters, or be left blank. A value already stored that cannot be encoded prints "barcode unavailable" instead of failing that sheet or the rest of the order
+- A barcode scan that moves a department writes the scan, the department change, production history, and the activity row in one transaction
+
 ### Added
 - Printable work orders at `/work-orders/:id/print` and `/orders/:id/print`, linked from the Admin Board, the work order list, work order detail, and order detail
 - `GET /api/workorders/:id/print` and `GET /api/orders/:id/print` for the signed-in user. Customers receive only their own orders and work orders (HTTP 404 otherwise) and do not receive staff history notes or scanner names

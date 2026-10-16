@@ -102,11 +102,20 @@
   min-width: 220px;
 }
 
-.wo-barcode svg {
+.wo-barcode svg,
+.wo-barcode img {
   width: 100%;
   height: auto;
   display: block;
   shape-rendering: crispedges;
+}
+
+.wo-barcode-missing {
+  border: 1px dashed #000;
+  padding: 8px 10px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .wo-barcode-lg {
@@ -376,6 +385,7 @@
   }
 
   .wo-barcode svg,
+  .wo-barcode img,
   .wo-panel h2,
   .wo-section-title,
   .wo-table th {

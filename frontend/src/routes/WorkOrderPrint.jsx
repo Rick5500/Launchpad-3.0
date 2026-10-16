@@ -42,11 +42,15 @@ function finishingLabel(value) {
 
 function Barcode({ svg, className }) {
   const source = typeof svg === 'string' ? svg.trim() : '';
-  const safe = source.startsWith('<svg') && !/script|foreignObject|onload=|javascript:/i.test(source)
-    ? source
-    : '';
-  if (!safe) return null;
-  return <div className={className} dangerouslySetInnerHTML={{ __html: safe }} />;
+  if (!source.startsWith('<svg')) {
+    return <div className={[className, 'wo-barcode-missing'].filter(Boolean).join(' ')}>barcode unavailable</div>;
+  }
+  const src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(source)}`;
+  return (
+    <div className={className}>
+      <img src={src} alt="" />
+    </div>
+  );
 }
 
 function Field({ label, value }) {

@@ -5,6 +5,7 @@ const { WORK_ORDER_STATUSES } = require('../statuses');
 const barcodeEvents = require('../barcodeEvents');
 const { loadWorkOrderContext } = require('../orderService');
 const { printForWorkOrder } = require('../printWorkOrder');
+const { isPrintableBarcode } = require('../barcodeSvg');
 const notifications = require('../notifications');
 const activityLog = require('../activityLog');
 const router = express.Router();
@@ -98,6 +99,9 @@ function validateWorkOrder(data) {
   }
   if (data.priority && !['Low', 'Normal', 'High', 'Rush'].includes(String(data.priority))) {
     errors.push('priority must be Low, Normal, High, or Rush');
+  }
+  if (data.external_id != null && String(data.external_id).trim() !== '' && !isPrintableBarcode(data.external_id)) {
+    errors.push('external_id must be 1 to 80 printable ASCII characters');
   }
 
   return errors;

@@ -481,6 +481,51 @@ async function runApiChecks() {
     }
     console.log('PASS barcode scan round trip for -A/-B/-C');
 
+    const beforeMove = await db.get('SELECT department, status FROM work_orders WHERE id = ?', [bySuffix.B.id]);
+    const beforeEvents = await db.get('SELECT COUNT(*) AS count FROM barcode_events WHERE work_order_id = ?', [bySuffix.B.id]);
+    const beforeHistory = await db.get('SELECT COUNT(*) AS count FROM production_history WHERE work_order_id = ?', [bySuffix.B.id]);
+    const beforeActivity = await db.get(
+      `SELECT COUNT(*) AS count FROM activity_log WHERE entity_type = 'work_order' AND entity_id = ? AND action = 'work_order.moved'`,
+      [bySuffix.B.id]
+    );
+    assert(beforeMove.department === 'Small Format', `suffix B should still be in Small Format, got ${beforeMove.department}`);
+    await db.run(`
+      CREATE TRIGGER fail_scan_move BEFORE INSERT ON activity_log
+      WHEN NEW.action = 'work_order.moved'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced activity failure');
+      END
+    `);
+    try {
+      const failedMove = await request({
+        method: 'POST',
+        path: '/api/barcode',
+        token: operator.token,
+        json: { scanned_value: bySuffix.B.external_id, location: 'Dispatch' },
+      });
+      assert(failedMove.status === 500, `failed department move should be 500, got ${failedMove.status} ${failedMove.text}`);
+      assert(failedMove.json && failedMove.json.error === 'Failed to record barcode event', failedMove.text);
+      assert(!/forced activity failure|SQLITE|activity_log/i.test(failedMove.text), 'scan error should not leak the database failure');
+      const afterMoveRow = await db.get('SELECT department, status FROM work_orders WHERE id = ?', [bySuffix.B.id]);
+      const afterEvents = await db.get('SELECT COUNT(*) AS count FROM barcode_events WHERE work_order_id = ?', [bySuffix.B.id]);
+      const afterHistory = await db.get('SELECT COUNT(*) AS count FROM production_history WHERE work_order_id = ?', [bySuffix.B.id]);
+      const afterActivity = await db.get(
+        `SELECT COUNT(*) AS count FROM activity_log WHERE entity_type = 'work_order' AND entity_id = ? AND action = 'work_order.moved'`,
+        [bySuffix.B.id]
+      );
+      const dispatchHistory = await db.get(
+        `SELECT id FROM production_history WHERE work_order_id = ? AND department = 'Dispatch'`,
+        [bySuffix.B.id]
+      );
+      assert(afterMoveRow.department === beforeMove.department && afterMoveRow.status === beforeMove.status, 'a failed move should leave the department unchanged');
+      assert(afterEvents.count === beforeEvents.count, 'a failed move should not keep the barcode event');
+      assert(afterHistory.count === beforeHistory.count && !dispatchHistory, 'a failed move should not keep production history');
+      assert(afterActivity.count === beforeActivity.count, 'a failed move should not keep the activity row');
+    } finally {
+      await db.run('DROP TRIGGER IF EXISTS fail_scan_move');
+    }
+    console.log('PASS department move rolls back together');
+
     const moved = await request({
       method: 'POST',
       path: '/api/barcode',
@@ -536,6 +581,110 @@ async function runApiChecks() {
       json: { scanned_value: decodeCode128Svg(legacyPrint.json.work_orders[0].barcode_svg), location: 'Intake' },
     });
     assert(legacyScan.status === 201 && legacyScan.json.work_order_id === legacy.id, `legacy scan failed: ${legacyScan.text}`);
+
+    const customerId = customerResponse.json.id;
+    const blankExternal = await request({
+      method: 'POST',
+      path: '/api/workorders',
+      token: admin.token,
+      json: {
+        customer_id: customerId,
+        description: 'No external id',
+        quantity: 1,
+        status: 'open',
+        department: 'Large Format',
+        external_id: '',
+      },
+    });
+    assert(blankExternal.status === 201, `blank external_id should stay allowed: ${blankExternal.status} ${blankExternal.text}`);
+    assert(blankExternal.json.external_id == null, 'blank external_id is stored as null');
+
+    const cafeCreate = await request({
+      method: 'POST',
+      path: '/api/workorders',
+      token: admin.token,
+      json: {
+        customer_id: customerId,
+        description: 'Cafe job',
+        quantity: 1,
+        status: 'open',
+        department: 'Large Format',
+        external_id: 'Café',
+      },
+    });
+    assert(cafeCreate.status === 400, `non-ASCII external_id create should be 400, got ${cafeCreate.status} ${cafeCreate.text}`);
+    assert(/printable ASCII/.test(cafeCreate.text), cafeCreate.text);
+
+    const described = await request({
+      method: 'POST',
+      path: '/api/workorders',
+      token: admin.token,
+      json: {
+        customer_id: customerId,
+        description: 'Description job',
+        quantity: 1,
+        status: 'open',
+        department: 'Large Format',
+        external_id: 'Description-1',
+      },
+    });
+    assert(described.status === 201, `Description-1 create failed: ${described.status} ${described.text}`);
+    const describedPrint = await request({
+      method: 'GET',
+      path: `/api/workorders/${described.json.id}/print`,
+      token: admin.token,
+    });
+    assert(describedPrint.status === 200, describedPrint.text);
+    const describedSheet = describedPrint.json.work_orders[0];
+    assert(describedSheet.barcode_error == null, 'Description-1 should include a barcode');
+    assert(/aria-label="Code 128 Description-1"/.test(describedSheet.barcode_svg), 'barcode label should keep Description-1');
+    decodePrinted(describedSheet.barcode_svg, 'Description-1');
+
+    const cafeUpdate = await request({
+      method: 'PUT',
+      path: `/api/workorders/${described.json.id}`,
+      token: admin.token,
+      json: {
+        customer_id: customerId,
+        description: 'Description job',
+        quantity: 1,
+        status: 'open',
+        department: 'Large Format',
+        external_id: 'Café',
+      },
+    });
+    assert(cafeUpdate.status === 400, `non-ASCII external_id update should be 400, got ${cafeUpdate.status} ${cafeUpdate.text}`);
+    assert(/printable ASCII/.test(cafeUpdate.text), cafeUpdate.text);
+    const stillDescribed = await db.get('SELECT external_id FROM work_orders WHERE id = ?', [described.json.id]);
+    assert(stillDescribed.external_id === 'Description-1', 'a rejected update should leave the saved id unchanged');
+
+    const siblingId = willCall.json.work_orders[0].id;
+    const badInsert = await db.run(
+      `INSERT INTO work_orders (external_id, customer_id, description, quantity, status, department, order_id)
+       VALUES ('Café', ?, 'Legacy unprintable id', 1, 'open', 'Large Format', ?)`,
+      [customerId, willCall.json.order.id]
+    );
+    const badPrint = await request({
+      method: 'GET',
+      path: `/api/workorders/${badInsert.lastID}/print`,
+      token: admin.token,
+    });
+    assert(badPrint.status === 200, `legacy bad id should still print: ${badPrint.status} ${badPrint.text}`);
+    assert(badPrint.json.work_orders[0].barcode_svg == null, 'legacy bad id should not include a barcode svg');
+    assert(badPrint.json.work_orders[0].barcode_error === 'barcode unavailable', badPrint.text);
+    const mixedOrder = await request({
+      method: 'GET',
+      path: `/api/orders/${willCall.json.order.id}/print`,
+      token: admin.token,
+    });
+    assert(mixedOrder.status === 200, `one bad id should not fail the order print: ${mixedOrder.status} ${mixedOrder.text}`);
+    assert(mixedOrder.json.work_orders.length === 2, 'order print should include the good sheet and the legacy sheet');
+    const goodSheet = mixedOrder.json.work_orders.find((sheet) => sheet.id === siblingId);
+    const badSheet = mixedOrder.json.work_orders.find((sheet) => sheet.id === badInsert.lastID);
+    assert(goodSheet && badSheet, 'both sheets should be present');
+    decodePrinted(goodSheet.barcode_svg, goodSheet.external_id);
+    assert(badSheet.barcode_svg == null && badSheet.barcode_error === 'barcode unavailable', 'the bad sheet should be a placeholder');
+    console.log('PASS printable barcode values');
     console.log('PASS print payload and customer isolation');
   } finally {
     await db.close();
@@ -544,9 +693,17 @@ async function runApiChecks() {
 }
 
 async function main() {
-  for (const value of ['20261015-001-A', '20261015-001-B', '20261015-001-C', 'WO-1001']) {
+  for (const value of ['20261015-001-A', '20261015-001-B', '20261015-001-C', 'WO-1001', 'Description-1']) {
     decodePrinted(code128Svg(value), value);
   }
+  let rejectedBarcode = null;
+  try {
+    code128Svg('Café');
+  } catch (err) {
+    rejectedBarcode = err;
+  }
+  assert(rejectedBarcode && rejectedBarcode.status === 400, 'non-ASCII barcode value should throw status 400');
+  assert(/printable ASCII/.test(rejectedBarcode.message), rejectedBarcode && rejectedBarcode.message);
   console.log('PASS local Code 128 encode/decode');
   await initFreshTwice();
   await runApiChecks();
