@@ -233,7 +233,7 @@ export default function CustomerOrderForm() {
   const [projectNumber, setProjectNumber] = useState('');
   const [projectName, setProjectName] = useState('');
   const [notes, setNotes] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState('Accent Account');
+  const [paymentMethod, setPaymentMethod] = useState('');
   const [returnTo, setReturnTo] = useState('To Me');
   const [deliveryMethod, setDeliveryMethod] = useState('');
   const [upsAccount, setUpsAccount] = useState('');
@@ -282,7 +282,6 @@ export default function CustomerOrderForm() {
         setOptions(data);
         const accent = (data.delivery_methods || []).find((method) => method.name === 'Accent Truck');
         setDeliveryMethod((current) => current || accent?.name || data.delivery_methods?.[0]?.name || '');
-        if (data.payment_methods?.length) setPaymentMethod((current) => current || data.payment_methods[0]);
       })
       .catch((err) => {
         if (!cancelled) setLoadError(err.message || 'Unable to load the order form');
@@ -485,7 +484,7 @@ export default function CustomerOrderForm() {
     setOriginalsSource('');
     setBillTo(emptyBill);
     setBillChoice('');
-    setPaymentMethod('Accent Account');
+    setPaymentMethod('');
     setReturnTo('To Me');
     if (!isStaff && user) applyProfile(user, true);
   }
@@ -806,7 +805,20 @@ export default function CustomerOrderForm() {
 
           <FormAccordion title="Payment">
             <LabelField label="Payment Method" required>
-              <TextField select size="small" required value={paymentMethod} disabled={locked} onChange={(event) => setPaymentMethod(event.target.value)} sx={fieldSx}>
+              <TextField
+                select
+                size="small"
+                required
+                value={paymentMethod}
+                disabled={locked}
+                onChange={(event) => setPaymentMethod(event.target.value)}
+                SelectProps={{
+                  displayEmpty: true,
+                  renderValue: (selected) => selected || 'Select payment method',
+                }}
+                sx={fieldSx}
+              >
+                <MenuItem value="" disabled>Select payment method</MenuItem>
                 {paymentOptions.map((method) => <MenuItem key={method} value={method}>{method}</MenuItem>)}
               </TextField>
             </LabelField>

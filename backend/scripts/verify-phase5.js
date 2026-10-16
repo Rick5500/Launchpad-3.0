@@ -430,7 +430,26 @@ async function keepOwnerEdits() {
   console.log('PASS init keeps owner field edits');
 }
 
+function assertReservedFieldKeys() {
+  const { validateLineFields, parseFieldPayload } = require('../serviceFields');
+  const inherited = validateLineFields([
+    { key: 'constructor', label: 'Constructor', type: 'text', required: 1, is_active: 1 },
+  ], {}, 'line item 1');
+  assert(
+    inherited.error && /Constructor is required/.test(inherited.error) && !/must be a string/.test(inherited.error),
+    `a constructor field must not read the inherited function: ${inherited.error}`
+  );
+  for (const key of ['constructor', 'prototype', '__proto__']) {
+    const rejected = parseFieldPayload({
+      fields: [{ key, label: 'Bad', type: 'text', required: false, is_active: true, sort_order: 10 }],
+    });
+    assert(rejected.error && /key is reserved/.test(rejected.error), `${key} should be reserved: ${rejected.error}`);
+  }
+  console.log('PASS reserved field keys');
+}
+
 async function main() {
+  assertReservedFieldKeys();
   await migrateOldDatabase();
   await keepOwnerEdits();
   const server = startServer();
@@ -597,10 +616,13 @@ async function main() {
     const saved = await request({ method: 'PUT', path: `/api/services/${large.id}/fields`, token: admin.token, json: deactivated });
     assert(saved.status === 200, `admin field save failed: ${saved.text}`);
     const activity = await db.get(
-      `SELECT actor_id FROM activity_log WHERE action = 'service.fields_updated' AND entity_id = ? ORDER BY id DESC LIMIT 1`,
+      `SELECT actor_id, detail FROM activity_log WHERE action = 'service.fields_updated' AND entity_id = ? ORDER BY id DESC LIMIT 1`,
       [large.id]
     );
     assert(activity && activity.actor_id === admin.user.id, 'field edits should be activity-logged for the admin');
+    const activityDetail = JSON.parse(activity.detail);
+    assert(/See Note/.test(activityDetail.message) && /removed options/.test(activityDetail.message), `field activity should summarize the option change: ${activity.detail}`);
+    assert(activityDetail.message.length <= 400, 'field activity summary should stay short');
     const rejected = await request({
       method: 'POST',
       path: '/api/orders',
@@ -711,6 +733,55 @@ async function main() {
       json: orderBody(large.id, { return_to: 'To Me', delivery_method: 'Will Call', due_time: '08:00' }),
     });
     assert(toMe.status === 201 && toMe.json.order.return_to === 'To Me' && toMe.json.order.delivery_method === 'Will Call', toMe.text);
+
+    const shipFieldsResponse = await request({ method: 'GET', path: `/api/services/${ship.id}/fields`, token: admin.token });
+    assert(shipFieldsResponse.status === 200, shipFieldsResponse.text);
+    const courierFields = {
+      fields: cloneFields(shipFieldsResponse.json.fields).map((field) => {
+        if (field.key !== 'via') return field;
+        return { ...field, options: [...field.options, { value: 'Courier', active: true }] };
+      }),
+    };
+    const courierSave = await request({
+      method: 'PUT',
+      path: `/api/services/${ship.id}/fields`,
+      token: admin.token,
+      json: courierFields,
+    });
+    assert(courierSave.status === 400 && /Courier/.test(courierSave.json.error) && /does not map/.test(courierSave.json.error), courierSave.text);
+    const viaRow = await db.get(
+      `SELECT id, options_json FROM service_fields WHERE service_id = ? AND key = 'via'`,
+      [ship.id]
+    );
+    const courierOptions = JSON.parse(viaRow.options_json);
+    courierOptions.push({ value: 'Courier', active: true });
+    await db.run('UPDATE service_fields SET options_json = ? WHERE id = ?', [JSON.stringify(courierOptions), viaRow.id]);
+    const unmappedShip = orderBody(ship.id, {
+      line_items: [{ description: 'Courier stop', service_id: ship.id, field_values: { ...shipFields('Courier'), via: 'Courier' } }],
+    });
+    delete unmappedShip.delivery_method;
+    const unmappedOrder = await request({ method: 'POST', path: '/api/orders', token: customer.token, json: unmappedShip });
+    assert(unmappedOrder.status === 400 && /Via Courier does not map/.test(unmappedOrder.json.error), unmappedOrder.text);
+    const explicitMethod = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customer.token,
+      json: orderBody(ship.id, {
+        delivery_method: 'Accent Truck',
+        line_items: [{ description: 'Courier with method', service_id: ship.id, field_values: { ...shipFields('Courier'), via: 'Courier' } }],
+      }),
+    });
+    assert(explicitMethod.status === 201 && explicitMethod.json.order.delivery_method === 'Accent Truck', explicitMethod.text);
+    courierOptions.pop();
+    await db.run('UPDATE service_fields SET options_json = ? WHERE id = ?', [JSON.stringify(courierOptions), viaRow.id]);
+
+    const reservedKey = await request({
+      method: 'PUT',
+      path: `/api/services/${large.id}/fields`,
+      token: admin.token,
+      json: { fields: [{ key: 'constructor', label: 'Bad', type: 'text', required: false, is_active: true, sort_order: 10 }] },
+    });
+    assert(reservedKey.status === 400 && /key is reserved/.test(reservedKey.json.error), reservedKey.text);
 
     const archive = byName['Archive File Request'];
     const archived = await request({

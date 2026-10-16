@@ -5,6 +5,16 @@ const { parseText, parseBool, parseInteger } = require('./fields');
 
 const FIELD_TYPES = new Set(['text', 'select', 'number', 'checkbox', 'textarea']);
 const KEY_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
+const RESERVED_KEYS = new Set([
+  '__proto__',
+  'constructor',
+  'hasownproperty',
+  'prototype',
+  'tostring',
+  'valueof',
+]);
+const SHIP_TO_SERVICE_NAME = 'Ship To (3rd Party)';
+const ACTIVITY_MESSAGE_MAX = 400;
 const STATE_PATTERN = /^[A-Za-z][A-Za-z .'-]{0,39}$/;
 const ZIP_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 -]{1,19}$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -295,6 +305,11 @@ function parseOneField(field, raw, label) {
   return { value: parsed.value, keep: true };
 }
 
+function ownValue(raw, key) {
+  if (!raw || !Object.prototype.hasOwnProperty.call(raw, key)) return undefined;
+  return raw[key];
+}
+
 function validateLineFields(definitions, raw, lineLabel) {
   const active = (definitions || []).filter((row) => row.is_active !== 0);
   if (raw == null) raw = {};
@@ -303,13 +318,13 @@ function validateLineFields(definitions, raw, lineLabel) {
   }
   const byKey = new Map(active.map((row) => [row.key, row]));
   for (const key of Object.keys(raw)) {
-    if (!KEY_PATTERN.test(key) || !byKey.has(key)) {
+    if (!KEY_PATTERN.test(key) || RESERVED_KEYS.has(String(key).toLowerCase()) || !byKey.has(key)) {
       return { error: `${lineLabel} field ${key} is not used by this service` };
     }
   }
   const values = {};
   for (const field of active) {
-    const parsed = parseOneField(field, raw[field.key], `${lineLabel} ${field.label}`);
+    const parsed = parseOneField(field, ownValue(raw, field.key), `${lineLabel} ${field.label}`);
     if (parsed.error) return parsed;
     if (parsed.omit) continue;
     values[field.key] = parsed.value;
@@ -454,6 +469,7 @@ function parseFieldPayload(body) {
     if (!row || typeof row !== 'object' || Array.isArray(row)) return { error: `${prefix} is invalid` };
     const key = parseText(row.key, `${prefix} key`, { required: true, max: 32 });
     if (key.error) return key;
+    if (RESERVED_KEYS.has(key.value.toLowerCase())) return { error: `${prefix} key is reserved` };
     if (!KEY_PATTERN.test(key.value)) return { error: `${prefix} key must be lowercase letters, digits, and underscores` };
     if (keys.has(key.value)) return { error: `${prefix} key is duplicated` };
     keys.add(key.value);
@@ -509,6 +525,70 @@ async function listServiceFields(serviceId, includeInactive) {
   return rows.map((row) => presentField(row, includeInactive));
 }
 
+function activeOptionNames(options) {
+  return (options || []).filter((option) => option && option.active !== false && option.active !== 0).map((option) => option.value);
+}
+
+function clipText(value, max) {
+  const text = String(value || '');
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(0, max - 3))}...`;
+}
+
+function unmappedViaOptions(fields) {
+  const via = (fields || []).find((field) => field.key === 'via' && field.type === 'select' && field.isActive);
+  if (!via) return [];
+  return via.options.filter((option) => option.active && !methodFromVia(option.value)).map((option) => option.value);
+}
+
+function fieldChangeSummary(serviceName, beforeRows, afterFields) {
+  const before = new Map((beforeRows || []).map((row) => [row.key, row]));
+  const afterKeys = new Set(afterFields.map((field) => field.key));
+  const added = [];
+  const removed = [];
+  const changed = [];
+  for (const field of afterFields) {
+    const previous = before.get(field.key);
+    if (!previous) {
+      if (field.isActive) added.push(field.key);
+      continue;
+    }
+    const notes = [];
+    const wasActive = previous.is_active !== 0;
+    if (wasActive && !field.isActive) removed.push(field.key);
+    else if (!wasActive && field.isActive) notes.push('activated');
+    if (previous.label !== field.label) notes.push(`label "${previous.label}" to "${field.label}"`);
+    if (previous.type !== field.type) notes.push(`type ${previous.type} to ${field.type}`);
+    if ((previous.required !== 0) !== field.required) notes.push(field.required ? 'required' : 'optional');
+    if (field.type === 'select' || previous.type === 'select') {
+      const oldNames = activeOptionNames(parseStoredOptions(previous.options_json));
+      const newNames = field.type === 'select' ? activeOptionNames(field.options) : [];
+      const addedOptions = newNames.filter((name) => !oldNames.includes(name));
+      const removedOptions = oldNames.filter((name) => !newNames.includes(name));
+      if (addedOptions.length) notes.push(`added options ${addedOptions.slice(0, 8).join(', ')}`);
+      if (removedOptions.length) notes.push(`removed options ${removedOptions.slice(0, 8).join(', ')}`);
+    }
+    if (notes.length) changed.push(`${field.key}: ${notes.join('; ')}`);
+  }
+  for (const row of beforeRows || []) {
+    if (afterKeys.has(row.key) || row.is_active === 0) continue;
+    removed.push(row.key);
+  }
+  const parts = [];
+  if (added.length) parts.push(`Added ${added.slice(0, 12).join(', ')}`);
+  if (removed.length) parts.push(`Removed ${removed.slice(0, 12).join(', ')}`);
+  if (changed.length) parts.push(`Changed ${changed.slice(0, 8).join('. ')}`);
+  const summary = parts.length
+    ? `Updated line item fields for ${serviceName}. ${parts.join('. ')}`
+    : `Updated line item fields for ${serviceName}`;
+  return {
+    added: added.slice(0, 12),
+    removed: removed.slice(0, 12),
+    changed: changed.slice(0, 8),
+    message: clipText(summary, ACTIVITY_MESSAGE_MAX),
+  };
+}
+
 async function replaceServiceFields(actorId, serviceId, body) {
   const parsedId = parseInteger(serviceId, 'id', { min: 1, max: Number.MAX_SAFE_INTEGER, required: true });
   if (parsedId.error || !parsedId.value) throw httpError(400, 'id must be a positive integer');
@@ -516,8 +596,17 @@ async function replaceServiceFields(actorId, serviceId, body) {
   if (parsed.error) throw httpError(400, parsed.error);
   const service = await get('SELECT id, name FROM services WHERE id = ?', [parsedId.value]);
   if (!service) throw httpError(404, 'Service not found');
+  if (service.name === SHIP_TO_SERVICE_NAME) {
+    const unmapped = unmappedViaOptions(parsed.value);
+    if (unmapped.length) {
+      throw httpError(400, `Ship To Via ${unmapped.join(', ')} does not map to a delivery method. Use Pickup at Accent, Accent Truck, Ground, 1 day, or 2 day.`);
+    }
+  }
   await withTransaction(async (tx) => {
-    const existing = await tx.all('SELECT id, key FROM service_fields WHERE service_id = ?', [service.id]);
+    const existing = await tx.all(
+      'SELECT id, key, label, type, options_json, required, is_active FROM service_fields WHERE service_id = ?',
+      [service.id]
+    );
     const byKey = new Map(existing.map((row) => [row.key, row]));
     const seen = new Set();
     for (const field of parsed.value) {
@@ -547,10 +636,13 @@ async function replaceServiceFields(actorId, serviceId, body) {
         [row.id]
       );
     }
+    const summary = fieldChangeSummary(service.name, existing, parsed.value);
     await activityLog.recordOn(tx, actorId, 'service.fields_updated', 'service', service.id, {
       name: service.name,
-      keys: parsed.value.map((field) => field.key),
-      message: `Updated line item fields for ${service.name}`,
+      added: summary.added,
+      removed: summary.removed,
+      changed: summary.changed,
+      message: summary.message,
     });
   });
   return {

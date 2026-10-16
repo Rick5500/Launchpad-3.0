@@ -20,6 +20,7 @@ All notable changes to this project will be documented in this file.
 - Optional Bill To person and company address, shown on the order and the print sheet when present. Customers can prefill from their own earlier Bill To entries
 - Return `To Me` or `See ShipTo`. Selecting Ship To (3rd Party) defaults return to See ShipTo. An omitted delivery method then follows the first recipient's Via
 - `backend/scripts/verify-phase5.js` for field validation, the admin editor, payment, Bill To, legacy rows, and concurrent saves
+- The order form starts with no payment method selected. Service field edits record a short added, removed, and changed summary. Ship To Via options must map to Will Call, Accent Truck, or UPS, and an unmapped Via names itself in the error. Field keys cannot be constructor, prototype, or __proto__
 - Line-item finishing on the order form (None, Grommets, Easel, Cut/Trim, Velcro, Print Hanger, Framing, See Notes). The value is stored on the line and printed. None is stored blank and prints as `Finishing: None`
 - Required project name on order create. Orders that already have no project name still load and print
 - A line item for each selected service. Archive File Request can instead be described in Notes. Ship To (3rd Party) can instead be described in Ship To. An empty service returns HTTP 400 naming that service

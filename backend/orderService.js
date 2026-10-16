@@ -828,7 +828,13 @@ async function createOrder(user, body, now = new Date()) {
     if (!deliveryMethodName && returnTo === RETURN_SEE_SHIP) {
       const shipService = services.find((service) => service.name === SHIP_TO_SERVICE);
       const firstShip = lineItems.find((item) => item.serviceId === shipService.id);
-      deliveryMethodName = firstShip ? methodFromVia(firstShip.fieldValues && firstShip.fieldValues.via) : null;
+      const via = firstShip && firstShip.fieldValues ? firstShip.fieldValues.via : null;
+      if (via) {
+        deliveryMethodName = methodFromVia(via);
+        if (!deliveryMethodName) {
+          throw new OrderError(`Ship To Via ${via} does not map to a delivery method. Choose a delivery method, or use Pickup at Accent, Accent Truck, Ground, 1 day, or 2 day.`);
+        }
+      }
     }
     if (!deliveryMethodName) throw new OrderError('delivery_method is required');
     if (retiredDeliveryMethod(deliveryMethodName)) {
