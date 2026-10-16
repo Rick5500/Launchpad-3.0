@@ -5,10 +5,26 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Heavy mixed load no longer stalls scans. The server raises libuv's thread pool to 32 when unset, and barcode inserts, stage updates, and notification writes wait on the same writer queue as other transactions
+- Creating customers with the same display name at the same time no longer fails the unique username constraint. The name is reserved inside the create transaction
+- Admin writes no longer share one SQLite transaction. Concurrent user, settings, and notification updates each take a queued connection, and the last-admin check runs inside that transaction
+- Creating a customer from the older customers API records activity and uses the same username rules as the Users page. Customer lookup omits deactivated accounts
+- Passwords longer than 72 bytes are rejected. Init does not restore a barcode location an admin deleted
 - Staff cannot save a work order number that Code 128 cannot draw. `external_id` must be 1 to 80 printable ASCII characters, or be left blank. A value already stored that cannot be encoded prints "barcode unavailable" instead of failing that sheet or the rest of the order
 - A barcode scan that moves a department writes the scan, the department change, production history, and the activity row in one transaction
 
 ### Added
+- Services admin page and `/api/services` to list, create, edit, and deactivate services, including suffix mode, department routing, and default turnaround. Deactivated services leave the order form; existing orders keep their work orders
+- Users admin page and `/api/users` to list, create, edit, and deactivate staff and customer accounts, change role, and reset a password through the existing reset flow. Password hashes are not returned. An admin cannot demote or deactivate themselves or the last active administrator
+- System Settings for company letterhead, due-soon hours, and the last backup timestamp. Delivery cutoffs, timezone, the order window, and upload limits stay read-only from the environment
+- Printable work order letterhead read from those settings, with the Accent Imaging mockup values as the defaults
+- Admin toggles for in-app notification events. Email notification rows stay locked off
+- Filterable, searchable, paginated Activity Log with CSV export
+- Barcode Settings for the location-to-department and stage map, plus an admin dry run that writes nothing and links to the printable work order
+- Search Orders for admin and operator, with paginated results that link to the order, the work order, and the print view
+- Reports sidebar group for the existing report pages
+- `users.is_active`, service code and suffix fields, and `barcode_locations`, added by `schema.sql` and by an idempotent `init_db.js` pass
+- `backend/scripts/verify-phase4.js` for roles, validation, last-admin protection, settings, activity writes, search, and the barcode dry run
 - Printable work orders at `/work-orders/:id/print` and `/orders/:id/print`, linked from the Admin Board, the work order list, work order detail, and order detail
 - `GET /api/workorders/:id/print` and `GET /api/orders/:id/print` for the signed-in user. Customers receive only their own orders and work orders (HTTP 404 otherwise) and do not receive staff history notes or scanner names
 - Code 128 SVG of the work order number, including `-A`, `-B`, and `-C`, drawn with `jsbarcode`. Scanning that number with `POST /api/barcode` resolves the work order
@@ -20,7 +36,6 @@ All notable changes to this project will be documented in this file.
 - Admin-only `POST /api/admin-board/approvals/:id` to approve or reject a pending request, recording `approval_by`, `approval_at`, and an activity row
 - Activity rows when a work order is created, moved to another department, or completed, including a department move when a barcode location matches a department name
 - `barcode_events.from_department` and `barcode_events.to_department`, filled in when a scan is recorded
-- Placeholder pages for Search Orders, Services, Users, System Settings, Activity Log, and Barcode Settings
 - Customer order intake: `orders`, `services`, `order_line_items`, `order_files`, `delivery_methods`, and a daily `order_sequences` counter (`YYYYMMDD-NNN`, work orders suffixed `-A`, `-B`, `-C`)
 - `POST /api/orders`, `GET /api/orders`, and `GET /api/orders/:id` for admin, operator, and customer, with customers limited to their own orders
 - Multipart uploads at `POST /api/uploads` with type and size limits, random stored names under `UPLOAD_DIR`, and authenticated download and delete
@@ -60,8 +75,11 @@ All notable changes to this project will be documented in this file.
 - `CHANGELOG.md` file
 
 ### Changed
+- The printable work order uses the letterhead stored in system settings
+- Operators can open Search Orders and the Reports menu. Services, Users, System Settings, Activity Log, and Barcode Settings stay admin-only
+- A barcode scan uses `barcode_locations` when that table has any row. An empty table still uses `BARCODE_LOCATION_STAGES` and a department-name match
 - Admin and operator land on the Admin Board instead of the earlier home dashboard. Customers still open the order form
-- The staff sidebar follows the admin mockup. Operators see only Admin Board, Create Order, Reports, and Notifications
+- The staff sidebar follows the admin mockup. Operators see Admin Board, Create Order, Search Orders, Reports, and Notifications
 - A barcode scan whose location names a department moves that work order. Scanning into Complete also marks it completed. Other locations keep the existing production-stage map
 - Editing a work order's department updates `next_department` from the department route when that department exists
 - The due-soon window defaults to 1 hour. `DUE_SOON_HOURS` defaults to 1, and `DELIVERY_DUE_SOON_MINUTES` defaults to 60. When the minutes setting is unset, notifications use the delivery-list window

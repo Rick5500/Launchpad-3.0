@@ -2,6 +2,7 @@ const db = require('./db');
 const { getOrder } = require('./orderService');
 const { orderWindow } = require('./deliveryRules');
 const { code128Svg } = require('./barcodeSvg');
+const { loadLetterhead, DEFAULT_NAME, DEFAULT_ADDRESS, DEFAULT_PHONE, addressLines } = require('./shopProfile');
 
 const SCAN_INSTRUCTIONS = [
   'Scan this barcode at each department.',
@@ -9,11 +10,11 @@ const SCAN_INSTRUCTIONS = [
   'Keep work order with the job at all times.',
 ];
 
-// Letterhead from the owner's work order mockup. Phase 4 can move this into system settings.
+// Defaults match the owner's work order mockup. Printed sheets read system_settings.
 const SHOP = {
-  name: 'Accent Imaging, Inc.',
-  address_lines: ['8121 Brownleigh Drive', 'Raleigh, NC 27617'],
-  phone: '919-782-3332',
+  name: DEFAULT_NAME,
+  address_lines: addressLines(DEFAULT_ADDRESS),
+  phone: DEFAULT_PHONE,
 };
 
 function get(sql, params = []) {
@@ -301,15 +302,16 @@ async function buildSheet(workOrderId, viewer) {
   };
 }
 
-function envelope(kind, orderId, orderNumber, sheets, viewer) {
+function envelope(kind, orderId, orderNumber, sheets, viewer, shop) {
+  const letterhead = shop || SHOP;
   return {
     kind,
     order_id: orderId || null,
     order_number: orderNumber || null,
     shop: {
-      name: SHOP.name,
-      address_lines: SHOP.address_lines.slice(),
-      phone: SHOP.phone,
+      name: letterhead.name,
+      address_lines: (letterhead.address_lines || []).slice(),
+      phone: letterhead.phone,
     },
     scan_instructions: SCAN_INSTRUCTIONS.slice(),
     delivery_window_label: deliveryWindowLabel(),
@@ -324,7 +326,8 @@ async function printForWorkOrder(viewer, rawId) {
   if (!id) throw httpError(400, 'id must be a positive integer');
   const sheet = await buildSheet(id, viewer);
   if (!sheet) return null;
-  return envelope('work_order', sheet.order_id, sheet.order_number, [sheet], viewer);
+  const shop = await loadLetterhead();
+  return envelope('work_order', sheet.order_id, sheet.order_number, [sheet], viewer, shop);
 }
 
 async function printForOrder(viewer, rawId) {
@@ -335,7 +338,8 @@ async function printForOrder(viewer, rawId) {
     const sheet = await buildSheet(workOrder.id, viewer);
     if (sheet) sheets.push(sheet);
   }
-  return envelope('order', order.id, order.order_number, sheets, viewer);
+  const shop = await loadLetterhead();
+  return envelope('order', order.id, order.order_number, sheets, viewer, shop);
 }
 
 module.exports = {

@@ -1,19 +1,10 @@
-const sqlite3 = require('sqlite3').verbose();
 const db = require('./db');
+const { withTransaction } = require('./dbAsync');
 const {
   businessToday,
   validateOrderDue,
 } = require('./deliveryRules');
-const { BUSY_TIMEOUT_MS, BUSY_ATTEMPTS, isBusyError, delay, backoffMs } = require('./sqliteBusy');
 const activityLog = require('./activityLog');
-
-let transactionQueue = Promise.resolve();
-
-function enqueueTransaction(task) {
-  const run = transactionQueue.then(task, task);
-  transactionQueue = run.then(() => {}, () => {});
-  return run;
-}
 
 const CUSTOMER_FORBIDDEN_FIELDS = [
   'status',
@@ -61,69 +52,6 @@ function getOn(conn, sql, params = []) {
 function allOn(conn, sql, params = []) {
   return new Promise((resolve, reject) => {
     conn.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows || [])));
-  });
-}
-
-function openTransactionConnection() {
-  return new Promise((resolve, reject) => {
-    const conn = new sqlite3.Database(db.filePath, (openErr) => {
-      if (openErr) {
-        reject(openErr);
-        return;
-      }
-      conn.configure('busyTimeout', BUSY_TIMEOUT_MS);
-      conn.run(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`, (pragmaErr) => {
-        if (pragmaErr) {
-          conn.close(() => reject(pragmaErr));
-          return;
-        }
-        resolve(conn);
-      });
-    });
-  });
-}
-
-async function withTransactionOnce(fn) {
-  const conn = await openTransactionConnection();
-  const tx = {
-    run: (sql, params) => runOn(conn, sql, params),
-    get: (sql, params) => getOn(conn, sql, params),
-    all: (sql, params) => allOn(conn, sql, params),
-  };
-  const close = () => new Promise((resolve) => conn.close(() => resolve()));
-
-  try {
-    await tx.run('BEGIN IMMEDIATE');
-  } catch (beginErr) {
-    await close();
-    throw beginErr;
-  }
-
-  try {
-    const result = await fn(tx);
-    await tx.run('COMMIT');
-    await close();
-    return result;
-  } catch (err) {
-    try { await tx.run('ROLLBACK'); } catch (rollbackErr) { /* already aborted */ }
-    await close();
-    throw err;
-  }
-}
-
-function withTransaction(fn) {
-  return enqueueTransaction(async () => {
-    let lastErr;
-    for (let attempt = 0; attempt < BUSY_ATTEMPTS; attempt += 1) {
-      try {
-        return await withTransactionOnce(fn);
-      } catch (err) {
-        lastErr = err;
-        if (!isBusyError(err) || attempt + 1 >= BUSY_ATTEMPTS) throw err;
-        await delay(backoffMs(attempt));
-      }
-    }
-    throw lastErr;
   });
 }
 
@@ -196,6 +124,27 @@ function suffixForIndex(index) {
     n = Math.floor(n / 26);
   }
   return label;
+}
+
+function suffixForService(service, index) {
+  const mode = String(service.suffix_mode || 'sequence').trim().toLowerCase();
+  if (mode === 'code') {
+    const code = String(service.code || '').trim();
+    if (!/^[A-Za-z0-9]{1,12}$/.test(code)) {
+      throw new OrderError(`Service ${service.name} has no code for its work order suffix`);
+    }
+    return code;
+  }
+  return suffixForIndex(index);
+}
+
+function suffixesFor(services) {
+  const suffixes = services.map((service, index) => suffixForService(service, index));
+  const keys = suffixes.map((suffix) => suffix.toLowerCase());
+  if (new Set(keys).size !== keys.length) {
+    throw new OrderError('Work order suffixes must be unique. Adjust service codes or suffix mode.');
+  }
+  return suffixes;
 }
 
 function leadingQuantity(value) {
@@ -515,10 +464,10 @@ async function createOrder(user, body, now = new Date()) {
 
   const orderId = await withTransaction(async (tx) => {
     const customer = await tx.get(
-      'SELECT id, role FROM users WHERE id = ?',
+      'SELECT id, role, is_active FROM users WHERE id = ?',
       [customerId]
     );
-    if (!customer || customer.role !== 'customer') {
+    if (!customer || customer.role !== 'customer' || customer.is_active === 0) {
       throw new OrderError('customer_id must be an existing customer', 400);
     }
 
@@ -531,7 +480,7 @@ async function createOrder(user, body, now = new Date()) {
 
     const placeholders = serviceIds.map(() => '?').join(', ');
     const services = await tx.all(
-      `SELECT id, name, description, department_name, sort_order, requires_approval
+      `SELECT id, name, description, department_name, sort_order, requires_approval, code, suffix_mode
        FROM services
        WHERE is_active = 1 AND id IN (${placeholders})
        ORDER BY sort_order, id`,
@@ -618,9 +567,10 @@ async function createOrder(user, body, now = new Date()) {
     }
 
     const createdWorkOrders = [];
+    const suffixes = suffixesFor(services);
     for (let index = 0; index < services.length; index += 1) {
       const service = services[index];
-      const externalId = `${orderNumber}-${suffixForIndex(index)}`;
+      const externalId = `${orderNumber}-${suffixes[index]}`;
       const existing = await tx.get('SELECT id FROM work_orders WHERE external_id = ?', [externalId]);
       if (existing) throw new OrderError('Could not assign a work order number', 409);
 
@@ -810,7 +760,8 @@ async function getOrder(user, id) {
 async function orderOptions() {
   const services = await allOn(
     db,
-    `SELECT id, name, description, department_name, sort_order, requires_approval
+    `SELECT id, name, description, department_name, sort_order, requires_approval,
+            code, suffix_mode, default_turnaround_hours
      FROM services
      WHERE is_active = 1
      ORDER BY sort_order, id`
@@ -861,7 +812,7 @@ async function previewOrder(query, now = new Date()) {
     const placeholders = serviceIds.map(() => '?').join(', ');
     services = await allOn(
       db,
-      `SELECT id, name, department_name, sort_order
+      `SELECT id, name, department_name, sort_order, code, suffix_mode
        FROM services
        WHERE is_active = 1 AND id IN (${placeholders})
        ORDER BY sort_order, id`,
@@ -872,11 +823,11 @@ async function previewOrder(query, now = new Date()) {
   return {
     provisional: true,
     order_number: orderNumber,
-    work_orders: services.map((service, index) => ({
-      external_id: `${orderNumber}-${suffixForIndex(index)}`,
-      service_id: service.id,
-      service_name: service.name,
-      department: service.department_name,
+    work_orders: suffixesFor(services).map((suffix, index) => ({
+      external_id: `${orderNumber}-${suffix}`,
+      service_id: services[index].id,
+      service_name: services[index].name,
+      department: services[index].department_name,
     })),
   };
 }

@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Box,
+  Collapse,
   Drawer,
   List,
   ListItemButton,
@@ -30,18 +31,27 @@ import NotificationsIcon from '@mui/icons-material/Notifications';
 import HistoryIcon from '@mui/icons-material/History';
 import QrCode2Icon from '@mui/icons-material/QrCode2';
 import LogoutIcon from '@mui/icons-material/Logout';
+import ExpandLess from '@mui/icons-material/ExpandLess';
+import ExpandMore from '@mui/icons-material/ExpandMore';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import { brand } from '../brand';
 import NotificationBell from './NotificationBell';
+import { REPORT_NAV } from '../reportCatalog';
 
 const drawerWidth = 240;
 
 const staffNav = [
   { title: 'Admin Board', route: '/', icon: <DashboardIcon />, roles: ['admin', 'operator'] },
   { title: 'Create Order', route: '/order', icon: <NoteAddIcon />, roles: ['admin', 'operator'] },
-  { title: 'Search Orders', route: '/search', icon: <SearchIcon />, roles: ['admin'] },
-  { title: 'Reports', route: '/reports', icon: <BarChartIcon />, roles: ['admin', 'operator'] },
+  { title: 'Search Orders', route: '/search', icon: <SearchIcon />, roles: ['admin', 'operator'] },
+  {
+    title: 'Reports',
+    route: '/reports',
+    icon: <BarChartIcon />,
+    roles: ['admin', 'operator'],
+    children: REPORT_NAV,
+  },
   { title: 'Customers', route: '/customers', icon: <PeopleIcon />, roles: ['admin'] },
   { title: 'Departments', route: '/admin/departments', icon: <BusinessIcon />, roles: ['admin'] },
   { title: 'Services', route: '/services', icon: <DesignServicesIcon />, roles: ['admin'] },
@@ -95,6 +105,11 @@ export default function Layout({ user, onLogout }) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [reportsOpen, setReportsOpen] = useState(() => location.pathname.startsWith('/reports'));
+
+  useEffect(() => {
+    if (location.pathname.startsWith('/reports')) setReportsOpen(true);
+  }, [location.pathname]);
   const initials = (user?.display_name || user?.username || 'U').charAt(0).toUpperCase();
   const welcomeName = user?.display_name || user?.username || 'User';
   const items = (user?.role === 'customer' ? customerNav : staffNav)
@@ -118,17 +133,62 @@ export default function Layout({ user, onLogout }) {
       <List sx={{ px: 1, flex: 1, overflow: 'auto' }}>
         {items.map((item) => {
           const active = isActive(item.route, location.pathname);
+          const buttonSx = {
+            color: '#fff',
+            borderRadius: 1,
+            mb: 0.5,
+            bgcolor: active ? brand.orange : 'transparent',
+            '&:hover': { bgcolor: active ? brand.orangeDark : 'rgba(255,255,255,0.08)' },
+          };
+          if (item.children) {
+            return (
+              <Box key={item.title}>
+                <ListItemButton onClick={() => go(item.route)} sx={buttonSx}>
+                  <ListItemIcon sx={{ color: '#fff', minWidth: 40 }}>{item.icon}</ListItemIcon>
+                  <ListItemText primary={item.title} primaryTypographyProps={{ fontSize: 14, fontWeight: active ? 700 : 500 }} />
+                  <IconButton
+                    aria-label={reportsOpen ? 'Collapse reports' : 'Expand reports'}
+                    size="small"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setReportsOpen((open) => !open);
+                    }}
+                    sx={{ color: '#fff' }}
+                  >
+                    {reportsOpen ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
+                  </IconButton>
+                </ListItemButton>
+                <Collapse in={reportsOpen} timeout="auto" unmountOnExit>
+                  <List disablePadding>
+                    {item.children.map((child) => {
+                      const childActive = location.pathname === child.route;
+                      return (
+                        <ListItemButton
+                          key={child.route}
+                          onClick={() => go(child.route)}
+                          sx={{
+                            color: '#fff',
+                            borderRadius: 1,
+                            mb: 0.25,
+                            pl: 6,
+                            bgcolor: childActive ? 'rgba(245,130,32,0.35)' : 'transparent',
+                            '&:hover': { bgcolor: 'rgba(255,255,255,0.08)' },
+                          }}
+                        >
+                          <ListItemText primary={child.title} primaryTypographyProps={{ fontSize: 13, fontWeight: childActive ? 700 : 500 }} />
+                        </ListItemButton>
+                      );
+                    })}
+                  </List>
+                </Collapse>
+              </Box>
+            );
+          }
           return (
             <ListItemButton
               key={item.title}
               onClick={() => go(item.route)}
-              sx={{
-                color: '#fff',
-                borderRadius: 1,
-                mb: 0.5,
-                bgcolor: active ? brand.orange : 'transparent',
-                '&:hover': { bgcolor: active ? brand.orangeDark : 'rgba(255,255,255,0.08)' },
-              }}
+              sx={buttonSx}
             >
               <ListItemIcon sx={{ color: '#fff', minWidth: 40 }}>{item.icon}</ListItemIcon>
               <ListItemText primary={item.title} primaryTypographyProps={{ fontSize: 14, fontWeight: active ? 700 : 500 }} />

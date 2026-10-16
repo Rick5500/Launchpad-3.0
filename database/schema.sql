@@ -15,7 +15,9 @@ CREATE TABLE IF NOT EXISTS users (
   contact_name TEXT,
   phone TEXT,
   email TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  is_active INTEGER DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME
 );
 
 CREATE TABLE IF NOT EXISTS departments (
@@ -49,7 +51,11 @@ CREATE TABLE IF NOT EXISTS services (
   sort_order INTEGER DEFAULT 0,
   is_active INTEGER DEFAULT 1,
   requires_approval INTEGER DEFAULT 0, -- phase 4 pending approvals (archive file requests)
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  code TEXT, -- short service code, used as the work order suffix when suffix_mode is code
+  suffix_mode TEXT DEFAULT 'sequence', -- sequence (A/B/C by sort) or code
+  default_turnaround_hours INTEGER,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME
 );
 
 CREATE TABLE IF NOT EXISTS delivery_methods (
@@ -196,6 +202,19 @@ CREATE TABLE IF NOT EXISTS barcode_events (
   FOREIGN KEY(stage_id) REFERENCES production_stages(id)
 );
 
+-- Location names the scan endpoint maps to a department move and/or a production stage.
+-- Seeded from department names and BARCODE_LOCATION_STAGES. Later edits live here.
+CREATE TABLE IF NOT EXISTS barcode_locations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  location TEXT NOT NULL UNIQUE,
+  department_name TEXT,
+  stage_name TEXT,
+  sort_order INTEGER DEFAULT 0,
+  is_active INTEGER DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME
+);
+
 -- Phase 3 printable work order history. Order intake writes the "Submitted / Order Created" row.
 CREATE TABLE IF NOT EXISTS production_history (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -243,7 +262,8 @@ CREATE TABLE IF NOT EXISTS system_settings (
   updated_at DATETIME
 );
 
--- Phase 4 notification settings. Rows are seeded disabled; no mail is sent.
+-- Notification settings. Email rows stay disabled (no mail is sent).
+-- In-app rows toggle the events stored in notifications.
 CREATE TABLE IF NOT EXISTS notification_settings (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   event_key TEXT NOT NULL UNIQUE,
@@ -274,6 +294,7 @@ CREATE INDEX IF NOT EXISTS idx_activity_log_created ON activity_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_barcode_events_work_order ON barcode_events(work_order_id);
 CREATE INDEX IF NOT EXISTS idx_barcode_events_operator ON barcode_events(operator_id);
 CREATE INDEX IF NOT EXISTS idx_barcode_events_event_time ON barcode_events(event_time);
+CREATE INDEX IF NOT EXISTS idx_barcode_locations_active ON barcode_locations(is_active);
 CREATE INDEX IF NOT EXISTS idx_deliveries_work_order ON deliveries(work_order_id);
 CREATE INDEX IF NOT EXISTS idx_deliveries_due_time ON deliveries(due_time);
 CREATE INDEX IF NOT EXISTS idx_deliveries_status ON deliveries(status);

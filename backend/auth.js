@@ -89,10 +89,11 @@ function clearSession(token) {
   }
 }
 
-function clearSessionsForUser(userId) {
+function clearSessionsForUser(userId, exceptToken) {
   const target = Number(userId);
   if (!Number.isInteger(target)) return;
   for (const [token, session] of sessions) {
+    if (exceptToken && token === exceptToken) continue;
     if (Number(session.userId) === target) {
       sessions.delete(token);
     }
@@ -163,12 +164,13 @@ function clearLoginFailuresForUsername(username) {
 
 function login(username, password, cb) {
   db.get(
-    `SELECT id, username, password_hash, role, display_name, company, contact_name, phone, email
+    `SELECT id, username, password_hash, role, display_name, company, contact_name, phone, email, is_active
      FROM users WHERE username = ?`,
     [username],
     (err, row) => {
       if (err) return cb(err);
       if (!row || !row.password_hash) return cb(null, null);
+      if (row.is_active === 0) return cb(null, null);
 
       verifyPassword(password, row.password_hash)
         .then((matches) => {

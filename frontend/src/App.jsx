@@ -3,6 +3,12 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider, CssBaseline, Box, Typography, TextField, Button, CircularProgress, Alert } from '@mui/material';
 import AdminBoard from './routes/AdminBoard';
 import PlaceholderPage from './routes/PlaceholderPage';
+import SearchOrders from './routes/SearchOrders';
+import ServicesPage from './routes/ServicesPage';
+import UsersPage from './routes/UsersPage';
+import SystemSettingsPage from './routes/SystemSettingsPage';
+import ActivityLogPage from './routes/ActivityLogPage';
+import BarcodeSettingsPage from './routes/BarcodeSettingsPage';
 import WorkOrdersList from './routes/WorkOrdersList';
 import WorkOrderDetail from './routes/WorkOrderDetail';
 import WorkOrderForm from './routes/WorkOrderForm';
@@ -130,13 +136,14 @@ function AppRoutes() {
         <Route path="customers" element={<ProtectedRoute roles={['admin']}><Customers /></ProtectedRoute>} />
         <Route path="delivery" element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><Deliveries /></ProtectedRoute>} />
         <Route path="reports" element={<ProtectedRoute roles={['admin', 'operator']}><Reports /></ProtectedRoute>} />
+        <Route path="reports/:reportId" element={<ProtectedRoute roles={['admin', 'operator']}><Reports /></ProtectedRoute>} />
         <Route path="notifications" element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><Notifications /></ProtectedRoute>} />
-        <Route path="search" element={<ProtectedRoute roles={['admin']}><PlaceholderPage title="Search Orders" /></ProtectedRoute>} />
-        <Route path="services" element={<ProtectedRoute roles={['admin']}><PlaceholderPage title="Services" /></ProtectedRoute>} />
-        <Route path="users" element={<ProtectedRoute roles={['admin']}><PlaceholderPage title="Users" /></ProtectedRoute>} />
-        <Route path="settings" element={<ProtectedRoute roles={['admin']}><PlaceholderPage title="System Settings" /></ProtectedRoute>} />
-        <Route path="activity-log" element={<ProtectedRoute roles={['admin']}><PlaceholderPage title="Activity Log" /></ProtectedRoute>} />
-        <Route path="barcode-settings" element={<ProtectedRoute roles={['admin']}><PlaceholderPage title="Barcode Settings" /></ProtectedRoute>} />
+        <Route path="search" element={<ProtectedRoute roles={['admin', 'operator']}><SearchOrders /></ProtectedRoute>} />
+        <Route path="services" element={<ProtectedRoute roles={['admin']}><ServicesPage /></ProtectedRoute>} />
+        <Route path="users" element={<ProtectedRoute roles={['admin']}><UsersPage /></ProtectedRoute>} />
+        <Route path="settings" element={<ProtectedRoute roles={['admin']}><SystemSettingsPage /></ProtectedRoute>} />
+        <Route path="activity-log" element={<ProtectedRoute roles={['admin']}><ActivityLogPage /></ProtectedRoute>} />
+        <Route path="barcode-settings" element={<ProtectedRoute roles={['admin']}><BarcodeSettingsPage /></ProtectedRoute>} />
         <Route path="admin" element={<ProtectedRoute roles={['admin']}><PlaceholderPage title="Admin" /></ProtectedRoute>} />
         <Route path="admin/departments" element={<ProtectedRoute roles={['admin']}><DepartmentsAdmin /></ProtectedRoute>} />
       </Route>
