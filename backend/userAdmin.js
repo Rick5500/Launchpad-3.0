@@ -9,6 +9,7 @@ const {
   parseBool,
   parseInteger,
   parseEmail,
+  parsePostalAddress,
   parseLimit,
   parseOffset,
   parseDirection,
@@ -26,7 +27,8 @@ const SORTS = {
   is_active: 'is_active',
 };
 
-const PUBLIC_COLUMNS = `id, username, role, display_name, company, contact_name, phone, email, is_active, created_at, updated_at`;
+const PUBLIC_COLUMNS = `id, username, role, display_name, company, contact_name, phone, email,
+  address_line1, address_line2, city, state, zip, is_active, created_at, updated_at`;
 
 function present(row) {
   return {
@@ -38,6 +40,11 @@ function present(row) {
     contact_name: row.contact_name || '',
     phone: row.phone || '',
     email: row.email || '',
+    address_line1: row.address_line1 || '',
+    address_line2: row.address_line2 || '',
+    city: row.city || '',
+    state: row.state || '',
+    zip: row.zip || '',
     is_active: row.is_active !== 0,
     created_at: row.created_at,
     updated_at: row.updated_at || null,
@@ -76,12 +83,19 @@ function parseProfile(body) {
   if (phone.error) return phone;
   const email = parseEmail(body.email, false);
   if (email.error) return email;
+  const address = parsePostalAddress(body, false);
+  if (address.error) return address;
   return {
     value: {
       company: company.value,
       contactName: contact.value,
       phone: phone.value,
       email: email.value,
+      addressLine1: address.value.addressLine1,
+      addressLine2: address.value.addressLine2,
+      city: address.value.city,
+      state: address.value.state,
+      zip: address.value.zip,
     },
   };
 }
@@ -202,8 +216,9 @@ async function createUser(actorId, body) {
     if (taken) throw httpError(409, 'Username is already in use');
     const inserted = await tx.run(
       `INSERT INTO users (
-         username, password_hash, role, display_name, company, contact_name, phone, email, is_active, created_at, updated_at
-       ) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))`,
+         username, password_hash, role, display_name, company, contact_name, phone, email,
+         address_line1, address_line2, city, state, zip, is_active, created_at, updated_at
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))`,
       [
         username.value,
         hash,
@@ -213,6 +228,11 @@ async function createUser(actorId, body) {
         profile.value.contactName,
         profile.value.phone,
         profile.value.email,
+        profile.value.addressLine1,
+        profile.value.addressLine2,
+        profile.value.city,
+        profile.value.state,
+        profile.value.zip,
         active.value,
       ]
     );
@@ -281,6 +301,7 @@ async function updateUser(actorId, id, body) {
     await tx.run(
       `UPDATE users
        SET username = ?, role = ?, display_name = ?, company = ?, contact_name = ?, phone = ?, email = ?,
+           address_line1 = ?, address_line2 = ?, city = ?, state = ?, zip = ?,
            is_active = ?, updated_at = datetime('now')
        WHERE id = ?`,
       [
@@ -291,6 +312,11 @@ async function updateUser(actorId, id, body) {
         profile.value.contactName,
         profile.value.phone,
         profile.value.email,
+        profile.value.addressLine1,
+        profile.value.addressLine2,
+        profile.value.city,
+        profile.value.state,
+        profile.value.zip,
         active.value,
         existing.id,
       ]
@@ -320,6 +346,40 @@ async function updateUser(actorId, id, body) {
   return present(row);
 }
 
+async function updateCustomerAddress(actorId, id, body) {
+  const parsedId = parseInteger(id, 'id', { min: 1, max: Number.MAX_SAFE_INTEGER, required: true });
+  if (parsedId.error || !parsedId.value) throw httpError(400, 'id must be a positive integer');
+  const address = parsePostalAddress(body || {}, false);
+  if (address.error) throw httpError(400, address.error);
+  await withTransaction(async (tx) => {
+    const existing = await tx.get(
+      `SELECT id, username, role FROM users WHERE id = ?`,
+      [parsedId.value]
+    );
+    if (!existing || existing.role !== 'customer') throw httpError(404, 'Customer not found');
+    await tx.run(
+      `UPDATE users
+       SET address_line1 = ?, address_line2 = ?, city = ?, state = ?, zip = ?, updated_at = datetime('now')
+       WHERE id = ?`,
+      [
+        address.value.addressLine1,
+        address.value.addressLine2,
+        address.value.city,
+        address.value.state,
+        address.value.zip,
+        existing.id,
+      ]
+    );
+    await activityLog.recordOn(tx, actorId, 'user.updated', 'user', existing.id, {
+      username: existing.username,
+      role: 'customer',
+      message: `Updated address for ${existing.username}`,
+    });
+  });
+  const row = await get(`SELECT ${PUBLIC_COLUMNS} FROM users WHERE id = ?`, [parsedId.value]);
+  return present(row);
+}
+
 async function resetPassword(actorId, id, body, exceptToken) {
   const parsedId = parseInteger(id, 'id', { min: 1, max: Number.MAX_SAFE_INTEGER, required: true });
   if (parsedId.error || !parsedId.value) throw httpError(400, 'id must be a positive integer');
@@ -346,6 +406,7 @@ module.exports = {
   getUser,
   createUser,
   updateUser,
+  updateCustomerAddress,
   resetPassword,
   present,
   bearerToken,

@@ -350,6 +350,8 @@ async function migrateOldDatabase() {
   assert(notifications, 'notifications table should be created on an older database');
   const orderColumns = await columnNames(check, 'orders');
   assert(orderColumns.has('ups_account_number'), 'orders.ups_account_number should be added on an older database');
+  assert(orderColumns.has('originals_source') && orderColumns.has('address_line1') && orderColumns.has('zip'), 'order originals and address columns should be added on an older database');
+  assert(userColumns.has('address_line1') && userColumns.has('city') && userColumns.has('state') && userColumns.has('zip'), 'user address columns should be added on an older database');
   const pickup = await check.get(`SELECT delivery_method, due_time, ups_account_number FROM orders WHERE order_number = 'LEGACY-PICKUP'`);
   assert(pickup && pickup.delivery_method === 'Customer Pickup' && pickup.due_time === '18:00', 'legacy Customer Pickup label and time should stay');
   assert(pickup.ups_account_number == null, 'migrated orders should leave the new account column empty');
@@ -454,6 +456,9 @@ async function initFreshTwice() {
   assert(methods.map((row) => row.name).join(',') === 'Accent Truck,UPS,Will Call', `fresh methods were ${methods.map((row) => row.name).join(',')}`);
   const orderColumns = await columnNames(db, 'orders');
   assert(orderColumns.has('ups_account_number'), 'fresh orders table should include ups_account_number');
+  assert(orderColumns.has('originals_source') && orderColumns.has('address_line1') && orderColumns.has('address_line2') && orderColumns.has('city') && orderColumns.has('state') && orderColumns.has('zip'), 'fresh orders table should include originals and address columns');
+  const freshUsers = await columnNames(db, 'users');
+  assert(freshUsers.has('address_line1') && freshUsers.has('zip'), 'fresh users table should include address columns');
   const externalIndex = await db.get(
     `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_work_orders_external_id'`
   );
@@ -525,13 +530,19 @@ function orderBody(overrides = {}) {
     project_number: '20045',
     project_name: 'New City Center',
     notes: 'Please deliver to loading dock.',
+    originals_source: 'Hardcopy or digital media provided',
+    address_line1: '1234 Builder Way',
+    address_line2: 'Suite 200',
+    city: 'Raleigh',
+    state: 'NC',
+    zip: '27601',
     delivery_method: 'Accent Truck',
     ship_to: 'Acme Construction\n1234 Builder Way\nRaleigh, NC 27601',
     attention: 'Receiving Dock',
     due_date: isoDate(utcDate(0)),
     due_time: '13:30',
     service_ids: [],
-    line_items: [],
+    line_items: [{ description: 'Default line', quantity: '1' }],
     ...overrides,
   };
 }
@@ -1133,6 +1144,9 @@ async function runApiChecks() {
     assert(legacyLoaded.status === 200 && legacyLoaded.json.order.delivery_method === 'Customer Pickup', `legacy Customer Pickup should load: ${legacyLoaded.text}`);
     assert(legacyLoaded.json.order.due_time === '18:00', 'legacy due time outside the new window should stay');
     assert(legacyLoaded.json.order.delivery_hours.start === '08:00', 'Customer Pickup should use Will Call hours');
+    assert(legacyLoaded.json.order.project_name == null, 'an older order without a project name should still load');
+    assert(legacyLoaded.json.order.originals_source == null && legacyLoaded.json.order.originals_source_label === 'Not specified', 'legacy originals should display as Not specified');
+    assert(legacyLoaded.json.order.address_line1 == null && legacyLoaded.json.order.city == null && legacyLoaded.json.order.zip == null, 'legacy address should stay blank');
     const legacyEdited = await request({
       method: 'PUT',
       path: `/api/workorders/${legacyWorkOrder.lastID}`,
@@ -1153,6 +1167,204 @@ async function runApiChecks() {
     assert(deliveryCsv.status === 200 && /ups_account_number/.test(deliveryCsv.text), `delivery CSV should include the account column: ${deliveryCsv.status} ${deliveryCsv.text.slice(0, 300)}`);
     assert(deliveryCsv.text.includes('AB-12 9'), 'delivery CSV should include the stored UPS account');
     assert(deliveryCsv.text.includes('Customer Pickup'), 'delivery CSV should keep the legacy carrier label');
+
+    const missingProject = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({ project_name: '   ', service_ids: [byName['Large Format'].id] }),
+    });
+    assert(missingProject.status === 400 && /project_name is required/.test(missingProject.json.error), `blank project name should be rejected: ${missingProject.text}`);
+    const badProject = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({ project_name: 'City\u0001Center', service_ids: [byName['Large Format'].id] }),
+    });
+    assert(badProject.status === 400 && /project_name contains invalid characters/.test(badProject.json.error), badProject.text);
+
+    const emptyLarge = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({
+        service_ids: [byName['Large Format'].id, byName['Small Format'].id],
+        line_items: [{ description: 'Only large', quantity: '1', service_id: byName['Large Format'].id }],
+      }),
+    });
+    assert(emptyLarge.status === 400 && emptyLarge.json.error === 'Small Format is empty. Please add lines or deselect it.', emptyLarge.text);
+
+    const archiveBare = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({
+        notes: '',
+        service_ids: [byName['Archive File Request'].id],
+        line_items: [],
+      }),
+    });
+    assert(archiveBare.status === 400 && /Archive File Request is empty/.test(archiveBare.json.error), archiveBare.text);
+    const archiveNotes = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({
+        notes: 'Please pull job 4421 from archive.',
+        service_ids: [byName['Archive File Request'].id],
+        line_items: [],
+      }),
+    });
+    assert(archiveNotes.status === 201 && archiveNotes.json.order.line_items.length === 0, `archive notes should satisfy the service: ${archiveNotes.text}`);
+
+    const shipBare = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({
+        ship_to: '   ',
+        service_ids: [byName['Ship To (3rd Party)'].id],
+        line_items: [],
+      }),
+    });
+    assert(shipBare.status === 400 && /Ship To \(3rd Party\) is empty/.test(shipBare.json.error), shipBare.text);
+    const shipDetails = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({
+        ship_to: 'Other Shop\n9 Dock Street',
+        service_ids: [byName['Ship To (3rd Party)'].id],
+        line_items: [],
+      }),
+    });
+    assert(shipDetails.status === 201, `ship-to details should satisfy the service: ${shipDetails.text}`);
+
+    const filesMissing = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({
+        originals_source: 'Files attached below',
+        service_ids: [byName['Large Format'].id],
+      }),
+    });
+    assert(filesMissing.status === 400 && /Attach at least one file/.test(filesMissing.json.error), filesMissing.text);
+    const badOriginals = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({ originals_source: 'Email me the files', service_ids: [byName['Large Format'].id] }),
+    });
+    assert(badOriginals.status === 400 && /originals_source must be one of/.test(badOriginals.json.error), badOriginals.text);
+    const badZip = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({ zip: '=1+1', service_ids: [byName['Large Format'].id] }),
+    });
+    assert(badZip.status === 400 && /zip is invalid/.test(badZip.json.error), badZip.text);
+    const badCity = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({ city: 'Ral\u0000eigh', service_ids: [byName['Large Format'].id] }),
+    });
+    assert(badCity.status === 400 && /city contains invalid characters/.test(badCity.json.error), badCity.text);
+    const missingAddr = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({ address_line1: '  ', service_ids: [byName['Large Format'].id] }),
+    });
+    assert(missingAddr.status === 400 && /address_line1 is required/.test(missingAddr.json.error), missingAddr.text);
+    const badFinish = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({
+        service_ids: [byName['Large Format'].id],
+        line_items: [{ description: 'Banner', quantity: '1', finishing: 'Gold leaf' }],
+      }),
+    });
+    assert(badFinish.status === 400 && /finishing must be one of/.test(badFinish.json.error), badFinish.text);
+
+    const finishUpload = await request({
+      method: 'POST',
+      path: '/api/uploads',
+      token: customerToken,
+      ...multipartBody([{ name: 'plans.pdf', type: 'application/pdf', data: Buffer.from('%PDF-1.4 finish') }]),
+    });
+    assert(finishUpload.status === 201, `finishing upload failed: ${finishUpload.text}`);
+    const finished = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({
+        originals_source: 'Files attached below',
+        service_ids: [byName['Large Format'].id],
+        line_items: [{
+          description: 'Grommet banner',
+          quantity: '1',
+          finishing: 'Grommets',
+          file_ids: [finishUpload.json.files[0].id],
+        }],
+      }),
+    });
+    assert(finished.status === 201, `finished order failed: ${finished.text}`);
+    assert(finished.json.order.line_items[0].finishing === 'Grommets', 'finishing should be stored and returned');
+    assert(finished.json.order.originals_source === 'Files attached below', 'originals source should be stored');
+    assert(finished.json.order.address_line1 === '1234 Builder Way' && finished.json.order.address_line2 === 'Suite 200', 'address lines should be snapshotted');
+    assert(finished.json.order.city === 'Raleigh' && finished.json.order.state === 'NC' && finished.json.order.zip === '27601', 'city, state, and zip should be snapshotted');
+    const otherFinish = await request({ method: 'GET', path: `/api/orders/${finished.json.order.id}`, token: otherLogin.token });
+    assert(otherFinish.status === 404, 'another customer must not read the snapshotted address');
+
+    const pickupOriginals = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({
+        originals_source: 'Send a vehicle to pick up originals',
+        delivery_method: 'Will Call',
+        due_time: '10:00',
+        service_ids: [byName['Large Format'].id],
+      }),
+    });
+    assert(pickupOriginals.status === 201 && pickupOriginals.json.order.originals_pickup === true, pickupOriginals.text);
+    assert(pickupOriginals.json.order.delivery_method === 'Will Call', 'inbound originals pickup must stay separate from the delivery method');
+    const boardRow = await request({
+      method: 'GET',
+      path: `/api/admin-board/work-orders?q=${encodeURIComponent(pickupOriginals.json.order_number)}`,
+      token: adminToken,
+    });
+    assert(boardRow.status === 200 && boardRow.json.work_orders.some((row) => row.originals_source_label === 'Send a vehicle to pick up originals'), `admin board should show originals: ${boardRow.text}`);
+
+    const addressSaved = await request({
+      method: 'PUT',
+      path: `/api/customers/${customer.json.id}`,
+      token: adminToken,
+      json: { address_line1: '  50 Plant Road ', address_line2: '', city: 'Cary', state: 'NC', zip: '27511' },
+    });
+    assert(addressSaved.status === 200 && addressSaved.json.address_line1 === '50 Plant Road' && addressSaved.json.city === 'Cary', addressSaved.text);
+    const me = await request({ method: 'GET', path: '/api/auth/me', token: customerToken });
+    assert(me.status === 200 && me.json.user.address_line1 === '50 Plant Road' && me.json.user.zip === '27511', `profile address should prefill: ${me.text}`);
+    const badAddress = await request({
+      method: 'PUT',
+      path: `/api/customers/${customer.json.id}`,
+      token: adminToken,
+      json: { address_line1: '9\u0007 Main', city: 'Cary', state: 'NC', zip: '27511' },
+    });
+    assert(badAddress.status === 400 && /invalid characters/.test(badAddress.json.error), badAddress.text);
+    const operatorAddress = await request({
+      method: 'PUT',
+      path: `/api/customers/${customer.json.id}`,
+      token: operatorLogin.token,
+      json: { address_line1: 'Nope', city: 'Cary', state: 'NC', zip: '27511' },
+    });
+    assert(operatorAddress.status === 403, 'operators cannot edit a customer address');
+    const addressActivity = await request({ method: 'GET', path: '/api/activity?type=user.updated&format=csv', token: adminToken });
+    assert(addressActivity.status === 200 && /Updated address for jsmith/.test(addressActivity.text), `address edits should be logged: ${addressActivity.text}`);
+    assert(!addressActivity.text.includes('50 Plant Road'), 'activity CSV should not repeat the street address');
 
     console.log('PASS order API, roles, sequence, concurrency, uploads, reports, and customer isolation');
   } finally {

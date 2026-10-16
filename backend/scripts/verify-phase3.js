@@ -154,13 +154,19 @@ function orderBody(overrides = {}) {
     project_number: '20045',
     project_name: 'New City Center',
     notes: 'Please deliver to loading dock.',
+    originals_source: 'Hardcopy or digital media provided',
+    address_line1: '1234 Builder Way',
+    address_line2: 'Suite 200',
+    city: 'Raleigh',
+    state: 'NC',
+    zip: '27601',
     delivery_method: 'Accent Truck',
     ship_to: 'Acme Construction\n1234 Builder Way\nRaleigh, NC 27601',
     attention: 'Receiving Dock',
     due_date: dueDate(),
     due_time: '09:15',
     service_ids: [],
-    line_items: [],
+    line_items: [{ description: 'Default line', quantity: '1' }],
     ...overrides,
   };
 }
@@ -350,7 +356,7 @@ async function runApiChecks() {
             media: 'Bond',
             color: 'Black & White',
             binding_finish: 'Fold / Staple',
-            finishing: '',
+            finishing: 'Grommets',
             mount: false,
             laminate: false,
             service_id: byName['Large Format'].id,
@@ -429,7 +435,12 @@ async function runApiChecks() {
     const largeItem = bySuffix.A.line_items[0];
     assert(largeItem.size === '24x36' && largeItem.quantity === '5 Sets' && largeItem.media === 'Bond', 'line item size, quantity, and media should print');
     assert(largeItem.binding_finish === 'Fold / Staple', 'binding should print');
-    assert(largeItem.finishing === '', 'blank finishing stays blank in the payload');
+    assert(largeItem.finishing === 'Grommets', 'selected finishing should print');
+    assert(bySuffix.B.line_items[0].finishing === '', 'omitted finishing stays blank in the payload');
+    assert(bySuffix.A.address.line1 === '1234 Builder Way' && bySuffix.A.address.line2 === 'Suite 200', 'street address should print');
+    assert(bySuffix.A.address.city === 'Raleigh' && bySuffix.A.address.state === 'NC' && bySuffix.A.address.zip === '27601', 'city, state, and zip should print');
+    assert(bySuffix.A.originals_source_label === 'Hardcopy or digital media provided', 'originals source should print');
+    assert(bySuffix.A.originals_pickup === false, 'hardcopy originals are not an inbound pickup');
     assert(largeItem.mount === false && largeItem.laminate === false, 'mount and laminate should print as booleans');
     assert(bySuffix.A.files.length === 1 && bySuffix.A.files[0].original_name === 'Civil Plans.pdf', 'attached file name should print on its work order');
     assert(bySuffix.B.files.length === 0 && bySuffix.C.files.length === 0, 'a line-item file should not be copied onto the other work orders');
@@ -621,6 +632,9 @@ async function runApiChecks() {
     assert(pickupPrint.status === 200, pickupPrint.text);
     assert(pickupPrint.json.work_orders[0].delivery.method === 'Customer Pickup', 'legacy Customer Pickup label should print');
     assert(pickupPrint.json.work_orders[0].delivery.hours_label === '8:00 AM - 5:00 PM (15 min increments)', 'Customer Pickup should print Will Call hours');
+    assert(pickupPrint.json.work_orders[0].project.project_name === '', 'an order without a project name should still print');
+    assert(pickupPrint.json.work_orders[0].originals_source_label === 'Not specified', 'legacy originals should print as Not specified');
+    assert(pickupPrint.json.work_orders[0].address.line1 === '' && pickupPrint.json.work_orders[0].address.zip === '', 'legacy address should print blank');
 
     const legacyFedex = await db.run(
       `INSERT INTO orders (

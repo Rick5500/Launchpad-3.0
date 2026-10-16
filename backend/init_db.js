@@ -548,6 +548,11 @@ async function main() {
     { name: 'contact_name', definition: 'TEXT' },
     { name: 'phone', definition: 'TEXT' },
     { name: 'email', definition: 'TEXT' },
+    { name: 'address_line1', definition: 'TEXT' },
+    { name: 'address_line2', definition: 'TEXT' },
+    { name: 'city', definition: 'TEXT' },
+    { name: 'state', definition: 'TEXT' },
+    { name: 'zip', definition: 'TEXT' },
     { name: 'is_active', definition: 'INTEGER DEFAULT 1' },
     { name: 'updated_at', definition: 'DATETIME' },
   ]);
@@ -572,6 +577,12 @@ async function main() {
   ]);
   await ensureColumns('orders', [
     { name: 'ups_account_number', definition: 'TEXT' },
+    { name: 'originals_source', definition: 'TEXT' },
+    { name: 'address_line1', definition: 'TEXT' },
+    { name: 'address_line2', definition: 'TEXT' },
+    { name: 'city', definition: 'TEXT' },
+    { name: 'state', definition: 'TEXT' },
+    { name: 'zip', definition: 'TEXT' },
   ]);
   await run('CREATE INDEX IF NOT EXISTS idx_work_orders_order_id ON work_orders(order_id)');
   await run('CREATE INDEX IF NOT EXISTS idx_work_orders_service_id ON work_orders(service_id)');

@@ -5,7 +5,8 @@ const auth = require('../auth');
 const db = require('../db');
 const activityLog = require('../activityLog');
 const { withTransaction } = require('../dbAsync');
-const { parseUsername } = require('../userAdmin');
+const { parseUsername, updateCustomerAddress } = require('../userAdmin');
+const { parsePostalAddress } = require('../fields');
 const { resetUserPassword, passwordPolicyError } = require('../passwordReset');
 
 const router = express.Router();
@@ -30,7 +31,8 @@ function parsePositiveInteger(value) {
 // Read-only directory for staff who create work orders. No role, timestamps, or secrets.
 router.get('/lookup', auth.requireAuth, auth.requireRole('admin', 'operator'), (req, res) => {
   db.all(
-    `SELECT id, username, display_name, company, contact_name, phone, email
+    `SELECT id, username, display_name, company, contact_name, phone, email,
+            address_line1, address_line2, city, state, zip
      FROM users
      WHERE role = 'customer' AND COALESCE(is_active, 1) = 1
      ORDER BY display_name ASC`,
@@ -47,7 +49,8 @@ router.get('/lookup', auth.requireAuth, auth.requireRole('admin', 'operator'), (
 
 router.get('/', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
   db.all(
-    `SELECT id, username, display_name, role, created_at
+    `SELECT id, username, display_name, role, company, contact_name, phone, email,
+            address_line1, address_line2, city, state, zip, created_at
      FROM users
      WHERE role = 'customer'
      ORDER BY display_name ASC`,
@@ -97,8 +100,10 @@ router.post('/', auth.requireAuth, auth.requireRole('admin'), async (req, res) =
   const contactName = optionalProfile(req.body?.contact_name, 'contact_name', 160);
   const phone = optionalProfile(req.body?.phone, 'phone', 40);
   const email = optionalProfile(req.body?.email, 'email', 160);
+  const address = parsePostalAddress(req.body || {}, false);
   const profileError = [company, contactName, phone, email].find((value) => value && value.error);
   if (profileError) return res.status(400).json({ error: profileError.error });
+  if (address.error) return res.status(400).json({ error: address.error });
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return res.status(400).json({ error: 'email is invalid' });
   }
@@ -131,9 +136,25 @@ router.post('/', auth.requireAuth, auth.requireRole('admin'), async (req, res) =
         created = await withTransaction(async (tx) => {
           const uniqueUsername = await reserveUsername(tx, baseName);
           const inserted = await tx.run(
-            `INSERT INTO users (username, password_hash, role, display_name, company, contact_name, phone, email, created_at)
-             VALUES (?,?,?,?,?,?,?,?,datetime('now'))`,
-            [uniqueUsername, hash, 'customer', String(display_name).trim(), company, contactName, phone, email]
+            `INSERT INTO users (
+               username, password_hash, role, display_name, company, contact_name, phone, email,
+               address_line1, address_line2, city, state, zip, created_at
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
+            [
+              uniqueUsername,
+              hash,
+              'customer',
+              String(display_name).trim(),
+              company,
+              contactName,
+              phone,
+              email,
+              address.value.addressLine1,
+              address.value.addressLine2,
+              address.value.city,
+              address.value.state,
+              address.value.zip,
+            ]
           );
           await activityLog.recordOn(tx, req.user.userId, 'user.created', 'user', inserted.lastID, {
             username: uniqueUsername,
@@ -158,6 +179,20 @@ router.post('/', auth.requireAuth, auth.requireRole('admin'), async (req, res) =
     }
     console.error('CUSTOMER CREATE ERROR:', err);
     return res.status(500).json({ error: 'Failed to create customer' });
+  }
+});
+
+// Replace the company address stored on a customer profile. Orders keep the address they snapshotted.
+router.put('/:id', auth.requireAuth, auth.requireRole('admin'), async (req, res) => {
+  try {
+    const updated = await updateCustomerAddress(req.user.userId, req.params.id, req.body || {});
+    res.json(updated);
+  } catch (err) {
+    if (err && err.status && err.status < 500) {
+      return res.status(err.status).json({ error: err.message });
+    }
+    console.error('CUSTOMER ADDRESS UPDATE ERROR:', err);
+    return res.status(500).json({ error: 'Failed to update customer' });
   }
 });
 

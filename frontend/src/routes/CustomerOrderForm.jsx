@@ -39,6 +39,16 @@ const fieldSx = {
   '& .MuiInputBase-root': { bgcolor: '#fff' },
 };
 
+const FINISHING_OPTIONS = ['None', 'Grommets', 'Easel', 'Cut/Trim', 'Velcro', 'Print Hanger', 'Framing', 'See Notes'];
+const ORIGINALS_SOURCES = [
+  'Files attached below',
+  'Archived files at Accent Imaging',
+  'Send a vehicle to pick up originals',
+  'Hardcopy or digital media provided',
+];
+const ORIGINALS_FILES = 'Files attached below';
+const ORIGINALS_PICKUP = 'Send a vehicle to pick up originals';
+
 function newLine(serviceId) {
   return {
     key: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -48,11 +58,29 @@ function newLine(serviceId) {
     media: '',
     color: '',
     binding_finish: '',
+    finishing: 'None',
     mount: 'No',
     laminate: 'No',
     service_id: serviceId || '',
     file: null,
   };
+}
+
+function emptyServiceMessage(service, lines, notes, shipTo, selectedServices) {
+  const hasLine = lines.some((line) => {
+    const serviceId = line.service_id || (selectedServices.length === 1 ? selectedServices[0] : '');
+    return String(serviceId) === String(service.id);
+  });
+  if (hasLine) return null;
+  if (service.name === 'Archive File Request') {
+    if (String(notes || '').trim()) return null;
+    return 'Archive File Request is empty. Add a line, describe the archived files in Notes, or deselect it.';
+  }
+  if (service.name === 'Ship To (3rd Party)') {
+    if (String(shipTo || '').trim()) return null;
+    return 'Ship To (3rd Party) is empty. Add a line, fill in Ship To, or deselect it.';
+  }
+  return `${service.name} is empty. Please add lines or deselect it.`;
 }
 
 function welcomeText(user) {
@@ -95,6 +123,12 @@ export default function CustomerOrderForm() {
   const [contactName, setContactName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
+  const [address1, setAddress1] = useState('');
+  const [address2, setAddress2] = useState('');
+  const [city, setCity] = useState('');
+  const [state, setState] = useState('');
+  const [zip, setZip] = useState('');
+  const [originalsSource, setOriginalsSource] = useState('');
   const [poNumber, setPoNumber] = useState('');
   const [projectNumber, setProjectNumber] = useState('');
   const [projectName, setProjectName] = useState('');
@@ -114,12 +148,22 @@ export default function CustomerOrderForm() {
   const [result, setResult] = useState(null);
   const [loadError, setLoadError] = useState('');
 
+  function applyProfile(source, includeCompanyFallback) {
+    if (!source) return;
+    setCompany(source.company || (includeCompanyFallback ? source.display_name : '') || '');
+    setContactName(source.contact_name || '');
+    setPhone(source.phone || '');
+    setEmail(source.email || '');
+    setAddress1(source.address_line1 || '');
+    setAddress2(source.address_line2 || '');
+    setCity(source.city || '');
+    setState(source.state || '');
+    setZip(source.zip || '');
+  }
+
   useEffect(() => {
     if (!user || isStaff) return;
-    setCompany(user.company || user.display_name || '');
-    setContactName(user.contact_name || '');
-    setPhone(user.phone || '');
-    setEmail(user.email || '');
+    applyProfile(user, true);
   }, [user, isStaff]);
 
   useEffect(() => {
@@ -200,6 +244,9 @@ export default function CustomerOrderForm() {
     ? (options.due_windows?.will_call || options.due_window)
     : (options.due_windows?.delivery || options.due_window);
   const upsSelected = String(deliveryMethod || '').trim().toLowerCase() === 'ups';
+  const filesAttached = originalsSource === ORIGINALS_FILES;
+  const finishingOptions = options.finishing_options?.length ? options.finishing_options : FINISHING_OPTIONS;
+  const originalsOptions = options.originals_sources?.length ? options.originals_sources : ORIGINALS_SOURCES;
 
   useEffect(() => {
     const slots = activeWindow?.slots || [];
@@ -289,12 +336,8 @@ export default function CustomerOrderForm() {
     setLines([]);
     setLooseFiles([]);
     setPreview(null);
-    if (!isStaff && user) {
-      setCompany(user.company || user.display_name || '');
-      setContactName(user.contact_name || '');
-      setPhone(user.phone || '');
-      setEmail(user.email || '');
-    }
+    setOriginalsSource('');
+    if (!isStaff && user) applyProfile(user, true);
   }
 
   async function handleSubmit(event) {
@@ -312,6 +355,33 @@ export default function CustomerOrderForm() {
       setFormError('Choose a service for each line item.');
       return;
     }
+    if (!projectName.trim()) {
+      setFormError('project_name is required');
+      return;
+    }
+    if (!address1.trim() || !city.trim() || !state.trim() || !zip.trim()) {
+      setFormError('Company address requires Addr 1, City, State, and Zip.');
+      return;
+    }
+    if (!originalsSource) {
+      setFormError('originals_source is required');
+      return;
+    }
+    const emptyService = selectedServiceRows
+      .map((service) => emptyServiceMessage(service, lines, notes, shipTo, selectedServices))
+      .find(Boolean);
+    if (emptyService) {
+      setFormError(emptyService);
+      return;
+    }
+    const filesAttached = originalsSource === ORIGINALS_FILES;
+    const attachedCount = filesAttached
+      ? [...lines.map((line) => line.file), ...looseFiles].filter((file) => file && file.id && file.status === 'uploaded').length
+      : 0;
+    if (filesAttached && attachedCount === 0) {
+      setFormError('Attach at least one file when originals source is Files attached below');
+      return;
+    }
     const failed = [...lines.map((line) => line.file), ...looseFiles].find((file) => file && file.status === 'error');
     if (failed) {
       setFormError('Remove files that failed to upload before submitting.');
@@ -327,6 +397,12 @@ export default function CustomerOrderForm() {
       project_number: projectNumber,
       project_name: projectName,
       notes,
+      originals_source: originalsSource,
+      address_line1: address1,
+      address_line2: address2,
+      city,
+      state,
+      zip,
       delivery_method: deliveryMethod,
       ups_account_number: upsSelected ? upsAccount : '',
       ship_to: shipTo,
@@ -341,12 +417,15 @@ export default function CustomerOrderForm() {
         media: line.media,
         color: line.color,
         binding_finish: line.binding_finish,
+        finishing: line.finishing || 'None',
         mount: line.mount === 'Yes',
         laminate: line.laminate === 'Yes',
         service_id: line.service_id || undefined,
-        file_ids: line.file?.id ? [line.file.id] : [],
+        file_ids: originalsSource === ORIGINALS_FILES && line.file?.id ? [line.file.id] : [],
       })),
-      file_ids: looseFiles.filter((file) => file.id).map((file) => file.id),
+      file_ids: originalsSource === ORIGINALS_FILES
+        ? looseFiles.filter((file) => file.id).map((file) => file.id)
+        : [],
     };
     if (isStaff) payload.customer_id = Number(customerId);
 
@@ -415,12 +494,7 @@ export default function CustomerOrderForm() {
                     const nextId = event.target.value;
                     setCustomerId(nextId);
                     const match = customers.find((customer) => String(customer.id) === String(nextId));
-                    if (match) {
-                      setCompany(match.company || match.display_name || '');
-                      setContactName(match.contact_name || '');
-                      setPhone(match.phone || '');
-                      setEmail(match.email || '');
-                    }
+                    if (match) applyProfile(match, true);
                   }}
                   sx={fieldSx}
                 >
@@ -448,6 +522,21 @@ export default function CustomerOrderForm() {
               <LabelField label="Email" required>
                 <TextField size="small" required type="email" value={email} disabled={locked} onChange={(e) => setEmail(e.target.value)} sx={fieldSx} />
               </LabelField>
+              <LabelField label="Addr 1" required>
+                <TextField size="small" required value={address1} disabled={locked} onChange={(e) => setAddress1(e.target.value)} sx={fieldSx} />
+              </LabelField>
+              <LabelField label="Addr 2">
+                <TextField size="small" value={address2} disabled={locked} onChange={(e) => setAddress2(e.target.value)} sx={fieldSx} />
+              </LabelField>
+              <LabelField label="City" required>
+                <TextField size="small" required value={city} disabled={locked} onChange={(e) => setCity(e.target.value)} sx={fieldSx} />
+              </LabelField>
+              <LabelField label="State" required>
+                <TextField size="small" required value={state} disabled={locked} onChange={(e) => setState(e.target.value)} sx={fieldSx} />
+              </LabelField>
+              <LabelField label="Zip" required>
+                <TextField size="small" required value={zip} disabled={locked} onChange={(e) => setZip(e.target.value)} sx={fieldSx} />
+              </LabelField>
             </Section>
 
             <Section title="Project Information">
@@ -457,8 +546,8 @@ export default function CustomerOrderForm() {
               <LabelField label="Project Number">
                 <TextField size="small" value={projectNumber} disabled={locked} onChange={(e) => setProjectNumber(e.target.value)} sx={fieldSx} />
               </LabelField>
-              <LabelField label="Project Name">
-                <TextField size="small" value={projectName} disabled={locked} onChange={(e) => setProjectName(e.target.value)} sx={fieldSx} />
+              <LabelField label="Project Name" required>
+                <TextField size="small" required value={projectName} disabled={locked} onChange={(e) => setProjectName(e.target.value)} sx={fieldSx} />
               </LabelField>
               <LabelField label="Notes / Instructions">
                 <TextField size="small" value={notes} disabled={locked} onChange={(e) => setNotes(e.target.value)} sx={fieldSx} />
@@ -587,9 +676,10 @@ export default function CustomerOrderForm() {
                     <th>Media</th>
                     <th>Color</th>
                     <th>Binding / Finish</th>
+                    <th>Finishing</th>
                     <th>Mount</th>
                     <th>Laminate</th>
-                    <th>Upload Files</th>
+                    {filesAttached && <th>Upload Files</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -612,6 +702,13 @@ export default function CustomerOrderForm() {
                       <td><TextField size="small" value={line.color} disabled={locked} onChange={(e) => updateLine(line.key, { color: e.target.value })} sx={{ width: 90 }} /></td>
                       <td><TextField size="small" value={line.binding_finish} disabled={locked} onChange={(e) => updateLine(line.key, { binding_finish: e.target.value })} sx={{ width: 130 }} /></td>
                       <td>
+                        <TextField select size="small" value={line.finishing || 'None'} disabled={locked} onChange={(e) => updateLine(line.key, { finishing: e.target.value })} sx={{ minWidth: 130 }}>
+                          {finishingOptions.map((option) => (
+                            <MenuItem key={option} value={option}>{option}</MenuItem>
+                          ))}
+                        </TextField>
+                      </td>
+                      <td>
                         <TextField select size="small" value={line.mount} disabled={locked} onChange={(e) => updateLine(line.key, { mount: e.target.value })}>
                           <MenuItem value="No">No</MenuItem>
                           <MenuItem value="Yes">Yes</MenuItem>
@@ -623,6 +720,7 @@ export default function CustomerOrderForm() {
                           <MenuItem value="Yes">Yes</MenuItem>
                         </TextField>
                       </td>
+                      {filesAttached && (
                       <td>
                         {line.file ? (
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -665,6 +763,7 @@ export default function CustomerOrderForm() {
                           </Button>
                         )}
                       </td>
+                      )}
                     </tr>
                   ))}
                   {!lines.length && (
@@ -688,7 +787,37 @@ export default function CustomerOrderForm() {
             </Button>
           </Box>
 
-          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1.2fr auto' }, gap: 2, alignItems: 'stretch' }}>
+          <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2 }}>
+            <Typography sx={{ color: brand.navy, fontWeight: 700, mb: 1.5 }}>Originals</Typography>
+            <LabelField label="Originals Source" required>
+              <TextField
+                select
+                size="small"
+                required
+                value={originalsSource}
+                disabled={locked}
+                onChange={(e) => setOriginalsSource(e.target.value)}
+                sx={fieldSx}
+              >
+                {originalsOptions.map((option) => (
+                  <MenuItem key={option} value={option}>{option}</MenuItem>
+                ))}
+              </TextField>
+            </LabelField>
+            {originalsSource === ORIGINALS_PICKUP && (
+              <Typography sx={{ color: brand.muted, fontSize: 13 }}>
+                This asks Accent Imaging to send a vehicle to pick up the originals. It is separate from the outbound delivery method.
+              </Typography>
+            )}
+            {filesAttached && (
+              <Typography sx={{ color: brand.muted, fontSize: 13 }}>
+                Attach at least one file below or on a line item.
+              </Typography>
+            )}
+          </Box>
+
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: filesAttached ? '1fr 1.2fr auto' : '1.2fr auto' }, gap: 2, alignItems: 'stretch' }}>
+            {filesAttached && (
             <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2 }}>
               <Typography sx={{ color: brand.navy, fontWeight: 700, mb: 1 }}>Files Uploaded</Typography>
               {uploadedFiles.length === 0 && <Typography sx={{ color: brand.muted, fontSize: 14 }}>No files uploaded yet.</Typography>}
@@ -746,6 +875,7 @@ export default function CustomerOrderForm() {
                 </Button>
               )}
             </Box>
+            )}
 
             <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2 }}>
               <Typography sx={{ color: brand.navy, fontWeight: 700 }}>Create Work Orders</Typography>

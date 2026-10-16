@@ -87,6 +87,34 @@ function parseSort(value, allowed, fallback) {
   return { value: sort };
 }
 
+const STATE_PATTERN = /^[A-Za-z][A-Za-z .'-]{0,39}$/;
+const ZIP_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 -]{1,19}$/;
+
+function parsePostalAddress(body, required) {
+  const source = body || {};
+  const line1 = parseText(source.address_line1, 'address_line1', { required, max: 120 });
+  if (line1.error) return line1;
+  const line2 = parseText(source.address_line2, 'address_line2', { max: 120 });
+  if (line2.error) return line2;
+  const city = parseText(source.city, 'city', { required, max: 80 });
+  if (city.error) return city;
+  const state = parseText(source.state, 'state', { required, max: 40 });
+  if (state.error) return state;
+  if (state.value && !STATE_PATTERN.test(state.value)) return { error: 'state is invalid' };
+  const zip = parseText(source.zip, 'zip', { required, max: 20 });
+  if (zip.error) return zip;
+  if (zip.value && !ZIP_PATTERN.test(zip.value)) return { error: 'zip is invalid' };
+  return {
+    value: {
+      addressLine1: line1.value,
+      addressLine2: line2.value,
+      city: city.value,
+      state: state.value,
+      zip: zip.value,
+    },
+  };
+}
+
 function likePattern(value) {
   const escaped = String(value).replace(/[\\%_]/g, (ch) => `\\${ch}`);
   return `%${escaped}%`;
@@ -128,4 +156,5 @@ module.exports = {
   parseSort,
   likePattern,
   parseDateBound,
+  parsePostalAddress,
 };

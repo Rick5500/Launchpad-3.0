@@ -251,6 +251,8 @@ function presentWorkOrder(row, timeZone) {
     order_id: row.order_id || null,
     company: row.company_name || '',
     contact_name: row.contact_name || '',
+    originals_source: row.originals_source || null,
+    originals_source_label: row.originals_source ? String(row.originals_source) : 'Not specified',
     department: row.department || '',
     department_color: row.department_color || '#90caf9',
     arrived_at: row.created_at || null,
@@ -292,6 +294,7 @@ const workOrderSelect = `
     NULLIF(trim(u.display_name), ''),
     ''
   ) AS contact_name,
+  o.originals_source AS originals_source,
   ${DUE_AT_SQL} AS due_at,
   CASE
     WHEN s.name IS NOT NULL AND trim(s.name) != '' THEN s.name
