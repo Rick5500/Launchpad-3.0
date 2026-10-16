@@ -387,7 +387,7 @@ async function migrateOldDatabase() {
   const banner = await check.get(`SELECT description, mount, laminate, field_values FROM order_line_items WHERE description = 'Legacy banner'`);
   assert(banner && banner.description === 'Legacy banner' && banner.mount === 1 && banner.laminate === 0 && banner.field_values == null, 'a pre-existing line item should stay intact with a null field_values column');
   const fieldCount = await check.get('SELECT COUNT(*) AS count FROM service_fields');
-  assert(fieldCount.count === 54, `expected 54 seeded service fields after two inits, found ${fieldCount.count}`);
+  assert(fieldCount.count === 58, `expected 58 seeded service fields after two inits, found ${fieldCount.count}`);
   const fieldsTable = await check.get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'service_fields'`);
   assert(fieldsTable, 'service_fields should exist after migrating an older database');
   const fedex = await check.get(`SELECT delivery_method, due_time FROM orders WHERE order_number = 'LEGACY-FEDEX'`);
@@ -496,7 +496,7 @@ async function initFreshTwice() {
   const lineColumns = await columnNames(db, 'order_line_items');
   assert(lineColumns.has('field_values'), 'fresh line items should include field_values');
   const fieldCount = await db.get('SELECT COUNT(*) AS count FROM service_fields');
-  assert(fieldCount.count === 54, `fresh init twice should leave 54 service fields, found ${fieldCount.count}`);
+  assert(fieldCount.count === 58, `fresh init twice should leave 58 service fields, found ${fieldCount.count}`);
   const freshUsers = await columnNames(db, 'users');
   assert(freshUsers.has('address_line1') && freshUsers.has('zip'), 'fresh users table should include address columns');
   const externalIndex = await db.get(

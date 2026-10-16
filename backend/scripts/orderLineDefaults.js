@@ -3,25 +3,20 @@
  * Select values are copied only when they are still an active option.
  * Size is copied as text only for Signs & Graphics.
  */
+const {
+  SMALL_FORMAT_BINDING,
+  SMALL_FORMAT_PAPER,
+  SMALL_FORMAT_PRODUCTS,
+  SMALL_FORMAT_SIZES,
+} = require('../smallFormatCatalog');
+
 const serviceNames = new Map();
 
 const LARGE_SIZE = ['Full Size', 'Half Size', 'See Note'];
 const LARGE_PROCESS = ['Black & White', 'Color Line'];
 const LARGE_MEDIA = ['Bond', 'Vellum', 'Vellum Erase', 'Mylar', 'Mylar Reversed', 'See Note'];
 const LARGE_BINDING = ['None', 'Staple', 'Screw Post', 'See Note'];
-const SMALL_SIZE = ['8.5x11', '8.5x14', '11x17', '12x18', 'See Note'];
 const SMALL_PROCESS = ['Black & White', 'Color'];
-const SMALL_MEDIA = [
-  '20lb Standard Bond',
-  '20lb Tree Zero',
-  '28lb Color Laser',
-  '65lb Matt Cover',
-  '80lb Matt Cover',
-  '70lb Gloss Text',
-  '80lb Gloss Cover',
-  'See Note',
-];
-const SMALL_BINDING = ['None', 'Cutting', 'GBC', 'Perfect', 'Spiral', 'Screw Post', 'Staple', '3HD', 'Binder', 'Wire-O'];
 const SIGNS_FINISHING = ['None', 'Grommets', 'Easel', 'Cut/Trim', 'Velcro', 'Print Hanger', 'Framing', 'Contour Cut', 'Routed Shape', 'See Notes'];
 const SIGNS_MOUNT = ['No', '3/16 Foam Core', '3/16 Gator Board', '1/2 Gator Board', '1/8 Sintra', '1/4 Sintra', '1/2 Sintra', 'Corplast', 'See Notes'];
 const SIGNS_LAMINATE = ['No', 'Gloss', 'Matt', 'Dry Erase', 'Lexan', 'See Notes'];
@@ -81,13 +76,15 @@ function defaultsFor(name, item) {
   }
   if (name === 'Small Format') {
     return {
+      product: SMALL_FORMAT_PRODUCTS[0],
       originals: '1',
       copies: qty,
-      size: allowed(item.size, SMALL_SIZE) || '8.5x11',
+      size: allowed(item.size, SMALL_FORMAT_SIZES) || '8.5x11',
       process: allowed(item.color, SMALL_PROCESS) || 'Black & White',
-      sides: '1-Simplex',
-      media: allowed(item.media, SMALL_MEDIA) || '20lb Standard Bond',
-      binding: allowed(item.binding_finish, SMALL_BINDING) || 'None',
+      sides: '1/0 black one side',
+      media: allowed(item.media, SMALL_FORMAT_PAPER) || '20# Bond',
+      binding: allowed(item.binding_finish, SMALL_FORMAT_BINDING) || 'None',
+      proof: 'None',
     };
   }
   if (name === 'Signs & Graphics') {

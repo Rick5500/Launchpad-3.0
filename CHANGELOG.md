@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 - A barcode scan that moves a department writes the scan, the department change, production history, and the activity row in one transaction
 
 ### Added
+- Small Format product, paper, finished size, sides/color, binding, folding, finishing, and proof lists. Product is required. Finishing accepts more than one option. Proof defaults to None, or to the digital proof when None is turned off, and prints with the other line fields. Init fills an empty or untouched list and, when an admin has edited one, only adds missing options
 - Per-service line item fields. `service_fields` stores the label, type, options, required flag, and sort order for each service. `order_line_items.field_values` stores the answers as JSON. The customer order form shows a section for each selected service. The server checks required fields and select values against the active definitions. Admins edit those lists on the Services page. A deactivated option still displays on older orders. Init adds missing seed rows and does not overwrite an admin's edits
 - Signs & Graphics product fields for flatbed, CNC router, and the rest of the widened product line. Mount and laminate are options on that service, not a separate service. Older Yes/No mount and laminate values still display
 - Required payment method on new orders: Accent Account, Cash, Check, AMEX, Master Card, Visa, or Discover. Only the method label is stored. Older orders display `Not specified`

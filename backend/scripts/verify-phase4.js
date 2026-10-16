@@ -287,7 +287,7 @@ async function assertMigration(file, label) {
     assert(orderColumns.has('payment_method') && orderColumns.has('return_to') && orderColumns.has('bill_to_zip'), `${label} payment, return, and bill-to columns should exist`);
   }
   const fieldCount = await db.get('SELECT COUNT(*) AS count FROM service_fields');
-  assert(fieldCount.count === 54, `${label} should seed 54 service fields once, found ${fieldCount.count}`);
+  assert(fieldCount.count === 58, `${label} should seed 58 service fields once, found ${fieldCount.count}`);
   const serviceColumns = await columnNames(db, 'services');
   assert(serviceColumns.has('code') && serviceColumns.has('suffix_mode') && serviceColumns.has('default_turnaround_hours'), `${label} service columns should exist`);
   const services = await db.get('SELECT COUNT(*) AS count FROM services');
