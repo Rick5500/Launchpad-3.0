@@ -1,6 +1,7 @@
 const express = require('express');
 const auth = require('../auth');
 const adminBoard = require('../adminBoard');
+const users = require('../userAdmin');
 
 const router = express.Router();
 
@@ -21,7 +22,8 @@ function sendBoard(res, body) {
 
 router.get('/', async (req, res) => {
   try {
-    sendBoard(res, await adminBoard.loadSummary());
+    const access = await users.loadAccess(req.user.userId);
+    sendBoard(res, await adminBoard.loadSummary(access, req.query));
   } catch (err) {
     sendError(res, err, 'ADMIN BOARD ERROR:', 'Failed to load the admin board');
   }
@@ -29,7 +31,8 @@ router.get('/', async (req, res) => {
 
 router.get('/work-orders', async (req, res) => {
   try {
-    sendBoard(res, await adminBoard.listWorkOrders(req.query));
+    const access = await users.loadAccess(req.user.userId);
+    sendBoard(res, await adminBoard.listWorkOrders(req.query, access));
   } catch (err) {
     sendError(res, err, 'ADMIN BOARD WORK ORDERS ERROR:', 'Failed to load work orders');
   }

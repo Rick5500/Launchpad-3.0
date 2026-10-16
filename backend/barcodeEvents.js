@@ -578,6 +578,14 @@ function listEvents(filters, cb) {
     clauses.push('e.event_time <= ?');
     params.push(filters.to);
   }
+  if (filters.departmentLock) {
+    clauses.push(`(
+      lower(trim(coalesce(e.location, ''))) = lower(?)
+      OR lower(trim(coalesce(e.from_department, ''))) = lower(?)
+      OR lower(trim(coalesce(e.to_department, ''))) = lower(?)
+    )`);
+    params.push(filters.departmentLock, filters.departmentLock, filters.departmentLock);
+  }
 
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const fromSql = `

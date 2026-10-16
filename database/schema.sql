@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS users (
   city TEXT,
   state TEXT,
   zip TEXT,
+  department TEXT, -- staff home department; NULL means every department
   is_active INTEGER DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME

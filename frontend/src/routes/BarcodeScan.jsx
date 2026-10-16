@@ -17,6 +17,8 @@ import {
   Typography,
 } from '@mui/material';
 import { authFetch } from '../api';
+import { requestBoardRefresh } from '../boardEvents';
+import { useAuth } from '../context/AuthContext';
 
 const LOCATION_STORAGE_KEY = 'lp_scan_location';
 
@@ -81,6 +83,8 @@ function scanResult(body) {
 
 export default function BarcodeScan() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const assignedDepartment = user?.department || '';
   const scanRef = useRef(null);
   const [scannedValue, setScannedValue] = useState('');
   const [location, setLocation] = useState(() => sessionStorage.getItem(LOCATION_STORAGE_KEY) || '');
@@ -123,7 +127,12 @@ export default function BarcodeScan() {
   const locationOptions = selectableLocations(locations);
 
   useEffect(() => {
-    if (!locations.length) return;
+    if (!assignedDepartment) return;
+    setLocation(assignedDepartment);
+  }, [assignedDepartment]);
+
+  useEffect(() => {
+    if (assignedDepartment || !locations.length) return;
     const options = selectableLocations(locations);
     const current = location.trim().toLowerCase();
     const match = options.find((entry) => entry.location.toLowerCase() === current);
@@ -140,11 +149,12 @@ export default function BarcodeScan() {
       }
     }
     if (current) setLocation('');
-  }, [locations, location]);
+  }, [assignedDepartment, locations, location]);
 
   useEffect(() => {
+    if (assignedDepartment) return;
     sessionStorage.setItem(LOCATION_STORAGE_KEY, location);
-  }, [location]);
+  }, [location, assignedDepartment]);
 
   async function submitScan(event) {
     event.preventDefault();
@@ -162,13 +172,14 @@ export default function BarcodeScan() {
         method: 'POST',
         body: JSON.stringify({
           scanned_value: value,
-          location: location.trim() || null,
+          location: assignedDepartment || location.trim() || null,
         }),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || 'Scan failed');
       setResult(scanResult(body));
       setScannedValue('');
+      requestBoardRefresh();
       await loadEvents();
     } catch (err) {
       setError(err.message || 'Scan failed');
@@ -190,7 +201,11 @@ export default function BarcodeScan() {
       <Card sx={{ bgcolor: '#ffffff', mb: 3 }}>
         <CardContent>
           <Box component="form" onSubmit={submitScan} sx={{ display: 'grid', gap: 2 }}>
-            {locationOptions.length > 0 ? (
+            {assignedDepartment ? (
+              <Alert severity="info">
+                Scans move work orders to {assignedDepartment}.
+              </Alert>
+            ) : locationOptions.length > 0 ? (
               <TextField
                 select
                 label="Location"

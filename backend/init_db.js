@@ -691,6 +691,7 @@ async function main() {
     { name: 'city', definition: 'TEXT' },
     { name: 'state', definition: 'TEXT' },
     { name: 'zip', definition: 'TEXT' },
+    { name: 'department', definition: 'TEXT' },
     { name: 'is_active', definition: 'INTEGER DEFAULT 1' },
     { name: 'updated_at', definition: 'DATETIME' },
   ]);

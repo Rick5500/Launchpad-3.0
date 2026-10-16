@@ -52,6 +52,44 @@ class BoardError extends Error {
   }
 }
 
+function assignedDepartment(user) {
+  const value = user && user.department != null ? String(user.department).trim() : '';
+  return value || null;
+}
+
+// Operators with a department cannot widen the board. An admin can pass scope=all.
+function resolveBoardScope(user, query) {
+  const assigned = assignedDepartment(user);
+  const role = user && user.role;
+  const canClear = role === 'admin' && Boolean(assigned);
+  const requested = String((query && query.scope) || '').trim().toLowerCase();
+  if (!assigned || (canClear && requested === 'all')) {
+    return { assigned, restricted: false, canClear, department: null };
+  }
+  return {
+    assigned,
+    restricted: true,
+    canClear: role === 'admin',
+    department: assigned,
+  };
+}
+
+function presentViewer(scope) {
+  return {
+    department: scope.assigned,
+    restricted: scope.restricted,
+    can_clear: scope.canClear,
+  };
+}
+
+function scanDepartmentSql(alias = 'e') {
+  return `(
+    lower(trim(coalesce(${alias}.location, ''))) = lower(?)
+    OR lower(trim(coalesce(${alias}.from_department, ''))) = lower(?)
+    OR lower(trim(coalesce(${alias}.to_department, ''))) = lower(?)
+  )`;
+}
+
 function run(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.run(sql, params, function onRun(err) {
@@ -316,8 +354,9 @@ const workOrderFrom = `
   LEFT JOIN departments d ON lower(d.name) = lower(trim(coalesce(wo.department, '')))
 `;
 
-function workOrderFilters(query) {
-  const department = parseOptionalToken(query.department, 'department', 80);
+function workOrderFilters(query, scope) {
+  const locked = Boolean(scope && scope.restricted && scope.department);
+  const department = locked ? scope.department : parseOptionalToken(query.department, 'department', 80);
   const search = parseOptionalToken(query.q, 'q', 120);
   const status = parseOptionalToken(query.status, 'status', 40);
   const priority = parseOptionalToken(query.priority, 'priority', 20);
@@ -341,7 +380,18 @@ function workOrderFilters(query) {
   const departmentKey = department ? department.toLowerCase() : 'all';
   const statusKey = status ? status.toLowerCase() : null;
 
-  if (statusKey === 'completed') {
+  if (locked) {
+    if (statusKey === 'completed') {
+      clauses.push(FINISHED_SQL);
+    } else if (statusKey) {
+      clauses.push(`lower(trim(coalesce(wo.status, ''))) = ?`);
+      params.push(statusKey);
+    } else {
+      clauses.push(ACTIVE_SQL);
+    }
+    clauses.push(`lower(trim(coalesce(wo.department, ''))) = lower(?)`);
+    params.push(department);
+  } else if (statusKey === 'completed') {
     clauses.push(FINISHED_SQL);
   } else if (statusKey) {
     clauses.push(`lower(trim(coalesce(wo.status, ''))) = ?`);
@@ -354,12 +404,12 @@ function workOrderFilters(query) {
     clauses.push(ACTIVE_SQL);
   }
 
-  if (departmentKey === 'unassigned') {
+  if (!locked && departmentKey === 'unassigned') {
     clauses.push(`trim(coalesce(wo.department, '')) = ''`);
-  } else if (departmentKey !== 'all' && departmentKey !== 'complete') {
+  } else if (!locked && departmentKey !== 'all' && departmentKey !== 'complete') {
     clauses.push(`lower(trim(coalesce(wo.department, ''))) = lower(?)`);
     params.push(department);
-  } else if (departmentKey === 'complete' && statusKey && statusKey !== 'completed') {
+  } else if (!locked && departmentKey === 'complete' && statusKey && statusKey !== 'completed') {
     clauses.push(IN_COMPLETE_SQL);
   }
 
@@ -397,10 +447,11 @@ function workOrderFilters(query) {
   };
 }
 
-async function listWorkOrders(query) {
+async function listWorkOrders(query, user) {
+  const scope = resolveBoardScope(user, query);
   const limit = parseLimit(query.limit, DEFAULT_PAGE_SIZE);
   const offset = parseOffset(query.offset);
-  const filters = workOrderFilters(query);
+  const filters = workOrderFilters(query, scope);
   const window = completionWindow();
   const totalRow = await get(
     `SELECT COUNT(*) AS count ${workOrderFrom} ${filters.where}`,
@@ -417,6 +468,7 @@ async function listWorkOrders(query) {
     total: totalRow ? totalRow.count : 0,
     limit,
     offset,
+    viewer: presentViewer(scope),
   };
 }
 
@@ -487,8 +539,15 @@ async function listApprovals(query, preview) {
   };
 }
 
-async function listScans(limit) {
+async function listScans(limit, department) {
   const window = completionWindow();
+  const params = [];
+  let where = '';
+  if (department) {
+    where = `WHERE ${scanDepartmentSql('e')}`;
+    params.push(department, department, department);
+  }
+  params.push(limit);
   const rows = await all(
     `SELECT e.id, e.event_time, e.location, e.from_department, e.to_department, e.work_order_id,
             wo.external_id,
@@ -496,9 +555,10 @@ async function listScans(limit) {
      FROM barcode_events e
      LEFT JOIN work_orders wo ON wo.id = e.work_order_id
      LEFT JOIN users u ON u.id = e.operator_id
+     ${where}
      ORDER BY e.event_time DESC, e.id DESC
      LIMIT ?`,
-    [limit]
+    params
   );
   return rows.map((row) => ({
     id: row.id,
@@ -513,7 +573,7 @@ async function listScans(limit) {
   }));
 }
 
-async function loadAlerts(now = new Date()) {
+async function loadAlerts(now = new Date(), scope = null) {
   const window = completionWindow();
   const [departments, activeRows, deliveries, backup, stored] = await Promise.all([
     all(`SELECT name, color, is_active FROM departments`),
@@ -524,7 +584,7 @@ async function loadAlerts(now = new Date()) {
        GROUP BY trim(coalesce(wo.department, ''))`
     ),
     all(
-      `SELECT d.id, d.due_time, d.status, wo.external_id, o.order_number
+      `SELECT d.id, d.due_time, d.status, wo.external_id, wo.department AS work_order_department, o.order_number
        FROM deliveries d
        LEFT JOIN work_orders wo ON wo.id = d.work_order_id
        LEFT JOIN orders o ON o.id = d.order_id
@@ -550,7 +610,8 @@ async function loadAlerts(now = new Date()) {
   const known = new Map(departments.map((row) => [String(row.name).trim().toLowerCase(), row]));
   const emptyNames = [];
   let tracked = 0;
-  for (const name of BOARD_DEPARTMENTS) {
+  const trackedNames = scope && scope.restricted ? [scope.department] : BOARD_DEPARTMENTS;
+  for (const name of trackedNames) {
     if (name.toLowerCase() === 'complete') continue;
     const row = known.get(name.toLowerCase());
     if (!row || !row.is_active) continue;
@@ -582,6 +643,10 @@ async function loadAlerts(now = new Date()) {
 
   const overdue = [];
   for (const delivery of deliveries) {
+    if (scope && scope.restricted) {
+      const dept = String(delivery.work_order_department || '').trim().toLowerCase();
+      if (dept !== scope.department.toLowerCase()) continue;
+    }
     const timing = classifyDelivery(delivery, now);
     if (!timing.overdue) continue;
     overdue.push(delivery.external_id || delivery.order_number || `Delivery ${delivery.id}`);
@@ -643,7 +708,8 @@ async function loadAlerts(now = new Date()) {
   return alerts;
 }
 
-async function loadSummary() {
+async function loadSummary(user, query) {
+  const scope = resolveBoardScope(user, query || {});
   const now = new Date();
   const window = completionWindow(now);
   const [
@@ -676,8 +742,8 @@ async function loadSummary() {
     ),
     listActivity({}, true),
     listApprovals({}, true),
-    listScans(SCAN_PREVIEW),
-    loadAlerts(now),
+    listScans(SCAN_PREVIEW, scope.restricted ? scope.department : null),
+    loadAlerts(now, scope),
   ]);
 
   const activeByLower = new Map();
@@ -730,7 +796,7 @@ async function loadSummary() {
     color: tab.color,
   }));
 
-  return {
+  const body = {
     generated_at: now.toISOString(),
     timezone: window.timezone,
     tabs,
@@ -749,7 +815,34 @@ async function loadSummary() {
     approvals: approvals.approvals,
     approvals_total: approvals.total,
     alerts,
+    viewer: presentViewer(scope),
   };
+
+  if (!scope.restricted) return body;
+
+  const key = scope.department.toLowerCase();
+  const activeCount = activeByLower.get(key) || 0;
+  const deptRow = known.get(key);
+  const label = deptRow ? deptRow.name : scope.department;
+  const color = (deptRow && deptRow.color) || '#607D8B';
+  const completedRow = await get(
+    `SELECT COUNT(*) AS count
+     FROM work_orders wo
+     WHERE ${FINISHED_SQL}
+       AND lower(trim(coalesce(wo.department, ''))) = lower(?)
+       AND datetime(coalesce(wo.updated_at, wo.created_at)) >= datetime(?)
+       AND datetime(coalesce(wo.updated_at, wo.created_at)) < datetime(?)`,
+    [scope.department, window.start, window.end]
+  );
+  body.tabs = [{ key: label, label, count: activeCount, color }];
+  body.stats = {
+    ...body.stats,
+    total_active: activeCount,
+    completed_this_month: completedRow ? completedRow.count : 0,
+    departments: [],
+  };
+  body.queue = [{ name: label, count: activeCount, color }];
+  return body;
 }
 
 async function decideApproval({ workOrderId, decision, actorId, note }) {

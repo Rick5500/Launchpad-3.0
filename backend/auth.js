@@ -165,7 +165,7 @@ function clearLoginFailuresForUsername(username) {
 function login(username, password, cb) {
   db.get(
     `SELECT id, username, password_hash, role, display_name, company, contact_name, phone, email,
-            address_line1, address_line2, city, state, zip, is_active
+            address_line1, address_line2, city, state, zip, department, is_active
      FROM users WHERE username = ?`,
     [username],
     (err, row) => {
@@ -195,6 +195,7 @@ function login(username, password, cb) {
                 city: row.city || '',
                 state: row.state || '',
                 zip: row.zip || '',
+                department: row.department || null,
               },
             });
           };

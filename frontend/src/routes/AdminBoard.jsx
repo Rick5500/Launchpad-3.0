@@ -39,6 +39,7 @@ import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import { authFetch } from '../api';
+import { BOARD_REFRESH_EVENT } from '../boardEvents';
 import { useAuth } from '../context/AuthContext';
 import { brand } from '../brand';
 import LoadingState from '../components/LoadingState';
@@ -117,6 +118,7 @@ export default function AdminBoard() {
   const [tableError, setTableError] = useState('');
   const [tableLoading, setTableLoading] = useState(true);
   const [department, setDepartment] = useState('All');
+  const [viewAll, setViewAll] = useState(false);
   const [searchInput, setSearchInput] = useState('');
   const [q, setQ] = useState('');
   const [filters, setFilters] = useState(EMPTY_FILTERS);
@@ -147,7 +149,8 @@ export default function AdminBoard() {
 
   useEffect(() => {
     let cancelled = false;
-    authFetch('/api/admin-board', { cache: 'no-store' })
+    const summaryPath = viewAll ? '/api/admin-board?scope=all' : '/api/admin-board';
+    authFetch(summaryPath, { cache: 'no-store' })
       .then(async (response) => {
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(body.error || 'Unable to load the admin board');
@@ -168,7 +171,7 @@ export default function AdminBoard() {
     return () => {
       cancelled = true;
     };
-  }, [refreshKey]);
+  }, [refreshKey, viewAll]);
 
   useEffect(() => {
     let cancelled = false;
@@ -178,7 +181,9 @@ export default function AdminBoard() {
     params.set('offset', String(offset));
     params.set('sort', sort.field);
     params.set('direction', sort.direction);
-    if (department && department !== 'All') params.set('department', department);
+    const locked = Boolean(summary?.viewer?.restricted) && !viewAll;
+    if (viewAll) params.set('scope', 'all');
+    if (!locked && department && department !== 'All') params.set('department', department);
     if (q) params.set('q', q);
     if (filters.status) params.set('status', filters.status);
     if (filters.priority) params.set('priority', filters.priority);
@@ -209,15 +214,29 @@ export default function AdminBoard() {
     return () => {
       cancelled = true;
     };
-  }, [department, q, filters, offset, sort, refreshKey]);
+  }, [department, q, filters, offset, sort, refreshKey, viewAll, summary?.viewer?.restricted]);
+
+  useEffect(() => {
+    if (!summary?.viewer?.restricted || viewAll || !summary.viewer.department) return;
+    setDepartment((current) => (current === summary.viewer.department ? current : summary.viewer.department));
+  }, [summary, viewAll]);
 
   useEffect(() => {
     if (!summary?.tabs || department === 'All') return;
+    if (summary?.viewer?.restricted && !viewAll) return;
     if (!summary.tabs.some((tab) => tab.key === department)) {
       setDepartment('All');
       setOffset(0);
     }
-  }, [summary, department]);
+  }, [summary, department, viewAll]);
+
+  useEffect(() => {
+    function onBoardRefresh() {
+      setRefreshKey((value) => value + 1);
+    }
+    window.addEventListener(BOARD_REFRESH_EVENT, onBoardRefresh);
+    return () => window.removeEventListener(BOARD_REFRESH_EVENT, onBoardRefresh);
+  }, []);
 
   useEffect(() => {
     let timer = 0;
@@ -240,7 +259,10 @@ export default function AdminBoard() {
   }, []);
 
   const tabs = summary?.tabs?.length ? summary.tabs : [{ key: 'All', label: 'All', count: 0 }];
-  const activeTab = tabs.some((tab) => tab.key === department) ? department : 'All';
+  const lockedView = Boolean(summary?.viewer?.restricted) && !viewAll;
+  const activeTab = tabs.some((tab) => tab.key === department)
+    ? department
+    : (lockedView && tabs[0] ? tabs[0].key : 'All');
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const page = Math.floor(offset / PAGE_SIZE) + 1;
   const showingFrom = total === 0 ? 0 : offset + 1;
@@ -256,7 +278,7 @@ export default function AdminBoard() {
         key: 'total',
         value: summary.stats.total_active,
         label: 'Total Active',
-        caption: 'All Departments',
+        caption: summary?.viewer?.restricted ? summary.viewer.department : 'All Departments',
         color: '#1E88E5',
         Icon: AssignmentOutlinedIcon,
       },
@@ -385,11 +407,35 @@ export default function AdminBoard() {
   if (loading && !summary) return <LoadingState message="Loading the admin board..." />;
   if (summaryError && !summary) return <ErrorState message={summaryError} />;
 
+  function toggleDepartmentScope() {
+    setViewAll((current) => !current);
+    setDepartment('All');
+    setOffset(0);
+  }
+
   return (
     <Box sx={{ display: 'grid', gap: 2 }}>
+      {(summary?.viewer?.restricted || summary?.viewer?.can_clear) && (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+          {summary.viewer.restricted && (
+            <Chip color="primary" label={`Showing: ${summary.viewer.department}`} sx={{ fontWeight: 700 }} />
+          )}
+          {summary.viewer.can_clear && (
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={toggleDepartmentScope}
+              sx={{ textTransform: 'none' }}
+            >
+              {viewAll ? `Show ${summary.viewer.department}` : 'All departments'}
+            </Button>
+          )}
+        </Box>
+      )}
       <Tabs
         value={activeTab}
         onChange={(_, value) => {
+          if (lockedView) return;
           setDepartment(value);
           setOffset(0);
         }}

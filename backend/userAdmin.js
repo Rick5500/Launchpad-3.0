@@ -28,7 +28,7 @@ const SORTS = {
 };
 
 const PUBLIC_COLUMNS = `id, username, role, display_name, company, contact_name, phone, email,
-  address_line1, address_line2, city, state, zip, is_active, created_at, updated_at`;
+  address_line1, address_line2, city, state, zip, department, is_active, created_at, updated_at`;
 
 function present(row) {
   return {
@@ -45,6 +45,7 @@ function present(row) {
     city: row.city || '',
     state: row.state || '',
     zip: row.zip || '',
+    department: row.department || null,
     is_active: row.is_active !== 0,
     created_at: row.created_at,
     updated_at: row.updated_at || null,
@@ -98,6 +99,39 @@ function parseProfile(body) {
       zip: address.value.zip,
     },
   };
+}
+
+function departmentProvided(source) {
+  return Object.prototype.hasOwnProperty.call(source || {}, 'department');
+}
+
+// Empty, omitted, and "All departments" store NULL. A name must match departments.name.
+async function canonicalDepartment(tx, value) {
+  if (value == null) return { value: null };
+  if (typeof value !== 'string') return { error: 'department must be a string' };
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'all departments') return { value: null };
+  const parsed = parseText(trimmed, 'department', { max: 80 });
+  if (parsed.error) return parsed;
+  const row = await tx.get(
+    `SELECT name FROM departments WHERE lower(name) = lower(?)`,
+    [parsed.value]
+  );
+  if (!row) return { error: 'department must be an existing department' };
+  return { value: row.name };
+}
+
+async function departmentForRole(tx, source, role, existingDepartment) {
+  if (role === 'customer') {
+    if (departmentProvided(source)) {
+      const resolved = await canonicalDepartment(tx, source.department);
+      if (resolved.error) return resolved;
+      if (resolved.value) return { error: 'Customers are not assigned a department' };
+    }
+    return { value: null };
+  }
+  if (!departmentProvided(source)) return { value: existingDepartment || null };
+  return canonicalDepartment(tx, source.department);
 }
 
 function bearerToken(req) {
@@ -214,11 +248,13 @@ async function createUser(actorId, body) {
   const id = await withTransaction(async (tx) => {
     const taken = await tx.get('SELECT id FROM users WHERE lower(username) = lower(?)', [username.value]);
     if (taken) throw httpError(409, 'Username is already in use');
+    const department = await departmentForRole(tx, source, role.value, null);
+    if (department.error) throw httpError(400, department.error);
     const inserted = await tx.run(
       `INSERT INTO users (
          username, password_hash, role, display_name, company, contact_name, phone, email,
-         address_line1, address_line2, city, state, zip, is_active, created_at, updated_at
-       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))`,
+         address_line1, address_line2, city, state, zip, department, is_active, created_at, updated_at
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))`,
       [
         username.value,
         hash,
@@ -233,13 +269,17 @@ async function createUser(actorId, body) {
         profile.value.city,
         profile.value.state,
         profile.value.zip,
+        department.value,
         active.value,
       ]
     );
     await activityLog.recordOn(tx, actorId, 'user.created', 'user', inserted.lastID, {
       username: username.value,
       role: role.value,
-      message: `Created ${role.value} ${username.value}`,
+      department: department.value,
+      message: department.value
+        ? `Created ${role.value} ${username.value} in ${department.value}`
+        : `Created ${role.value} ${username.value}`,
     });
     return inserted.lastID;
   });
@@ -293,6 +333,11 @@ async function updateUser(actorId, id, body) {
     );
     if (taken) throw httpError(409, 'Username is already in use');
 
+    const department = await departmentForRole(tx, source, role.value, existing.department || null);
+    if (department.error) throw httpError(400, department.error);
+    const previousDepartment = existing.department || null;
+    const departmentChanged = previousDepartment !== department.value;
+
     const wasActive = currentlyActive;
     const action = wasActive && active.value === 0
       ? 'user.deactivated'
@@ -301,7 +346,7 @@ async function updateUser(actorId, id, body) {
     await tx.run(
       `UPDATE users
        SET username = ?, role = ?, display_name = ?, company = ?, contact_name = ?, phone = ?, email = ?,
-           address_line1 = ?, address_line2 = ?, city = ?, state = ?, zip = ?,
+           address_line1 = ?, address_line2 = ?, city = ?, state = ?, zip = ?, department = ?,
            is_active = ?, updated_at = datetime('now')
        WHERE id = ?`,
       [
@@ -317,20 +362,26 @@ async function updateUser(actorId, id, body) {
         profile.value.city,
         profile.value.state,
         profile.value.zip,
+        department.value,
         active.value,
         existing.id,
       ]
     );
+    const departmentMessage = department.value
+      ? `Updated ${username.value} department to ${department.value}`
+      : `Updated ${username.value} department to all departments`;
     await activityLog.recordOn(tx, actorId, action, 'user', existing.id, {
       username: username.value,
       role: role.value,
       previous_role: existing.role,
       is_active: active.value === 1,
+      department: department.value,
+      previous_department: previousDepartment,
       message: action === 'user.deactivated'
         ? `Deactivated ${username.value}`
         : action === 'user.reactivated'
           ? `Reactivated ${username.value}`
-          : `Updated ${username.value}`,
+          : (departmentChanged ? departmentMessage : `Updated ${username.value}`),
     });
     return {
       id: existing.id,
@@ -401,6 +452,13 @@ async function resetPassword(actorId, id, body, exceptToken) {
   });
 }
 
+async function loadAccess(userId) {
+  const row = await get(`SELECT role, department FROM users WHERE id = ?`, [userId]);
+  if (!row) return { role: null, department: null };
+  const department = row.department && String(row.department).trim() ? String(row.department).trim() : null;
+  return { role: row.role, department };
+}
+
 module.exports = {
   listUsers,
   getUser,
@@ -411,5 +469,6 @@ module.exports = {
   present,
   bearerToken,
   parseUsername,
+  loadAccess,
   MIN_PASSWORD_LENGTH,
 };
