@@ -40,6 +40,15 @@ CREATE TABLE departments (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME
 );
+CREATE TABLE production_stages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  color TEXT DEFAULT '#90caf9',
+  icon TEXT,
+  sort_order INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME
+);
 CREATE TABLE work_orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   external_id TEXT,
@@ -48,7 +57,49 @@ CREATE TABLE work_orders (
   quantity INTEGER DEFAULT 0,
   status TEXT DEFAULT 'open',
   department TEXT DEFAULT 'General',
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  stage_id INTEGER,
+  priority TEXT DEFAULT 'Normal',
+  assigned_department_id INTEGER,
+  assigned_user_id INTEGER,
+  estimated_hours REAL,
+  actual_hours REAL,
+  specifications TEXT,
+  start_date DATETIME,
+  due_date DATETIME,
+  production_line TEXT,
+  routing_instructions TEXT,
+  attachments TEXT,
+  notes TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME,
+  FOREIGN KEY(customer_id) REFERENCES users(id)
+);
+CREATE TABLE production_board (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  work_order_id INTEGER NOT NULL,
+  lane TEXT,
+  position INTEGER,
+  status TEXT,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE barcode_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scanned_value TEXT NOT NULL,
+  work_order_id INTEGER,
+  operator_id INTEGER,
+  location TEXT,
+  event_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+  stage_id INTEGER
+);
+CREATE TABLE deliveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  work_order_id INTEGER,
+  will_call BOOLEAN DEFAULT 0,
+  due_time DATETIME,
+  carrier TEXT,
+  status TEXT DEFAULT 'pending',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME
 );
 CREATE TABLE orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,10 +117,19 @@ CREATE TABLE orders (
 CREATE TABLE order_line_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   order_id INTEGER NOT NULL,
+  service_id INTEGER,
+  work_order_id INTEGER,
   line_number INTEGER NOT NULL,
   description TEXT NOT NULL,
+  size TEXT,
+  quantity TEXT,
+  media TEXT,
+  color TEXT,
+  binding_finish TEXT,
+  finishing TEXT,
   mount INTEGER DEFAULT 0,
-  laminate INTEGER DEFAULT 0
+  laminate INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 `;
 
