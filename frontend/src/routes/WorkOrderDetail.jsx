@@ -63,13 +63,13 @@ function SpecificationBlocks({ workOrder }) {
   return (
     <Box sx={{ display: 'grid', gap: 2 }}>
       {blocks.map((block) => (
-        <Box key={`${block.line_number}-${block.title}`}>
-          <Typography sx={{ fontWeight: 700, mb: 1 }}>{block.title}</Typography>
+        <Box key={`${block.line_number}-${block.title}`} sx={{ minWidth: 0 }}>
+          <Typography sx={{ fontWeight: 700, mb: 1, whiteSpace: 'normal', overflowWrap: 'break-word', wordWrap: 'break-word' }}>{block.title}</Typography>
           <Grid container spacing={1}>
             {block.fields.map((field) => (
-              <Grid item xs={12} sm={6} key={field.label}>
+              <Grid item xs={12} sm={6} key={field.label} sx={{ minWidth: 0 }}>
                 <Typography variant="caption" color="text.secondary">{field.label}</Typography>
-                <Typography>{field.value || '—'}</Typography>
+                <Typography sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'break-word', wordWrap: 'break-word' }}>{field.value || '—'}</Typography>
               </Grid>
             ))}
           </Grid>

@@ -10,6 +10,7 @@ const os = require('os');
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 const catalog = require('../smallFormatCatalog');
+const { LINE_SUMMARY_MAX } = require('../serviceFields');
 
 const backendDir = path.join(__dirname, '..');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-phase6-'));
@@ -557,6 +558,72 @@ async function main() {
       }]),
     });
     assert(duplicateFinish.status === 400 && /duplicated/.test(duplicateFinish.json.error), duplicateFinish.text);
+
+    const longest = (list) => list.reduce((best, value) => (value.length > best.length ? value : best));
+    const maximalValues = {
+      product: longest(catalog.SMALL_FORMAT_PRODUCTS),
+      originals: 'A'.repeat(160),
+      copies: 'B'.repeat(160),
+      size: longest(catalog.SMALL_FORMAT_SIZES),
+      process: longest(catalog.SMALL_FORMAT_COLOR_MODES),
+      sides: longest(catalog.SMALL_FORMAT_SIDES),
+      media: longest(catalog.SMALL_FORMAT_PAPER),
+      binding: longest(catalog.SMALL_FORMAT_BINDING),
+      folding: 'Z-Fold',
+      finishing: catalog.SMALL_FORMAT_FINISHING.slice(),
+      proof: longest(catalog.SMALL_FORMAT_PROOFS),
+      notes: `${'Press check the crop marks. '.repeat(80)}`.trim().slice(0, 2000),
+    };
+    assert(maximalValues.finishing.length >= 8, 'the maximal line should include at least 8 finishing options');
+    const maximal = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customer.token,
+      json: orderBody(small.id, [{
+        service_id: small.id,
+        field_values: maximalValues,
+      }]),
+    });
+    assert(maximal.status === 201, `maximal Small Format line failed: ${maximal.text}`);
+    const maximalLine = maximal.json.order.line_items[0];
+    const summary = maximalLine.description;
+    const summaryParts = (maximalLine.fields || [])
+      .filter((field) => field.display && field.display !== 'No')
+      .map((field) => `${field.label}: ${field.display}`);
+    const fullSummary = summaryParts.join(' · ');
+    assert(fullSummary.length > LINE_SUMMARY_MAX, 'a maximal Small Format summary should exceed the cap so truncation is exercised');
+    assert(summary.length <= LINE_SUMMARY_MAX, `summary length ${summary.length} exceeds ${LINE_SUMMARY_MAX}`);
+    assert(summary.length > 200, 'the summary should keep more than the old 200 character cut');
+    assert(summary.endsWith('…'), 'a summary over the cap should end with an ellipsis');
+    const summaryBody = summary.slice(0, -1);
+    assert(fullSummary.startsWith(summaryBody), 'the truncated summary should be a prefix of the full summary');
+    const summaryRest = fullSummary.slice(summaryBody.length);
+    assert(
+      summaryRest.startsWith(' · ') || summaryRest.startsWith(' '),
+      `summary was cut mid-word near ${JSON.stringify(summary.slice(-24))}`
+    );
+    assert(summary.includes('Folding: Z-Fold'), 'folding should stay a complete segment');
+    assert(
+      summary.includes(`Finishing: ${catalog.SMALL_FORMAT_FINISHING.join(', ')}`),
+      'finishing options should stay intact instead of ending mid-word'
+    );
+    const maximalPrint = await request({
+      method: 'GET',
+      path: `/api/orders/${maximal.json.order.id}/print`,
+      token: customer.token,
+    });
+    assert(maximalPrint.status === 200, maximalPrint.text);
+    assert(maximalPrint.json.work_orders[0].line_items[0].description === summary, 'the print sheet should use the same summary');
+    const maximalWorkOrder = await request({
+      method: 'GET',
+      path: `/api/workorders/${maximal.json.work_orders[0].id}`,
+      token: admin.token,
+    });
+    assert(maximalWorkOrder.status === 200, maximalWorkOrder.text);
+    assert(
+      (maximalWorkOrder.json.specification_lines || [])[0].title === summary,
+      'work order detail should use the same summary'
+    );
 
     const proofRow = await openDb(freshDb);
     const proofField = (await smallFields(proofRow)).get('proof');
