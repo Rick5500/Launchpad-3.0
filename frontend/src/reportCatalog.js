@@ -55,6 +55,8 @@ export const REPORTS = [
       { key: 'customer_name', label: 'Customer' },
       { key: 'due_time', label: 'Due' },
       { key: 'carrier', label: 'Carrier' },
+      { key: 'delivery_method', label: 'Method' },
+      { key: 'ups_account_number', label: 'UPS account' },
       { key: 'status', label: 'Status' },
       { key: 'timing', label: 'Timing' },
       { key: 'will_call', label: 'Will call' },

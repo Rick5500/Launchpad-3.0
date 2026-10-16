@@ -1,6 +1,6 @@
 const db = require('./db');
 const { getOrder } = require('./orderService');
-const { orderWindow } = require('./deliveryRules');
+const { deliveryWindow, willCallWindow, hoursLabel, usesWillCallHours } = require('./deliveryRules');
 const { code128Svg } = require('./barcodeSvg');
 const { loadLetterhead, DEFAULT_NAME, DEFAULT_ADDRESS, DEFAULT_PHONE, addressLines } = require('./shopProfile');
 
@@ -47,18 +47,9 @@ function httpError(status, message) {
   return error;
 }
 
-function clockLabel(hhmm) {
-  const match = /^(\d{2}):(\d{2})$/.exec(String(hhmm || ''));
-  if (!match) return String(hhmm || '');
-  const hour24 = Number(match[1]);
-  const suffix = hour24 >= 12 ? 'PM' : 'AM';
-  const hour12 = hour24 % 12 || 12;
-  return `${hour12}:${match[2]} ${suffix}`;
-}
-
-function deliveryWindowLabel() {
-  const window = orderWindow();
-  return `${clockLabel(window.start)} - ${clockLabel(window.end)} (${window.incrementMinutes} min increments)`;
+function deliveryHoursLabel(methodName, willCallFlag) {
+  const window = usesWillCallHours(methodName, willCallFlag) ? willCallWindow() : deliveryWindow();
+  return hoursLabel(window);
 }
 
 function utcNow() {
@@ -182,6 +173,7 @@ async function buildSheet(workOrderId, viewer) {
        o.project_name,
        o.notes AS order_notes,
        o.delivery_method,
+       o.ups_account_number,
        o.ship_to,
        o.attention,
        o.due_date AS order_due_date,
@@ -236,6 +228,9 @@ async function buildSheet(workOrderId, viewer) {
   }
   const specialInstructions = textOrEmpty(row.notes).trim() || textOrEmpty(row.order_notes).trim();
   const process = uniqueParts([row.service_name, row.stage_name, row.department]).join(' · ');
+  const methodName = row.delivery_method || (delivery && delivery.carrier) || '';
+  const willCallFlag = delivery ? delivery.will_call : false;
+  const upsAccount = textOrEmpty(row.ups_account_number).trim();
 
   return {
     id: row.id,
@@ -262,10 +257,12 @@ async function buildSheet(workOrderId, viewer) {
       notes: row.order_notes || '',
     },
     delivery: {
-      method: row.delivery_method || (delivery && delivery.carrier) || '',
+      method: methodName,
       will_call: Boolean(delivery && delivery.will_call),
       ship_to: row.ship_to || '',
       attention: row.attention || '',
+      ups_account_number: upsAccount || null,
+      hours_label: deliveryHoursLabel(methodName, willCallFlag),
     },
     service_name: row.service_name || null,
     stage_name: row.stage_name || null,
@@ -314,7 +311,7 @@ function envelope(kind, orderId, orderNumber, sheets, viewer, shop) {
       phone: letterhead.phone,
     },
     scan_instructions: SCAN_INSTRUCTIONS.slice(),
-    delivery_window_label: deliveryWindowLabel(),
+    delivery_window_label: (sheets[0] && sheets[0].delivery && sheets[0].delivery.hours_label) || deliveryHoursLabel('', false),
     generated_at: utcNow(),
     staff_history: !viewer || viewer.role !== 'customer',
     work_orders: sheets,

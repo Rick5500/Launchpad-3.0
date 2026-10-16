@@ -80,9 +80,10 @@ export default function SystemSettingsPage() {
   const readOnly = settings?.read_only || {};
   const rows = [
     ['Delivery timezone', readOnly.delivery_timezone],
+    ['Will Call hours', readOnly.will_call_window_start ? `${readOnly.will_call_window_start} – ${readOnly.will_call_window_end}` : ''],
+    ['Delivery hours', readOnly.delivery_window_start ? `${readOnly.delivery_window_start} – ${readOnly.delivery_window_end}` : ''],
     ['Will-call cutoff', readOnly.will_call_cutoff],
     ['Carrier cutoff', readOnly.carrier_cutoff],
-    ['Order window', readOnly.delivery_window_start ? `${readOnly.delivery_window_start} – ${readOnly.delivery_window_end}` : ''],
     ['Slot minutes', readOnly.delivery_slot_minutes],
     ['Max upload size', readOnly.max_upload_mb != null ? `${readOnly.max_upload_mb} MB` : ''],
     ['Max files per request', readOnly.max_upload_files],
@@ -94,7 +95,7 @@ export default function SystemSettingsPage() {
     <Box data-testid="settings-page">
       <Typography variant="h4" gutterBottom>System Settings</Typography>
       <Typography color="text.secondary" sx={{ mb: 2 }}>
-        Letterhead is used by the printable work order. Cutoffs, timezone, and upload limits come from the server environment and are read-only here.
+        Letterhead is used by the printable work order. Pickup hours, delivery hours, cutoffs, timezone, and upload limits come from the server environment and are read-only here.
       </Typography>
       {loading ? <LoadingState message="Loading settings..." /> : null}
       {error ? <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert> : null}

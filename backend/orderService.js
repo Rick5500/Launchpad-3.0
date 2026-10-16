@@ -3,6 +3,15 @@ const { withTransaction } = require('./dbAsync');
 const {
   businessToday,
   validateOrderDue,
+  retiredDeliveryMethod,
+  retiredDeliveryMessage,
+  isUpsMethod,
+  usesWillCallHours,
+  parseUpsAccountNumber,
+  willCallWindow,
+  deliveryWindow,
+  windowSummary,
+  hoursLabel,
 } = require('./deliveryRules');
 const activityLog = require('./activityLog');
 
@@ -395,6 +404,8 @@ async function loadOrderRecord(orderId, user) {
     project_name: order.project_name,
     notes: order.notes,
     delivery_method: order.delivery_method,
+    ups_account_number: order.ups_account_number || null,
+    delivery_hours: deliveryHoursFor(order.delivery_method, delivery && delivery.will_call),
     ship_to: order.ship_to,
     attention: order.attention,
     due_date: order.due_date,
@@ -455,8 +466,11 @@ async function createOrder(user, body, now = new Date()) {
   const shipTo = optionalText(payload.ship_to, 'ship_to', 500);
   const attention = optionalText(payload.attention, 'attention', 160);
   const deliveryMethodName = requiredText(payload.delivery_method, 'delivery_method', 120);
-  const due = validateOrderDue(payload.due_date, payload.due_time, now);
-  if (due.error) throw new OrderError(due.error);
+  if (retiredDeliveryMethod(deliveryMethodName)) {
+    throw new OrderError(retiredDeliveryMessage(deliveryMethodName));
+  }
+  const upsAccount = parseUpsAccountNumber(payload.ups_account_number);
+  if (upsAccount.error) throw new OrderError(upsAccount.error);
   const serviceIds = parseServiceIds(payload);
   const lineItems = parseLineItems(payload, serviceIds);
   const topLevelFileIds = parseTopLevelFileIds(payload);
@@ -472,11 +486,23 @@ async function createOrder(user, body, now = new Date()) {
     }
 
     const method = await tx.get(
-      `SELECT id, name, will_call FROM delivery_methods
+      `SELECT id, name, will_call, is_active FROM delivery_methods
        WHERE lower(name) = lower(?) AND is_active = 1`,
       [deliveryMethodName]
     );
-    if (!method) throw new OrderError('delivery_method is not available');
+    if (!method || retiredDeliveryMethod(method.name)) {
+      throw new OrderError(retiredDeliveryMethod(deliveryMethodName)
+        ? retiredDeliveryMessage(deliveryMethodName)
+        : 'delivery_method is not available');
+    }
+    const due = validateOrderDue(payload.due_date, payload.due_time, now, {
+      willCall: usesWillCallHours(method.name, method.will_call),
+    });
+    if (due.error) throw new OrderError(due.error);
+    if (upsAccount.value && !isUpsMethod(method.name)) {
+      throw new OrderError('ups_account_number is only accepted when the delivery method is UPS');
+    }
+    const storedUpsAccount = isUpsMethod(method.name) ? upsAccount.value : null;
 
     const placeholders = serviceIds.map(() => '?').join(', ');
     const services = await tx.all(
@@ -518,8 +544,8 @@ async function createOrder(user, body, now = new Date()) {
       `INSERT INTO orders (
         order_number, customer_id, company, contact_name, phone, email,
         po_number, project_number, project_name, notes, delivery_method,
-        ship_to, attention, due_date, due_time, created_by, updated_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
+        ups_account_number, ship_to, attention, due_date, due_time, created_by, updated_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
       [
         orderNumber,
         customerId,
@@ -532,6 +558,7 @@ async function createOrder(user, body, now = new Date()) {
         projectName,
         notes,
         method.name,
+        storedUpsAccount,
         shipTo,
         attention,
         due.value.dueDate,
@@ -690,8 +717,8 @@ async function listOrders(user, query) {
   const orders = await allOn(
     db,
     `SELECT o.id, o.order_number, o.customer_id, o.company, o.contact_name, o.phone, o.email,
-            o.po_number, o.project_number, o.project_name, o.delivery_method, o.due_date,
-            o.due_time, o.created_at, u.display_name AS customer_display_name
+            o.po_number, o.project_number, o.project_name, o.delivery_method, o.ups_account_number,
+            o.due_date, o.due_time, o.created_at, u.display_name AS customer_display_name
      FROM orders o
      LEFT JOIN users u ON u.id = o.customer_id
      ${where}
@@ -773,25 +800,41 @@ async function orderOptions() {
      WHERE is_active = 1
      ORDER BY sort_order, id`
   );
-  const { orderWindow, orderWindowSummary } = require('./deliveryRules');
-  const window = orderWindow();
+  const deliveryHours = deliveryWindow();
+  const willCallHours = willCallWindow();
+  const selectable = methods.filter((method) => !retiredDeliveryMethod(method.name));
   return {
     services: services.map((service) => ({
       ...service,
       requires_approval: Boolean(service.requires_approval),
     })),
-    delivery_methods: methods.map((method) => ({
+    delivery_methods: selectable.map((method) => ({
       ...method,
       will_call: Boolean(method.will_call),
     })),
-    due_window: {
-      start: window.start,
-      end: window.end,
-      increment_minutes: window.incrementMinutes,
-      slots: window.slots,
-      summary: orderWindowSummary(window),
+    due_window: presentDueWindow(deliveryHours, 'delivery'),
+    due_windows: {
+      will_call: presentDueWindow(willCallHours, 'will_call'),
+      delivery: presentDueWindow(deliveryHours, 'delivery'),
     },
   };
+}
+
+function presentDueWindow(window, kind) {
+  return {
+    start: window.start,
+    end: window.end,
+    increment_minutes: window.incrementMinutes,
+    slots: window.slots,
+    summary: windowSummary(window, kind),
+    label: hoursLabel(window),
+  };
+}
+
+function deliveryHoursFor(methodName, willCallFlag) {
+  const willCall = usesWillCallHours(methodName, willCallFlag);
+  const window = willCall ? willCallWindow() : deliveryWindow();
+  return presentDueWindow(window, willCall ? 'will_call' : 'delivery');
 }
 
 async function previewOrder(query, now = new Date()) {

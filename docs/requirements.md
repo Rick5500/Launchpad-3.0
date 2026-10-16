@@ -70,8 +70,10 @@ Barcode scans:
 Delivery / will-call:
 - Rules live in `backend/deliveryRules.js`.
 - Will-call cutoff defaults to 15:00 (`WILL_CALL_CUTOFF`). Carrier cutoff defaults to 14:00 (`CARRIER_CUTOFF`). When `DELIVERY_TIMEZONE` is unset the code default is UTC. `backend/.env.example` sets `America/New_York` for the shop.
+- Will Call hours default to 08:00–17:00 (`WILL_CALL_WINDOW_START`, `WILL_CALL_WINDOW_END`). Delivery hours default to 09:00–16:00 (`DELIVERY_WINDOW_START`, `DELIVERY_WINDOW_END`). Customer requested times must fall in the window for the method. The cutoffs stay 15:00 and 14:00 because they sit inside those windows; a blank due time is still the cutoff.
 - Ready before the cutoff on a weekday: due that day at the cutoff. Ready at or after the cutoff, or on a weekend: due the next Monday–Friday at the cutoff. Holidays are not skipped.
-- Flag open deliveries overdue, due today, or due soon (`DUE_SOON_HOURS`, default 1). Status `complete` is not overdue.
+- Flag open deliveries overdue, due today, or due soon (`DUE_SOON_HOURS`, default 1) from the stored due timestamp. Status `complete` is not overdue. Older orders outside the current window keep that timestamp.
+- Selectable methods are Will Call, UPS, and Accent Truck. Customer Pickup, FedEx, and Common Carrier are rejected on new orders. Existing rows keep their stored label. Customer Pickup uses Will Call hours. An optional UPS account number is stored only for UPS.
 - Status values are `pending`, `scheduled`, `out-for-delivery`, and `complete`.
 - Customers can read only deliveries for their own work orders. Admin and operator can write.
 

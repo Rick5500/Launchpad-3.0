@@ -475,6 +475,11 @@ async function main() {
     const options = await request({ method: 'GET', path: '/api/orders/options', token: customer.token });
     assert(options.status === 200, 'customer options should load');
     assert(!options.json.services.some((row) => row.id === createdService.json.id), 'deactivated service should leave the order form');
+    const methodNames = (options.json.delivery_methods || []).map((method) => method.name);
+    assert(methodNames.includes('Will Call') && methodNames.includes('UPS') && methodNames.includes('Accent Truck'), `methods were ${methodNames.join(',')}`);
+    assert(!methodNames.some((name) => /customer pickup|fedex|common carrier/i.test(name)), 'retired delivery methods should leave the order form');
+    assert(options.json.due_windows.will_call.start === '08:00' && options.json.due_windows.will_call.end === '17:00', 'Will Call window should be on the order form');
+    assert(options.json.due_windows.delivery.end === '14:00', 'delivery window should follow the test environment');
     const stillThere = await request({ method: 'GET', path: `/api/orders/${orderId}`, token: customer.token });
     assert(
       stillThere.status === 200 && stillThere.json.work_orders.some((row) => row.external_id === externalId),
@@ -513,6 +518,9 @@ async function main() {
     assert(savedSettings.json.due_soon_hours.value === 4 && savedSettings.json.due_soon_hours.source === 'settings', 'due soon hours should be stored');
     assert(savedSettings.json.last_backup_at === '2026-06-09 02:00:00', 'backup timestamp should be stored');
     assert(savedSettings.json.read_only.delivery_timezone === 'UTC', 'timezone should stay read from the environment');
+    assert(savedSettings.json.read_only.will_call_window_start === '08:00' && savedSettings.json.read_only.will_call_window_end === '17:00', 'Will Call hours should be read-only settings');
+    assert(savedSettings.json.read_only.delivery_window_start === '09:00' && savedSettings.json.read_only.delivery_window_end === '14:00', 'delivery hours should be read-only settings');
+    assert(savedSettings.json.read_only.will_call_cutoff === '15:00' && savedSettings.json.read_only.carrier_cutoff === '14:00', 'cutoffs should stay on the settings page');
     assert(savedSettings.json.read_only.max_upload_mb != null, 'upload limit should be displayed');
     assert(savedSettings.json.letterhead.company_name === 'Phase Four Press', 'letterhead name should be stored');
     const printed = await request({

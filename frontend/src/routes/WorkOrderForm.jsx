@@ -77,6 +77,7 @@ export default function WorkOrderForm() {
   const [message, setMessage] = useState('');
   const [issuedLogin, setIssuedLogin] = useState(null);
   const [customerTouched, setCustomerTouched] = useState(false);
+  const [orderDelivery, setOrderDelivery] = useState(null);
 
   useEffect(() => {
     setLoading(true);
@@ -130,10 +131,15 @@ export default function WorkOrderForm() {
             setSelectedCustomer(null);
             setCustomerInput(workOrderData.customer_name || '');
           }
+          setOrderDelivery(workOrderData.delivery_method ? {
+            method: workOrderData.delivery_method,
+            ups_account_number: workOrderData.ups_account_number || '',
+          } : null);
         } else {
           setValues(defaultValues);
           setSelectedCustomer(null);
           setCustomerInput('');
+          setOrderDelivery(null);
         }
       })
       .catch((err) => setError(err.message || 'Unable to load form data'))
@@ -252,6 +258,32 @@ export default function WorkOrderForm() {
               >
                 Customer {issuedLogin.username} was created. Temporary password (shown once): {issuedLogin.password}
               </Alert>
+            )}
+            {orderDelivery && (
+              <Grid container spacing={2}>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    label="Delivery method"
+                    value={orderDelivery.method}
+                    fullWidth
+                    variant="filled"
+                    disabled
+                    helperText="Stored on the order. Saving this work order does not change it."
+                  />
+                </Grid>
+                {orderDelivery.ups_account_number ? (
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      label="UPS account number"
+                      value={orderDelivery.ups_account_number}
+                      fullWidth
+                      variant="filled"
+                      disabled
+                      helperText="Optional shipping account from the order."
+                    />
+                  </Grid>
+                ) : null}
+              </Grid>
             )}
             <Grid container spacing={2}>
               <Grid item xs={12} md={6}>

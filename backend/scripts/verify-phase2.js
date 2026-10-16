@@ -391,6 +391,11 @@ async function runApiChecks() {
     });
     assert(customerResponse.status === 201, `customer create failed: ${customerResponse.status} ${customerResponse.text}`);
     const customer = await login('phasetwo', 'CustomerPass1');
+    const deliveryRules = await request({ method: 'GET', path: '/api/delivery/rules', token: admin.token });
+    assert(deliveryRules.status === 200, `delivery rules failed: ${deliveryRules.text}`);
+    assert(deliveryRules.json.rules.windows.willCall.start === '08:00' && deliveryRules.json.rules.windows.willCall.end === '17:00', 'Will Call hours should be 8:00 AM to 5:00 PM');
+    assert(deliveryRules.json.rules.windows.delivery.start === '09:00' && deliveryRules.json.rules.windows.delivery.end === '14:00', 'test delivery hours should follow DELIVERY_WINDOW_END');
+    assert(deliveryRules.json.rules.willCallCutoff === '15:00' && deliveryRules.json.rules.carrierCutoff === '14:00', 'same-day cutoffs should stay 15:00 and 14:00');
 
     for (const pathName of ['/api/admin-board', '/api/admin-board/work-orders', '/api/admin-board/activity', '/api/admin-board/approvals']) {
       const denied = await request({ method: 'GET', path: pathName, token: customer.token });

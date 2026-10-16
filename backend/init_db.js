@@ -251,21 +251,21 @@ async function ensureServiceCodeIndex() {
 }
 
 async function seedDeliveryMethods() {
-  const methods = [
-    ['Accent Truck', 0, 1],
-    ['Will Call', 1, 2],
-    ['Customer Pickup', 1, 3],
-    ['UPS', 0, 4],
-    ['FedEx', 0, 5],
-    ['Common Carrier', 0, 6],
-  ];
-
-  for (const method of methods) {
-    const existing = await get('SELECT id FROM delivery_methods WHERE name = ?', [method[0]]);
+  const { ACTIVE_DELIVERY_METHODS, RETIRED_DELIVERY_METHODS } = require('./deliveryRules');
+  for (const method of ACTIVE_DELIVERY_METHODS) {
+    const existing = await get('SELECT id FROM delivery_methods WHERE name = ?', [method.name]);
     if (existing) continue;
     await run(
       'INSERT INTO delivery_methods (name, will_call, sort_order, is_active) VALUES (?,?,?,1)',
-      method
+      [method.name, method.willCall ? 1 : 0, method.sortOrder]
+    );
+  }
+  // Retired names stay in the table when an older database already has them.
+  // Deactivating hides them from new orders. Rows and existing order labels are kept.
+  for (const method of RETIRED_DELIVERY_METHODS) {
+    await run(
+      'UPDATE delivery_methods SET is_active = 0 WHERE lower(name) = lower(?) AND is_active != 0',
+      [method.name]
     );
   }
 }
@@ -569,6 +569,9 @@ async function main() {
     { name: 'approval_status', definition: 'TEXT' },
     { name: 'approval_by', definition: 'INTEGER' },
     { name: 'approval_at', definition: 'DATETIME' },
+  ]);
+  await ensureColumns('orders', [
+    { name: 'ups_account_number', definition: 'TEXT' },
   ]);
   await run('CREATE INDEX IF NOT EXISTS idx_work_orders_order_id ON work_orders(order_id)');
   await run('CREATE INDEX IF NOT EXISTS idx_work_orders_service_id ON work_orders(service_id)');

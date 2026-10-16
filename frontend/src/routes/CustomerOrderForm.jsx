@@ -100,6 +100,7 @@ export default function CustomerOrderForm() {
   const [projectName, setProjectName] = useState('');
   const [notes, setNotes] = useState('');
   const [deliveryMethod, setDeliveryMethod] = useState('');
+  const [upsAccount, setUpsAccount] = useState('');
   const [shipTo, setShipTo] = useState('');
   const [attention, setAttention] = useState('');
   const [dueDate, setDueDate] = useState('');
@@ -190,6 +191,21 @@ export default function CustomerOrderForm() {
     [options.services, selectedServices],
   );
 
+  const selectedDelivery = useMemo(
+    () => (options.delivery_methods || []).find((method) => method.name === deliveryMethod) || null,
+    [options.delivery_methods, deliveryMethod],
+  );
+
+  const activeWindow = selectedDelivery?.will_call
+    ? (options.due_windows?.will_call || options.due_window)
+    : (options.due_windows?.delivery || options.due_window);
+  const upsSelected = String(deliveryMethod || '').trim().toLowerCase() === 'ups';
+
+  useEffect(() => {
+    const slots = activeWindow?.slots || [];
+    if (dueTime && slots.length && !slots.includes(dueTime)) setDueTime('');
+  }, [activeWindow, dueTime]);
+
   const uploadedFiles = useMemo(() => {
     const files = [];
     lines.forEach((line) => {
@@ -266,6 +282,7 @@ export default function CustomerOrderForm() {
     setNotes('');
     setShipTo('');
     setAttention('');
+    setUpsAccount('');
     setDueDate('');
     setDueTime('');
     setSelectedServices([]);
@@ -311,6 +328,7 @@ export default function CustomerOrderForm() {
       project_name: projectName,
       notes,
       delivery_method: deliveryMethod,
+      ups_account_number: upsSelected ? upsAccount : '',
       ship_to: shipTo,
       attention,
       due_date: dueDate,
@@ -449,12 +467,38 @@ export default function CustomerOrderForm() {
 
             <Section title="Delivery Information">
               <LabelField label="Delivery Method" required>
-                <TextField select size="small" required value={deliveryMethod} disabled={locked} onChange={(e) => setDeliveryMethod(e.target.value)} sx={fieldSx}>
+                <TextField
+                  select
+                  size="small"
+                  required
+                  value={deliveryMethod}
+                  disabled={locked}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setDeliveryMethod(next);
+                    if (String(next).trim().toLowerCase() !== 'ups') setUpsAccount('');
+                  }}
+                  sx={fieldSx}
+                >
                   {(options.delivery_methods || []).map((method) => (
                     <MenuItem key={method.id} value={method.name}>{method.name}</MenuItem>
                   ))}
                 </TextField>
               </LabelField>
+              {upsSelected && (
+                <LabelField label="UPS Account">
+                  <TextField
+                    size="small"
+                    value={upsAccount}
+                    disabled={locked}
+                    onChange={(e) => setUpsAccount(e.target.value)}
+                    placeholder="Optional"
+                    helperText="Optional. Letters, digits, spaces, and dashes."
+                    inputProps={{ maxLength: 30, 'aria-label': 'UPS account number' }}
+                    sx={fieldSx}
+                  />
+                </LabelField>
+              )}
               <LabelField label="Ship To">
                 <TextField size="small" multiline minRows={3} value={shipTo} disabled={locked} onChange={(e) => setShipTo(e.target.value)} sx={fieldSx} />
               </LabelField>
@@ -469,13 +513,13 @@ export default function CustomerOrderForm() {
               </LabelField>
               <LabelField label="Due Time" required>
                 <TextField select size="small" required value={dueTime} disabled={locked} onChange={(e) => setDueTime(e.target.value)} sx={fieldSx}>
-                  {(options.due_window?.slots || []).map((slot) => (
+                  {(activeWindow?.slots || []).map((slot) => (
                     <MenuItem key={slot} value={slot}>{formatClockLabel(slot)}</MenuItem>
                   ))}
                 </TextField>
               </LabelField>
               <Typography sx={{ color: brand.muted, fontSize: 13, mt: 0.5 }}>
-                {options.due_window?.summary || 'Delivery orders 9:00 AM - 2:00 PM (15 minute increments).'}
+                {activeWindow?.summary || 'Delivery orders 9:00 AM - 4:00 PM (15 minute increments).'}
               </Typography>
             </Section>
           </Box>

@@ -14,9 +14,15 @@ All notable changes to this project will be documented in this file.
 - A barcode scan that moves a department writes the scan, the department change, production history, and the activity row in one transaction
 
 ### Added
+- Optional UPS account number on orders when the delivery method is UPS. It is trimmed, limited to 30 characters, and allows letters, digits, spaces, and dashes. It is not required. The customer order form, order detail, work order detail, the work order edit form, the print sheet, and the deliveries CSV include it when it is set
+- `orders.ups_account_number`, added by `schema.sql` and by an idempotent `init_db.js` pass
+- Separate Will Call hours (`WILL_CALL_WINDOW_START` / `WILL_CALL_WINDOW_END`, default 8:00 AM–5:00 PM) and delivery hours (`DELIVERY_WINDOW_START` / `DELIVERY_WINDOW_END`, default 9:00 AM–4:00 PM), shown on the order form, print sheet, delivery rules, and System Settings
+
+### Changed
+- Customer Pickup, FedEx, and Common Carrier are no longer selectable or accepted on new orders. Will Call is the pickup method. UPS and Accent Truck (shop delivery) stay. Init deactivates retired method rows when they already exist and does not delete them or rewrite stored labels. Customer Pickup on an existing order keeps that label and uses Will Call hours
 - Services admin page and `/api/services` to list, create, edit, and deactivate services, including suffix mode, department routing, and default turnaround. Deactivated services leave the order form; existing orders keep their work orders
 - Users admin page and `/api/users` to list, create, edit, and deactivate staff and customer accounts, change role, and reset a password through the existing reset flow. Password hashes are not returned. An admin cannot demote or deactivate themselves or the last active administrator
-- System Settings for company letterhead, due-soon hours, and the last backup timestamp. Delivery cutoffs, timezone, the order window, and upload limits stay read-only from the environment
+- System Settings for company letterhead, due-soon hours, and the last backup timestamp. Delivery cutoffs, timezone, Will Call hours, delivery hours, and upload limits stay read-only from the environment
 - Printable work order letterhead read from those settings, with the Accent Imaging mockup values as the defaults
 - Admin toggles for in-app notification events. Email notification rows stay locked off
 - Filterable, searchable, paginated Activity Log with CSV export
@@ -75,6 +81,8 @@ All notable changes to this project will be documented in this file.
 - `CHANGELOG.md` file
 
 ### Changed
+- Customer Pickup, FedEx, and Common Carrier are no longer selectable or accepted on new orders. Will Call is the pickup method. UPS and Accent Truck (shop delivery) stay. Init deactivates retired method rows when they already exist and does not delete them or rewrite stored labels. Customer Pickup on an existing order keeps that label and uses Will Call hours
+- Same-day cutoffs stay 15:00 for will call and 14:00 for other methods. Both are inside the new hours, so a blank delivery due time is still the cutoff. Overdue and due-soon still use the stored due timestamp
 - The printable work order uses the letterhead stored in system settings
 - Operators can open Search Orders and the Reports menu. Services, Users, System Settings, Activity Log, and Barcode Settings stay admin-only
 - A barcode scan uses `barcode_locations` when that table has any row. An empty table still uses `BARCODE_LOCATION_STAGES` and a department-name match

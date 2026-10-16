@@ -95,6 +95,8 @@ export default function OrderDetail() {
             <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2 }}>
               <Typography sx={{ fontWeight: 700, color: brand.navy, mb: 1 }}>Delivery</Typography>
               <Fact label="Method" value={order.delivery_method} />
+              {order.ups_account_number ? <Fact label="UPS Account" value={order.ups_account_number} /> : null}
+              <Fact label="Hours" value={order.delivery_hours?.label} />
               <Fact label="Ship To" value={order.ship_to} />
               <Fact label="Attention" value={order.attention} />
               <Fact label="Due" value={order.delivery?.due_time} />

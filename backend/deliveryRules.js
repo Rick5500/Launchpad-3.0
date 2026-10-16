@@ -5,6 +5,31 @@ const DEFAULT_TIMEZONE = 'UTC';
 const DEFAULT_WILL_CALL_CUTOFF = '15:00';
 const DEFAULT_CARRIER_CUTOFF = '14:00';
 const DEFAULT_DUE_SOON_HOURS = 1;
+const DEFAULT_SLOT_MINUTES = 15;
+
+// Customer-requested times. Will Call pickup is 8:00 AM–5:00 PM.
+// Every other method (Accent Truck, UPS, and legacy carriers) is 9:00 AM–4:00 PM.
+const DEFAULT_WILL_CALL_WINDOW_START = '08:00';
+const DEFAULT_WILL_CALL_WINDOW_END = '17:00';
+const DEFAULT_DELIVERY_WINDOW_START = '09:00';
+const DEFAULT_DELIVERY_WINDOW_END = '16:00';
+const UPS_ACCOUNT_MAX = 30;
+
+// Same-day cutoffs stay 15:00 (will call) and 14:00 (other methods). Both sit inside
+// the new windows, so an order ready before the cutoff is still due that day at the
+// cutoff. The windows only limit the times a customer may request. Overdue and
+// due-soon still compare the stored due timestamp with now.
+const ACTIVE_DELIVERY_METHODS = Object.freeze([
+  Object.freeze({ name: 'Accent Truck', willCall: false, sortOrder: 1 }),
+  Object.freeze({ name: 'Will Call', willCall: true, sortOrder: 2 }),
+  Object.freeze({ name: 'UPS', willCall: false, sortOrder: 3 }),
+]);
+
+const RETIRED_DELIVERY_METHODS = Object.freeze([
+  Object.freeze({ name: 'Customer Pickup', willCall: true }),
+  Object.freeze({ name: 'FedEx', willCall: false }),
+  Object.freeze({ name: 'Common Carrier', willCall: false }),
+]);
 
 const BUSINESS_DAYS = Object.freeze(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']);
 
@@ -58,6 +83,91 @@ function resolveTimeZone(value) {
   }
 }
 
+function methodKey(name) {
+  return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function retiredDeliveryMethod(name) {
+  const key = methodKey(name);
+  if (!key) return null;
+  return RETIRED_DELIVERY_METHODS.find((method) => methodKey(method.name) === key) || null;
+}
+
+function retiredDeliveryMessage(name) {
+  const retired = retiredDeliveryMethod(name);
+  if (!retired) return 'delivery_method is not available';
+  if (retired.willCall) return `${retired.name} is no longer available. Choose Will Call.`;
+  return `${retired.name} is no longer available.`;
+}
+
+function isUpsMethod(name) {
+  return methodKey(name) === 'ups';
+}
+
+// Customer Pickup keeps its stored label. Hours and the will-call cutoff follow Will Call.
+function usesWillCallHours(name, willCallFlag) {
+  const key = methodKey(name);
+  if (key === 'will call' || key === 'customer pickup') return true;
+  return willCallFlag === true || willCallFlag === 1 || willCallFlag === '1' || willCallFlag === 'true';
+}
+
+function parseUpsAccountNumber(value) {
+  if (value == null) return { value: null };
+  if (typeof value !== 'string' && typeof value !== 'number') {
+    return { error: 'ups_account_number is invalid' };
+  }
+  const text = String(value).trim();
+  if (!text) return { value: null };
+  if (text.length > UPS_ACCOUNT_MAX) {
+    return { error: `ups_account_number must be ${UPS_ACCOUNT_MAX} characters or fewer` };
+  }
+  if (!/^[A-Za-z0-9 -]+$/.test(text)) {
+    return { error: 'ups_account_number may contain only letters, digits, spaces, and dashes' };
+  }
+  return { value: text };
+}
+
+function buildWindow(startEnv, startDefault, endEnv, endDefault) {
+  const start = parseCutoff(startEnv, startDefault);
+  const end = parseCutoff(endEnv, endDefault);
+  const parsedIncrement = Number(process.env.DELIVERY_SLOT_MINUTES);
+  const incrementMinutes = Number.isInteger(parsedIncrement) && parsedIncrement >= 1 && parsedIncrement <= 120
+    ? parsedIncrement
+    : DEFAULT_SLOT_MINUTES;
+  const slots = [];
+  const startMinutes = start.hour * 60 + start.minute;
+  const endMinutes = end.hour * 60 + end.minute;
+  if (endMinutes >= startMinutes) {
+    for (let minute = startMinutes; minute <= endMinutes; minute += incrementMinutes) {
+      slots.push(`${pad(Math.floor(minute / 60))}:${pad(minute % 60)}`);
+    }
+  }
+  return {
+    start: start.label,
+    end: end.label,
+    incrementMinutes,
+    slots,
+  };
+}
+
+function willCallWindow() {
+  return buildWindow(
+    process.env.WILL_CALL_WINDOW_START,
+    DEFAULT_WILL_CALL_WINDOW_START,
+    process.env.WILL_CALL_WINDOW_END,
+    DEFAULT_WILL_CALL_WINDOW_END
+  );
+}
+
+function deliveryWindow() {
+  return buildWindow(
+    process.env.DELIVERY_WINDOW_START,
+    DEFAULT_DELIVERY_WINDOW_START,
+    process.env.DELIVERY_WINDOW_END,
+    DEFAULT_DELIVERY_WINDOW_END
+  );
+}
+
 function getRules() {
   return {
     timezone: resolveTimeZone(process.env.DELIVERY_TIMEZONE),
@@ -68,6 +178,8 @@ function getRules() {
       : getDueSoonHoursOverride(),
     businessDays: BUSINESS_DAYS,
     statuses: DELIVERY_STATUSES,
+    willCallHours: willCallWindow(),
+    deliveryHours: deliveryWindow(),
   };
 }
 
@@ -276,31 +388,22 @@ function clockLabel(hhmm) {
   return `${hour12}:${minute} ${suffix}`;
 }
 
-function orderWindow() {
-  const start = parseCutoff(process.env.DELIVERY_WINDOW_START, '09:00');
-  const end = parseCutoff(process.env.DELIVERY_WINDOW_END, '14:00');
-  const parsedIncrement = Number(process.env.DELIVERY_SLOT_MINUTES);
-  const incrementMinutes = Number.isInteger(parsedIncrement) && parsedIncrement >= 1 && parsedIncrement <= 120
-    ? parsedIncrement
-    : 15;
-  const slots = [];
-  const startMinutes = start.hour * 60 + start.minute;
-  const endMinutes = end.hour * 60 + end.minute;
-  if (endMinutes >= startMinutes) {
-    for (let minute = startMinutes; minute <= endMinutes; minute += incrementMinutes) {
-      slots.push(`${pad(Math.floor(minute / 60))}:${pad(minute % 60)}`);
-    }
-  }
-  return {
-    start: start.label,
-    end: end.label,
-    incrementMinutes,
-    slots,
-  };
+function orderWindow(willCall = false) {
+  return willCall ? willCallWindow() : deliveryWindow();
 }
 
-function orderWindowSummary(window = orderWindow()) {
-  return `Delivery orders ${clockLabel(window.start)} - ${clockLabel(window.end)} (${window.incrementMinutes} minute increments).`;
+function windowSummary(window, kind) {
+  const hours = `${clockLabel(window.start)} - ${clockLabel(window.end)} (${window.incrementMinutes} minute increments)`;
+  if (kind === 'will_call') return `Will Call pickup ${hours}.`;
+  return `Delivery orders ${hours}.`;
+}
+
+function orderWindowSummary(window = deliveryWindow()) {
+  return windowSummary(window, 'delivery');
+}
+
+function hoursLabel(window) {
+  return `${clockLabel(window.start)} - ${clockLabel(window.end)} (${window.incrementMinutes} min increments)`;
 }
 
 function businessToday(now = new Date()) {
@@ -316,10 +419,10 @@ function businessToday(now = new Date()) {
   };
 }
 
-// Customer-selected order due times use the shop window (default 9:00 AM–2:00 PM,
-// 15 minute increments, Monday–Friday). The value is stored with the same
-// wall-clock normalization as other delivery due times.
-function validateOrderDue(dueDate, dueTime, now = new Date()) {
+// Customer-selected order due times use the method window (Will Call 8:00 AM–5:00 PM,
+// other methods 9:00 AM–4:00 PM, 15 minute increments, Monday–Friday). The value is
+// stored with the same wall-clock normalization as other delivery due times.
+function validateOrderDue(dueDate, dueTime, now = new Date(), options = {}) {
   const date = String(dueDate || '').trim();
   const time = String(dueTime || '').trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: 'due_date must be YYYY-MM-DD' };
@@ -338,11 +441,13 @@ function validateOrderDue(dueDate, dueTime, now = new Date()) {
   const selected = Date.UTC(parts.year, parts.month - 1, parts.day);
   if (selected > latest) return { error: 'due_date is too far in the future' };
 
-  const window = orderWindow();
+  const willCall = Boolean(options.willCall);
+  const window = willCall ? willCallWindow() : deliveryWindow();
   const match = /^(\d{2}):(\d{2})$/.exec(time);
   if (!match || !window.slots.includes(`${match[1]}:${match[2]}`)) {
+    const kind = willCall ? 'Will Call' : 'delivery';
     return {
-      error: `due_time must be a ${window.incrementMinutes} minute increment between ${clockLabel(window.start)} and ${clockLabel(window.end)}`,
+      error: `due_time must be a ${window.incrementMinutes} minute increment between ${clockLabel(window.start)} and ${clockLabel(window.end)} for ${kind}`,
     };
   }
 
@@ -358,25 +463,42 @@ function validateOrderDue(dueDate, dueTime, now = new Date()) {
 }
 
 function rulesSummary(rules) {
-  const window = orderWindow();
+  const willCallHours = rules.willCallHours || willCallWindow();
+  const deliveryHours = rules.deliveryHours || deliveryWindow();
   return [
+    `Will Call pickup hours are ${clockLabel(willCallHours.start)} through ${clockLabel(willCallHours.end)}.`,
+    `Delivery hours are ${clockLabel(deliveryHours.start)} through ${clockLabel(deliveryHours.end)}.`,
     `Will-call orders ready before ${rules.willCallCutoff.label} on a business day are due that day at the cutoff.`,
     'Ready at or after the cutoff, or on Saturday or Sunday, are due the next business day at the cutoff.',
-    `Carrier deliveries use the same rule with a ${rules.carrierCutoff.label} cutoff.`,
+    `Other deliveries use the same rule with a ${rules.carrierCutoff.label} cutoff.`,
+    'Those cutoffs sit inside the pickup and delivery hours, so same-day cutoff behavior is unchanged.',
     'Business days are Monday through Friday. Holidays are not skipped.',
     `Times are wall-clock in ${rules.timezone}.`,
-    `A delivery that is not complete is overdue after its due time, due today on that calendar day, and due soon within ${rules.dueSoonHours} ${rules.dueSoonHours === 1 ? 'hour' : 'hours'}.`,
-    'Completed deliveries are not marked overdue.',
+    `A delivery that is not complete is overdue after its stored due time, due today on that calendar day, and due soon within ${rules.dueSoonHours} ${rules.dueSoonHours === 1 ? 'hour' : 'hours'}.`,
+    'Completed deliveries are not marked overdue. A stored time outside the current window, including older orders, is still classified from that timestamp.',
     'Delivery status values are pending, scheduled, out-for-delivery, and complete.',
-    `Customer order due times are chosen on a weekday in ${window.incrementMinutes} minute increments from ${clockLabel(window.start)} through ${clockLabel(window.end)}.`,
+    `Customer order due times are weekdays in ${deliveryHours.incrementMinutes} minute increments, inside the window for the chosen method.`,
+    'Customer Pickup is no longer offered. Existing Customer Pickup orders keep that label and use Will Call hours.',
+    'FedEx and Common Carrier are no longer offered. Existing orders keep those labels.',
   ].join(' ');
+}
+
+function presentWindow(window, kind) {
+  return {
+    start: window.start,
+    end: window.end,
+    incrementMinutes: window.incrementMinutes,
+    slots: window.slots.slice(),
+    summary: windowSummary(window, kind),
+    label: hoursLabel(window),
+  };
 }
 
 function publicRulesView(now = new Date()) {
   const rules = getRules();
   const willCall = suggestDueTime(true, now, rules);
   const carrier = suggestDueTime(false, now, rules);
-  const window = orderWindow();
+  const deliveryHours = rules.deliveryHours;
   return {
     rules: {
       timezone: rules.timezone,
@@ -386,12 +508,10 @@ function publicRulesView(now = new Date()) {
       businessDays: rules.businessDays.slice(),
       statuses: rules.statuses.slice(),
       summary: rulesSummary(rules),
-      orderWindow: {
-        start: window.start,
-        end: window.end,
-        incrementMinutes: window.incrementMinutes,
-        slots: window.slots.slice(),
-        summary: orderWindowSummary(window),
+      orderWindow: presentWindow(deliveryHours, 'delivery'),
+      windows: {
+        willCall: presentWindow(rules.willCallHours, 'will_call'),
+        delivery: presentWindow(deliveryHours, 'delivery'),
       },
     },
     computed: {
@@ -414,6 +534,9 @@ function publicRulesView(now = new Date()) {
 
 module.exports = {
   DELIVERY_STATUSES,
+  ACTIVE_DELIVERY_METHODS,
+  RETIRED_DELIVERY_METHODS,
+  UPS_ACCOUNT_MAX,
   getRules,
   normalizeDueTime,
   suggestDueTime,
@@ -421,9 +544,19 @@ module.exports = {
   publicRulesView,
   businessToday,
   orderWindow,
+  willCallWindow,
+  deliveryWindow,
   orderWindowSummary,
+  windowSummary,
+  hoursLabel,
   validateOrderDue,
   clockLabel,
   zonedParts,
   zonedTimeToUtc,
+  methodKey,
+  retiredDeliveryMethod,
+  retiredDeliveryMessage,
+  isUpsMethod,
+  usesWillCallHours,
+  parseUpsAccountNumber,
 };
