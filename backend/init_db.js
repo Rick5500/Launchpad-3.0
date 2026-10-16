@@ -6,6 +6,14 @@ const bcrypt = require('bcryptjs');
 const sqlite3 = require('sqlite3').verbose();
 
 const { seedServiceFields } = require('./serviceFields');
+const {
+  DEFAULT_LOCATION_STAGES,
+  LEGACY_MIGRATION_SETTING,
+  LEGACY_STAGE_SEEDS,
+  legacySeedFor,
+  isOriginalLegacySeed,
+  sameText,
+} = require('./barcodeLocationDefaults');
 const BCRYPT_ROUNDS = 10;
 const schemaPath = path.join(__dirname, '..', 'database', 'schema.sql');
 const schema = fs.readFileSync(schemaPath, 'utf8');
@@ -433,9 +441,7 @@ async function normalizeLegacyWorkOrderStatuses() {
 }
 
 function parseStageMap(raw) {
-  const text = raw === undefined
-    ? 'Shipping=Shipping;Quality Control=Quality Control;Finishing=Finishing'
-    : String(raw).trim();
+  const text = raw === undefined ? DEFAULT_LOCATION_STAGES : String(raw).trim();
   const entries = [];
   if (!text) return entries;
   for (const pair of text.split(';')) {
@@ -468,50 +474,181 @@ async function seedSystemSettings() {
   }
 }
 
+async function markBarcodeLocationsSeeded() {
+  const existing = await get(`SELECT key FROM system_settings WHERE key = 'barcode_locations_seeded'`);
+  if (existing) return;
+  await run(
+    `INSERT INTO system_settings (key, value, updated_at) VALUES ('barcode_locations_seeded', '1', datetime('now'))`
+  );
+}
+
+async function attachStageToLocation(locationName, stageName) {
+  const existing = await get(
+    `SELECT id, stage_name FROM barcode_locations WHERE lower(location) = lower(?)`,
+    [locationName]
+  );
+  if (!existing) return false;
+  if (String(existing.stage_name || '').trim()) return true;
+  await run(
+    `UPDATE barcode_locations
+     SET stage_name = ?, updated_at = datetime('now')
+     WHERE id = ? AND (stage_name IS NULL OR trim(stage_name) = '')`,
+    [stageName, existing.id]
+  );
+  return true;
+}
+
+async function insertBarcodeLocation({ location, departmentName, stageName, sortOrder, isActive }) {
+  await run(
+    `INSERT INTO barcode_locations (location, department_name, stage_name, sort_order, is_active, updated_at)
+     VALUES (?,?,?,?,?,datetime('now'))`,
+    [location, departmentName, stageName, sortOrder, isActive]
+  );
+}
+
 async function seedBarcodeLocations() {
   const flagged = await get(`SELECT key FROM system_settings WHERE key = 'barcode_locations_seeded'`);
   if (flagged) return;
   const countRow = await get('SELECT COUNT(*) AS count FROM barcode_locations');
   if (countRow && countRow.count > 0) {
-    await run(
-      `INSERT INTO system_settings (key, value, updated_at) VALUES ('barcode_locations_seeded', '1', datetime('now'))`
-    );
+    await markBarcodeLocationsSeeded();
     return;
-  }
-  const stages = parseStageMap(process.env.BARCODE_LOCATION_STAGES);
-  let sort = 1;
-  for (const entry of stages) {
-    const existing = await get(
-      'SELECT id FROM barcode_locations WHERE lower(location) = lower(?)',
-      [entry.location]
-    );
-    if (!existing) {
-      await run(
-        `INSERT INTO barcode_locations (location, department_name, stage_name, sort_order, is_active, updated_at)
-         VALUES (?,?,?,?,1,datetime('now'))`,
-        [entry.location, null, entry.stage, sort]
-      );
-    }
-    sort += 1;
   }
   const departments = await all(
     'SELECT name, sort_order FROM departments WHERE is_active = 1 ORDER BY sort_order, name'
   );
   for (const department of departments) {
-    const existing = await get(
-      'SELECT id FROM barcode_locations WHERE lower(location) = lower(?)',
-      [department.name]
+    await insertBarcodeLocation({
+      location: department.name,
+      departmentName: department.name,
+      stageName: null,
+      sortOrder: department.sort_order || 0,
+      isActive: 1,
+    });
+  }
+  const stages = parseStageMap(process.env.BARCODE_LOCATION_STAGES);
+  let sort = 100;
+  for (const entry of stages) {
+    const alias = legacySeedFor(entry.location);
+    if (alias && alias.department) {
+      const applied = await attachStageToLocation(alias.department, entry.stage);
+      if (!applied) {
+        const department = await get(
+          `SELECT name, sort_order FROM departments WHERE is_active = 1 AND lower(name) = lower(?)`,
+          [alias.department]
+        );
+        if (department) {
+          await insertBarcodeLocation({
+            location: department.name,
+            departmentName: department.name,
+            stageName: entry.stage,
+            sortOrder: department.sort_order || sort,
+            isActive: 1,
+          });
+        }
+      }
+      continue;
+    }
+    if (alias && alias.deactivate) {
+      await insertBarcodeLocation({
+        location: entry.location,
+        departmentName: null,
+        stageName: entry.stage,
+        sortOrder: sort,
+        isActive: 0,
+      });
+      sort += 1;
+      continue;
+    }
+    const attached = await attachStageToLocation(entry.location, entry.stage);
+    if (!attached) {
+      await insertBarcodeLocation({
+        location: entry.location,
+        departmentName: null,
+        stageName: entry.stage,
+        sortOrder: sort,
+        isActive: 1,
+      });
+      sort += 1;
+    }
+  }
+  await markBarcodeLocationsSeeded();
+}
+
+// One pass for databases seeded before scan locations followed department names.
+// Only a row that still matches the original stage-only seed is changed.
+// An admin who set a department, changed the stage, or turned the row off is left alone.
+async function migrateLegacyBarcodeLocations() {
+  const table = await get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'barcode_locations'`);
+  if (!table) return;
+  const settings = await get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'system_settings'`);
+  if (!settings) return;
+  const flagged = await get(`SELECT key FROM system_settings WHERE key = ?`, [LEGACY_MIGRATION_SETTING]);
+  if (flagged) return;
+
+  const rows = await all(
+    `SELECT id, location, department_name, stage_name, is_active FROM barcode_locations`
+  );
+  let changed = 0;
+  for (const seed of LEGACY_STAGE_SEEDS) {
+    const row = rows.find((candidate) => isOriginalLegacySeed(candidate, seed));
+    if (!row) continue;
+    if (!seed.department || seed.deactivate) {
+      const result = await run(
+        `UPDATE barcode_locations
+         SET is_active = 0, updated_at = datetime('now')
+         WHERE id = ?
+           AND (department_name IS NULL OR trim(department_name) = '')
+           AND lower(location) = lower(?)
+           AND lower(stage_name) = lower(?)
+           AND COALESCE(is_active, 1) = 1`,
+        [row.id, seed.location, seed.stage]
+      );
+      changed += result.changes;
+      continue;
+    }
+    const department = await get(
+      `SELECT name FROM departments WHERE is_active = 1 AND lower(name) = lower(?)`,
+      [seed.department]
     );
-    if (existing) continue;
-    await run(
-      `INSERT INTO barcode_locations (location, department_name, stage_name, sort_order, is_active, updated_at)
-       VALUES (?,?,?,?,1,datetime('now'))`,
-      [department.name, department.name, null, department.sort_order || sort]
+    if (!department) continue;
+    const duplicate = rows.find((candidate) => (
+      candidate.id !== row.id
+      && Number(candidate.is_active) !== 0
+      && sameText(candidate.location, department.name)
+      && sameText(candidate.department_name, department.name)
+    ));
+    if (duplicate && !String(duplicate.stage_name || '').trim()) {
+      const staged = await run(
+        `UPDATE barcode_locations
+         SET stage_name = ?, updated_at = datetime('now')
+         WHERE id = ?
+           AND (stage_name IS NULL OR trim(stage_name) = '')
+           AND lower(location) = lower(?)
+           AND lower(department_name) = lower(?)`,
+        [seed.stage, duplicate.id, department.name, department.name]
+      );
+      changed += staged.changes;
+    }
+    const result = await run(
+      `UPDATE barcode_locations
+       SET department_name = ?, is_active = ?, updated_at = datetime('now')
+       WHERE id = ?
+         AND (department_name IS NULL OR trim(department_name) = '')
+         AND lower(location) = lower(?)
+         AND lower(stage_name) = lower(?)
+         AND COALESCE(is_active, 1) = 1`,
+      [department.name, duplicate ? 0 : 1, row.id, seed.location, seed.stage]
     );
+    changed += result.changes;
   }
   await run(
-    `INSERT INTO system_settings (key, value, updated_at) VALUES ('barcode_locations_seeded', '1', datetime('now'))`
+    `INSERT INTO system_settings (key, value, updated_at) VALUES (?, '1', datetime('now'))`,
+    [LEGACY_MIGRATION_SETTING]
   );
+  if (changed > 0) {
+    console.log(`Updated ${changed} legacy barcode location row(s) to follow department names`);
+  }
 }
 
 async function main() {
@@ -617,6 +754,7 @@ async function main() {
   await seedStages();
   await seedSystemSettings();
   await seedBarcodeLocations();
+  await migrateLegacyBarcodeLocations();
   await seedSampleOrders();
   await seedProductionBoard();
   await seedDeliveries();

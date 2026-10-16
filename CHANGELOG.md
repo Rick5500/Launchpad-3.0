@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Scan locations follow department names. Quality Control maps to Quality and Shipping maps to Dispatch, so a scan moves the work order and the Admin Board shows the new department. Finishing is no longer offered as a default location. Init updates an already-seeded database once and leaves locations an admin has edited
 - Heavy mixed load no longer stalls scans. The server raises libuv's thread pool to 32 when unset, and barcode inserts, stage updates, and notification writes wait on the same writer queue as other transactions
 - Creating customers with the same display name at the same time no longer fails the unique username constraint. The name is reserved inside the create transaction
 - Admin writes no longer share one SQLite transaction. Concurrent user, settings, and notification updates each take a queued connection, and the last-admin check runs inside that transaction

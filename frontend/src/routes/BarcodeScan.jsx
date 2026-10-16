@@ -6,7 +6,7 @@ import {
   Button,
   Card,
   CardContent,
-  Chip,
+  MenuItem,
   Table,
   TableBody,
   TableCell,
@@ -20,9 +20,63 @@ import { authFetch } from '../api';
 
 const LOCATION_STORAGE_KEY = 'lp_scan_location';
 
+const LEGACY_SAVED_ALIASES = {
+  'quality control': 'quality',
+  shipping: 'dispatch',
+};
+
 function formatStamp(value) {
   if (!value) return '—';
   return String(value).replace('T', ' ').slice(0, 19);
+}
+
+function locationOptionLabel(entry) {
+  const name = String(entry.location || '').trim();
+  const department = String(entry.department_name || '').trim();
+  if (department && department.toLowerCase() === name.toLowerCase()) return department;
+  if (department) return `${name} → ${department}`;
+  return `${name} (stage only — department unchanged)`;
+}
+
+function selectableLocations(rows) {
+  const list = (Array.isArray(rows) ? rows : []).filter((row) => row && row.location && row.is_active !== false);
+  const departmentNamed = new Set(
+    list
+      .filter((row) => String(row.department_name || '').trim().toLowerCase() === String(row.location).trim().toLowerCase())
+      .map((row) => String(row.department_name).trim().toLowerCase())
+  );
+  return list
+    .filter((row) => {
+      const key = String(row.location).trim().toLowerCase();
+      const department = String(row.department_name || '').trim().toLowerCase();
+      const legacy = Object.prototype.hasOwnProperty.call(LEGACY_SAVED_ALIASES, key);
+      if (legacy && department && departmentNamed.has(department)) return false;
+      return true;
+    })
+    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0) || String(a.location).localeCompare(String(b.location)));
+}
+
+function scanResult(body) {
+  const label = body.external_id || `#${body.work_order_id}`;
+  const stageNote = body.stage_advanced && body.stage_name ? ` Stage set to ${body.stage_name}.` : '';
+  const from = body.from_department || 'unassigned';
+  const to = body.to_department || from;
+  if (body.department_moved) {
+    return {
+      severity: 'success',
+      text: `Recorded ${label}. Moved from ${from} to ${body.to_department}.${stageNote}`,
+    };
+  }
+  const stayed = {
+    same_department: `Recorded ${label}. Already in ${to}, so the department stayed in ${to}.`,
+    stage_only: `Recorded ${label}. This location does not move the department. It stayed in ${from}.`,
+    unknown_location: `Recorded ${label}. That location is not a scan location, so the department stayed in ${from}.`,
+    no_location: `Recorded ${label}. No location was selected, so the department stayed in ${from}.`,
+    department_not_found: `Recorded ${label}. The location's department was not found, so the department stayed in ${from}.`,
+  };
+  const text = stayed[body.department_move_reason]
+    || `Recorded ${label}. The department stayed in ${from}.`;
+  return { severity: 'warning', text: `${text}${stageNote}` };
 }
 
 export default function BarcodeScan() {
@@ -35,7 +89,7 @@ export default function BarcodeScan() {
   const [events, setEvents] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const [result, setResult] = useState(null);
 
   function focusScan() {
     scanRef.current?.focus();
@@ -66,6 +120,28 @@ export default function BarcodeScan() {
     focusScan();
   }, []);
 
+  const locationOptions = selectableLocations(locations);
+
+  useEffect(() => {
+    if (!locations.length) return;
+    const options = selectableLocations(locations);
+    const current = location.trim().toLowerCase();
+    const match = options.find((entry) => entry.location.toLowerCase() === current);
+    if (match) {
+      if (match.location !== location) setLocation(match.location);
+      return;
+    }
+    const alias = LEGACY_SAVED_ALIASES[current];
+    if (alias) {
+      const preferred = options.find((entry) => entry.location.toLowerCase() === alias);
+      if (preferred) {
+        setLocation(preferred.location);
+        return;
+      }
+    }
+    if (current) setLocation('');
+  }, [locations, location]);
+
   useEffect(() => {
     sessionStorage.setItem(LOCATION_STORAGE_KEY, location);
   }, [location]);
@@ -80,7 +156,7 @@ export default function BarcodeScan() {
 
     setSubmitting(true);
     setError('');
-    setNotice('');
+    setResult(null);
     try {
       const response = await authFetch('/api/barcode', {
         method: 'POST',
@@ -91,9 +167,7 @@ export default function BarcodeScan() {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || 'Scan failed');
-      const label = body.external_id || `#${body.work_order_id}`;
-      const stageNote = body.stage_advanced && body.stage_name ? ` Stage set to ${body.stage_name}.` : '';
-      setNotice(`Recorded ${label}.${stageNote}`);
+      setResult(scanResult(body));
       setScannedValue('');
       await loadEvents();
     } catch (err) {
@@ -116,28 +190,32 @@ export default function BarcodeScan() {
       <Card sx={{ bgcolor: '#ffffff', mb: 3 }}>
         <CardContent>
           <Box component="form" onSubmit={submitScan} sx={{ display: 'grid', gap: 2 }}>
-            <TextField
-              label="Location"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              helperText="Optional station. A saved location can move the work order to a department or advance a production stage."
-              fullWidth
-            />
-            {(locations.length > 0 ? locations : locationStages).length > 0 && (
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                {(locations.length > 0 ? locations : locationStages).map((entry) => (
-                  <Chip
-                    key={entry.id || entry.location}
-                    label={entry.location}
-                    clickable
-                    color={location.trim().toLowerCase() === entry.location.toLowerCase() ? 'primary' : 'default'}
-                    onClick={() => {
-                      setLocation(entry.location);
-                      focusScan();
-                    }}
-                  />
+            {locationOptions.length > 0 ? (
+              <TextField
+                select
+                label="Location"
+                value={locationOptions.some((entry) => entry.location === location) ? location : ''}
+                onChange={(e) => setLocation(e.target.value)}
+                helperText="The work order moves to the department shown. A stage-only location leaves the department where it is."
+                fullWidth
+              >
+                <MenuItem value="">No location</MenuItem>
+                {locationOptions.map((entry) => (
+                  <MenuItem key={entry.id || entry.location} value={entry.location}>
+                    {locationOptionLabel(entry)}
+                  </MenuItem>
                 ))}
-              </Box>
+              </TextField>
+            ) : (
+              <TextField
+                label="Location"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                helperText={locationStages.length
+                  ? 'No saved locations yet. A typed department name moves the work order there.'
+                  : 'Optional station. A saved location can move the work order to a department.'}
+                fullWidth
+              />
             )}
             <TextField
               inputRef={scanRef}
@@ -156,7 +234,7 @@ export default function BarcodeScan() {
             </Box>
           </Box>
           {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
-          {notice && <Alert severity="success" sx={{ mt: 2 }}>{notice}</Alert>}
+          {result && <Alert severity={result.severity} sx={{ mt: 2 }}>{result.text}</Alert>}
         </CardContent>
       </Card>
 

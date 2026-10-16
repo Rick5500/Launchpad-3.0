@@ -14,9 +14,14 @@ function sendError(res, err, label, fallback) {
   return res.status(500).json({ error: fallback });
 }
 
+function sendBoard(res, body) {
+  res.set('Cache-Control', 'private, no-store');
+  res.json(body);
+}
+
 router.get('/', async (req, res) => {
   try {
-    res.json(await adminBoard.loadSummary());
+    sendBoard(res, await adminBoard.loadSummary());
   } catch (err) {
     sendError(res, err, 'ADMIN BOARD ERROR:', 'Failed to load the admin board');
   }
@@ -24,7 +29,7 @@ router.get('/', async (req, res) => {
 
 router.get('/work-orders', async (req, res) => {
   try {
-    res.json(await adminBoard.listWorkOrders(req.query));
+    sendBoard(res, await adminBoard.listWorkOrders(req.query));
   } catch (err) {
     sendError(res, err, 'ADMIN BOARD WORK ORDERS ERROR:', 'Failed to load work orders');
   }
@@ -32,7 +37,7 @@ router.get('/work-orders', async (req, res) => {
 
 router.get('/activity', async (req, res) => {
   try {
-    res.json(await adminBoard.listActivity(req.query, false));
+    sendBoard(res, await adminBoard.listActivity(req.query, false));
   } catch (err) {
     sendError(res, err, 'ADMIN BOARD ACTIVITY ERROR:', 'Failed to load activity');
   }
@@ -40,7 +45,7 @@ router.get('/activity', async (req, res) => {
 
 router.get('/approvals', async (req, res) => {
   try {
-    res.json(await adminBoard.listApprovals(req.query, false));
+    sendBoard(res, await adminBoard.listApprovals(req.query, false));
   } catch (err) {
     sendError(res, err, 'ADMIN BOARD APPROVALS ERROR:', 'Failed to load approvals');
   }
