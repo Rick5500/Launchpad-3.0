@@ -1,10 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
   Box,
   Button,
   Checkbox,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   GlobalStyles,
   MenuItem,
   TextField,
@@ -12,6 +19,7 @@ import {
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
 import DocumentScannerOutlinedIcon from '@mui/icons-material/DocumentScannerOutlined';
@@ -35,11 +43,9 @@ const SERVICE_ICONS = {
   'Ship To (3rd Party)': LocalShippingOutlinedIcon,
 };
 
-const fieldSx = {
-  '& .MuiInputBase-root': { bgcolor: '#fff' },
-};
+const SHIP_TO_SERVICE = 'Ship To (3rd Party)';
+const fieldSx = { '& .MuiInputBase-root': { bgcolor: '#fff' } };
 
-const FINISHING_OPTIONS = ['None', 'Grommets', 'Easel', 'Cut/Trim', 'Velcro', 'Print Hanger', 'Framing', 'See Notes'];
 const ORIGINALS_SOURCES = [
   'Files attached below',
   'Archived files at Accent Imaging',
@@ -48,39 +54,75 @@ const ORIGINALS_SOURCES = [
 ];
 const ORIGINALS_FILES = 'Files attached below';
 const ORIGINALS_PICKUP = 'Send a vehicle to pick up originals';
+const PAYMENT_METHODS = ['Accent Account', 'Cash', 'Check', 'AMEX', 'Master Card', 'Visa', 'Discover'];
 
-function newLine(serviceId) {
+const emptyBill = {
+  name: '',
+  phone: '',
+  email: '',
+  company: '',
+  address_line1: '',
+  address_line2: '',
+  city: '',
+  state: '',
+  zip: '',
+};
+
+function optionValues(field) {
+  return (field.options || []).map((option) => (typeof option === 'string' ? option : option.value)).filter(Boolean);
+}
+
+function blankValues(fields) {
+  const values = {};
+  (fields || []).forEach((field) => {
+    values[field.key] = field.type === 'checkbox' ? false : '';
+  });
+  return values;
+}
+
+function newLine(service) {
   return {
     key: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    description: '',
-    size: '',
-    quantity: '',
-    media: '',
-    color: '',
-    binding_finish: '',
-    finishing: 'None',
-    mount: 'No',
-    laminate: 'No',
-    service_id: serviceId || '',
+    service_id: service.id,
+    values: blankValues(service.fields),
     file: null,
   };
 }
 
-function emptyServiceMessage(service, lines, notes, shipTo, selectedServices) {
-  const hasLine = lines.some((line) => {
-    const serviceId = line.service_id || (selectedServices.length === 1 ? selectedServices[0] : '');
-    return String(serviceId) === String(service.id);
-  });
+function lineSummary(service, line) {
+  const bits = (service.fields || []).map((field) => {
+    const value = line.values?.[field.key];
+    if (value == null || value === '' || value === false) return null;
+    return `${field.label}: ${field.type === 'checkbox' ? 'Yes' : value}`;
+  }).filter(Boolean);
+  return bits.join(' · ') || 'New line';
+}
+
+function emptyServiceMessage(service, lines, notes, shipTo) {
+  const hasLine = lines.some((line) => String(line.service_id) === String(service.id));
   if (hasLine) return null;
   if (service.name === 'Archive File Request') {
     if (String(notes || '').trim()) return null;
     return 'Archive File Request is empty. Add a line, describe the archived files in Notes, or deselect it.';
   }
-  if (service.name === 'Ship To (3rd Party)') {
+  if (service.name === SHIP_TO_SERVICE) {
     if (String(shipTo || '').trim()) return null;
     return 'Ship To (3rd Party) is empty. Add a line, fill in Ship To, or deselect it.';
   }
   return `${service.name} is empty. Please add lines or deselect it.`;
+}
+
+function missingRequired(service, line) {
+  for (const field of service.fields || []) {
+    if (!field.required || field.is_active === false) continue;
+    const value = line.values?.[field.key];
+    if (field.type === 'checkbox') {
+      if (!value) return `${service.name}: ${field.label} is required`;
+    } else if (value == null || String(value).trim() === '') {
+      return `${service.name}: ${field.label} is required`;
+    }
+  }
+  return null;
 }
 
 function welcomeText(user) {
@@ -90,24 +132,79 @@ function welcomeText(user) {
   return `Welcome, ${name}`;
 }
 
-function Section({ title, children }) {
-  return (
-    <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2, height: '100%' }}>
-      <Typography sx={{ color: brand.navy, fontWeight: 700, mb: 1.5, fontSize: 16 }}>{title}</Typography>
-      <Box sx={{ display: 'grid', gap: 1.25 }}>{children}</Box>
-    </Box>
-  );
+function billLabel(entry) {
+  const who = [entry.name, entry.company].filter(Boolean).join(' — ');
+  const where = [entry.city, entry.state].filter(Boolean).join(', ');
+  return [who || 'Bill To', where].filter(Boolean).join(', ');
 }
 
 function LabelField({ label, required, children }) {
   return (
-    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '110px 1fr' }, gap: 1, alignItems: 'center' }}>
+    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '140px 1fr' }, gap: 1, alignItems: 'center' }}>
       <Typography sx={{ fontSize: 14, color: brand.text }}>
         {label}
-        {required && <Box component="span" sx={{ color: brand.danger }}> *</Box>}
+        {required ? <Box component="span" sx={{ color: brand.danger }}> *</Box> : null}
       </Typography>
       {children}
     </Box>
+  );
+}
+
+function FormAccordion({ title, children, defaultExpanded = true }) {
+  return (
+    <Accordion defaultExpanded={defaultExpanded} disableGutters sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: '8px !important', '&:before': { display: 'none' } }}>
+      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+        <Typography sx={{ color: brand.navy, fontWeight: 700 }}>{title}</Typography>
+      </AccordionSummary>
+      <AccordionDetails>
+        <Box sx={{ display: 'grid', gap: 1.25 }}>{children}</Box>
+      </AccordionDetails>
+    </Accordion>
+  );
+}
+
+function FieldInput({ field, value, disabled, onChange }) {
+  const choices = optionValues(field);
+  const helper = field.key === 'acct_number' ? 'Ship using this account no.' : '';
+  if (field.type === 'checkbox') {
+    return (
+      <LabelField label={field.label} required={field.required}>
+        <Checkbox checked={Boolean(value)} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
+      </LabelField>
+    );
+  }
+  if (field.type === 'select') {
+    return (
+      <LabelField label={field.label} required={field.required}>
+        <TextField select size="small" required={field.required} value={value || ''} disabled={disabled} onChange={(event) => onChange(event.target.value)} sx={fieldSx}>
+          <MenuItem value="">Select</MenuItem>
+          {choices.map((option) => <MenuItem key={option} value={option}>{option}</MenuItem>)}
+        </TextField>
+      </LabelField>
+    );
+  }
+  if (field.type === 'textarea') {
+    return (
+      <LabelField label={field.label} required={field.required}>
+        <TextField size="small" multiline minRows={2} value={value || ''} disabled={disabled} onChange={(event) => onChange(event.target.value)} sx={fieldSx} />
+      </LabelField>
+    );
+  }
+  const inputType = field.type === 'number' ? 'number' : (field.key === 'date' ? 'date' : 'text');
+  return (
+    <LabelField label={field.label} required={field.required}>
+      <TextField
+        size="small"
+        type={inputType}
+        required={field.required}
+        value={value || ''}
+        disabled={disabled}
+        helperText={helper}
+        onChange={(event) => onChange(field.type === 'number' && event.target.value !== '' ? Number(event.target.value) : event.target.value)}
+        InputLabelProps={inputType === 'date' ? { shrink: true } : undefined}
+        sx={fieldSx}
+      />
+    </LabelField>
   );
 }
 
@@ -116,7 +213,7 @@ export default function CustomerOrderForm() {
   const { user, logout } = useAuth();
   const isStaff = user?.role === 'admin' || user?.role === 'operator';
 
-  const [options, setOptions] = useState({ services: [], delivery_methods: [], due_window: null });
+  const [options, setOptions] = useState({ services: [], delivery_methods: [], due_window: null, payment_methods: PAYMENT_METHODS });
   const [customers, setCustomers] = useState([]);
   const [customerId, setCustomerId] = useState('');
   const [company, setCompany] = useState('');
@@ -126,13 +223,18 @@ export default function CustomerOrderForm() {
   const [address1, setAddress1] = useState('');
   const [address2, setAddress2] = useState('');
   const [city, setCity] = useState('');
-  const [state, setState] = useState('');
+  const [stateName, setStateName] = useState('');
   const [zip, setZip] = useState('');
+  const [billTo, setBillTo] = useState(emptyBill);
+  const [billHistory, setBillHistory] = useState([]);
+  const [billChoice, setBillChoice] = useState('');
   const [originalsSource, setOriginalsSource] = useState('');
   const [poNumber, setPoNumber] = useState('');
   const [projectNumber, setProjectNumber] = useState('');
   const [projectName, setProjectName] = useState('');
   const [notes, setNotes] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('Accent Account');
+  const [returnTo, setReturnTo] = useState('To Me');
   const [deliveryMethod, setDeliveryMethod] = useState('');
   const [upsAccount, setUpsAccount] = useState('');
   const [shipTo, setShipTo] = useState('');
@@ -141,6 +243,7 @@ export default function CustomerOrderForm() {
   const [dueTime, setDueTime] = useState('');
   const [selectedServices, setSelectedServices] = useState([]);
   const [lines, setLines] = useState([]);
+  const [editor, setEditor] = useState(null);
   const [looseFiles, setLooseFiles] = useState([]);
   const [preview, setPreview] = useState(null);
   const [formError, setFormError] = useState('');
@@ -157,7 +260,7 @@ export default function CustomerOrderForm() {
     setAddress1(source.address_line1 || '');
     setAddress2(source.address_line2 || '');
     setCity(source.city || '');
-    setState(source.state || '');
+    setStateName(source.state || '');
     setZip(source.zip || '');
   }
 
@@ -179,6 +282,7 @@ export default function CustomerOrderForm() {
         setOptions(data);
         const accent = (data.delivery_methods || []).find((method) => method.name === 'Accent Truck');
         setDeliveryMethod((current) => current || accent?.name || data.delivery_methods?.[0]?.name || '');
+        if (data.payment_methods?.length) setPaymentMethod((current) => current || data.payment_methods[0]);
       })
       .catch((err) => {
         if (!cancelled) setLoadError(err.message || 'Unable to load the order form');
@@ -203,6 +307,31 @@ export default function CustomerOrderForm() {
       cancelled = true;
     };
   }, [isStaff]);
+
+  useEffect(() => {
+    const ownerId = isStaff ? customerId : user?.id;
+    if (!ownerId || result) {
+      setBillHistory([]);
+      return undefined;
+    }
+    let cancelled = false;
+    const path = isStaff ? `/api/orders/bill-tos?customer_id=${ownerId}` : '/api/orders/bill-tos';
+    authFetch(path)
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || 'Unable to load bill to history');
+        return body;
+      })
+      .then((body) => {
+        if (!cancelled) setBillHistory(body.bill_tos || []);
+      })
+      .catch(() => {
+        if (!cancelled) setBillHistory([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isStaff, customerId, user, result]);
 
   useEffect(() => {
     if (!selectedServices.length) {
@@ -234,19 +363,23 @@ export default function CustomerOrderForm() {
     () => options.services.filter((service) => selectedServices.includes(service.id)),
     [options.services, selectedServices],
   );
+  const shipService = options.services.find((service) => service.name === SHIP_TO_SERVICE);
+  const shipSelected = Boolean(shipService && selectedServices.includes(shipService.id));
+  const shipLines = lines.filter((line) => shipService && line.service_id === shipService.id);
+  const seeShipLines = returnTo === 'See ShipTo' && shipLines.length > 0;
+  const firstVia = shipLines[0]?.values?.via || '';
 
   const selectedDelivery = useMemo(
     () => (options.delivery_methods || []).find((method) => method.name === deliveryMethod) || null,
     [options.delivery_methods, deliveryMethod],
   );
-
-  const activeWindow = selectedDelivery?.will_call
-    ? (options.due_windows?.will_call || options.due_window)
-    : (options.due_windows?.delivery || options.due_window);
-  const upsSelected = String(deliveryMethod || '').trim().toLowerCase() === 'ups';
+  const activeWindow = seeShipLines
+    ? (firstVia === 'Pickup at Accent' ? options.due_windows?.will_call : options.due_windows?.delivery)
+    : (selectedDelivery?.will_call ? options.due_windows?.will_call : options.due_windows?.delivery) || options.due_window;
+  const upsSelected = !seeShipLines && String(deliveryMethod || '').trim().toLowerCase() === 'ups';
   const filesAttached = originalsSource === ORIGINALS_FILES;
-  const finishingOptions = options.finishing_options?.length ? options.finishing_options : FINISHING_OPTIONS;
   const originalsOptions = options.originals_sources?.length ? options.originals_sources : ORIGINALS_SOURCES;
+  const paymentOptions = options.payment_methods?.length ? options.payment_methods : PAYMENT_METHODS;
 
   useEffect(() => {
     const slots = activeWindow?.slots || [];
@@ -265,26 +398,21 @@ export default function CustomerOrderForm() {
   }, [lines, looseFiles]);
 
   const uploading = [...lines.map((line) => line.file), ...looseFiles].some((file) => file && file.status === 'uploading');
+  const locked = Boolean(result);
 
-  function toggleService(serviceId) {
-    setSelectedServices((current) => (
-      current.includes(serviceId)
-        ? current.filter((id) => id !== serviceId)
-        : [...current, serviceId]
-    ));
+  function toggleService(service) {
+    const selected = selectedServices.includes(service.id);
+    if (selected) {
+      const hasLines = lines.some((line) => line.service_id === service.id);
+      if (hasLines && !window.confirm(`Remove ${service.name} and its line items?`)) return;
+      setLines((rows) => rows.filter((line) => line.service_id !== service.id));
+      setSelectedServices((current) => current.filter((id) => id !== service.id));
+      if (service.name === SHIP_TO_SERVICE) setReturnTo('To Me');
+      return;
+    }
+    setSelectedServices((current) => [...current, service.id]);
+    if (service.name === SHIP_TO_SERVICE) setReturnTo('See ShipTo');
   }
-
-  useEffect(() => {
-    setLines((rows) => rows.map((row) => {
-      if (selectedServices.length === 1 && row.service_id !== selectedServices[0]) {
-        return { ...row, service_id: selectedServices[0] };
-      }
-      if (row.service_id && !selectedServices.includes(row.service_id)) {
-        return { ...row, service_id: '' };
-      }
-      return row;
-    }));
-  }, [selectedServices]);
 
   function updateLine(key, patch) {
     setLines((rows) => rows.map((row) => (row.key === key ? { ...row, ...patch } : row)));
@@ -315,9 +443,27 @@ export default function CustomerOrderForm() {
   }
 
   async function removeStoredFile(file) {
-    if (file?.id) {
-      await authFetch(`/api/uploads/${file.id}`, { method: 'DELETE' });
+    if (file?.id) await authFetch(`/api/uploads/${file.id}`, { method: 'DELETE' });
+  }
+
+  function applyBill(entry) {
+    if (!entry) {
+      setBillTo(emptyBill);
+      setBillChoice('');
+      return;
     }
+    setBillChoice(String(entry.id));
+    setBillTo({
+      name: entry.name || '',
+      phone: entry.phone || '',
+      email: entry.email || '',
+      company: entry.company || '',
+      address_line1: entry.address_line1 || '',
+      address_line2: entry.address_line2 || '',
+      city: entry.city || '',
+      state: entry.state || '',
+      zip: entry.zip || '',
+    });
   }
 
   function resetForm() {
@@ -337,7 +483,30 @@ export default function CustomerOrderForm() {
     setLooseFiles([]);
     setPreview(null);
     setOriginalsSource('');
+    setBillTo(emptyBill);
+    setBillChoice('');
+    setPaymentMethod('Accent Account');
+    setReturnTo('To Me');
     if (!isStaff && user) applyProfile(user, true);
+  }
+
+  function saveEditor() {
+    if (!editor) return;
+    const service = options.services.find((row) => row.id === editor.service_id);
+    const problem = service ? missingRequired(service, editor) : null;
+    if (problem) {
+      setEditor({ ...editor, error: problem });
+      return;
+    }
+    setLines((rows) => {
+      const index = rows.findIndex((row) => row.key === editor.key);
+      const next = { key: editor.key, service_id: editor.service_id, values: editor.values, file: editor.file };
+      if (index === -1) return [...rows, next];
+      const copy = rows.slice();
+      copy[index] = next;
+      return copy;
+    });
+    setEditor(null);
   }
 
   async function handleSubmit(event) {
@@ -351,30 +520,35 @@ export default function CustomerOrderForm() {
       setFormError('Select at least one service.');
       return;
     }
-    if (selectedServiceRows.length > 1 && lines.some((line) => !line.service_id)) {
-      setFormError('Choose a service for each line item.');
-      return;
-    }
     if (!projectName.trim()) {
       setFormError('project_name is required');
       return;
     }
-    if (!address1.trim() || !city.trim() || !state.trim() || !zip.trim()) {
+    if (!address1.trim() || !city.trim() || !stateName.trim() || !zip.trim()) {
       setFormError('Company address requires Addr 1, City, State, and Zip.');
+      return;
+    }
+    if (!paymentMethod) {
+      setFormError('payment_method is required');
       return;
     }
     if (!originalsSource) {
       setFormError('originals_source is required');
       return;
     }
-    const emptyService = selectedServiceRows
-      .map((service) => emptyServiceMessage(service, lines, notes, shipTo, selectedServices))
-      .find(Boolean);
+    const emptyService = selectedServiceRows.map((service) => emptyServiceMessage(service, lines, notes, shipTo)).find(Boolean);
     if (emptyService) {
       setFormError(emptyService);
       return;
     }
-    const filesAttached = originalsSource === ORIGINALS_FILES;
+    const invalidLine = selectedServiceRows.map((service) => {
+      const row = lines.find((line) => line.service_id === service.id && missingRequired(service, line));
+      return row ? missingRequired(service, row) : null;
+    }).find(Boolean);
+    if (invalidLine) {
+      setFormError(invalidLine);
+      return;
+    }
     const attachedCount = filesAttached
       ? [...lines.map((line) => line.file), ...looseFiles].filter((file) => file && file.id && file.status === 'uploaded').length
       : 0;
@@ -401,9 +575,19 @@ export default function CustomerOrderForm() {
       address_line1: address1,
       address_line2: address2,
       city,
-      state,
+      state: stateName,
       zip,
-      delivery_method: deliveryMethod,
+      payment_method: paymentMethod,
+      return_to: returnTo,
+      bill_to_name: billTo.name,
+      bill_to_phone: billTo.phone,
+      bill_to_email: billTo.email,
+      bill_to_company: billTo.company,
+      bill_to_address_line1: billTo.address_line1,
+      bill_to_address_line2: billTo.address_line2,
+      bill_to_city: billTo.city,
+      bill_to_state: billTo.state,
+      bill_to_zip: billTo.zip,
       ups_account_number: upsSelected ? upsAccount : '',
       ship_to: shipTo,
       attention,
@@ -411,22 +595,15 @@ export default function CustomerOrderForm() {
       due_time: dueTime,
       service_ids: selectedServices,
       line_items: lines.map((line) => ({
-        description: line.description,
-        size: line.size,
-        quantity: line.quantity,
-        media: line.media,
-        color: line.color,
-        binding_finish: line.binding_finish,
-        finishing: line.finishing || 'None',
-        mount: line.mount === 'Yes',
-        laminate: line.laminate === 'Yes',
-        service_id: line.service_id || undefined,
+        service_id: line.service_id,
+        field_values: line.values,
         file_ids: originalsSource === ORIGINALS_FILES && line.file?.id ? [line.file.id] : [],
       })),
       file_ids: originalsSource === ORIGINALS_FILES
         ? looseFiles.filter((file) => file.id).map((file) => file.id)
         : [],
     };
+    if (!seeShipLines) payload.delivery_method = deliveryMethod;
     if (isStaff) payload.customer_id = Number(customerId);
 
     setSubmitting(true);
@@ -450,39 +627,23 @@ export default function CustomerOrderForm() {
     }
   }
 
-  const locked = Boolean(result);
+  const editorService = editor ? options.services.find((service) => service.id === editor.service_id) : null;
 
   return (
     <CustomerShell
       title={isStaff ? 'Create Order' : 'Customer Order Form'}
       welcome={welcomeText(user)}
       onLogout={logout}
-      extra={isStaff ? (
-        <Button color="inherit" onClick={() => navigate('/')}>
-          Admin Board
-        </Button>
-      ) : null}
+      extra={isStaff ? <Button color="inherit" onClick={() => navigate('/')}>Admin Board</Button> : null}
     >
-      <GlobalStyles
-        styles={{
-          '@media print': {
-            '.no-print': { display: 'none !important' },
-            body: { background: '#fff' },
-          },
-        }}
-      />
-      <Box
-        component="form"
-        id="order-form"
-        onSubmit={handleSubmit}
-        sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: result ? 'minmax(0, 1fr) 320px' : '1fr' }, gap: 2, alignItems: 'start' }}
-      >
-        <Box className="no-print" sx={{ display: 'grid', gap: 2 }}>
-          {loadError && <Alert severity="error">{loadError}</Alert>}
-          {formError && <Alert severity="error">{formError}</Alert>}
+      <GlobalStyles styles={{ '@media print': { '.no-print': { display: 'none !important' }, body: { background: '#fff' } } }} />
+      <Box component="form" id="order-form" onSubmit={handleSubmit} sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: result ? 'minmax(0, 1fr) 320px' : '1fr' }, gap: 2, alignItems: 'start' }}>
+        <Box className="no-print" sx={{ display: 'grid', gap: 1.5 }}>
+          {loadError ? <Alert severity="error">{loadError}</Alert> : null}
+          {formError ? <Alert severity="error">{formError}</Alert> : null}
 
-          {isStaff && (
-            <Section title="Customer">
+          {isStaff ? (
+            <FormAccordion title="Customer">
               <LabelField label="Customer" required>
                 <TextField
                   select
@@ -495,129 +656,60 @@ export default function CustomerOrderForm() {
                     setCustomerId(nextId);
                     const match = customers.find((customer) => String(customer.id) === String(nextId));
                     if (match) applyProfile(match, true);
+                    setBillChoice('');
                   }}
                   sx={fieldSx}
                 >
                   {customers.map((customer) => (
-                    <MenuItem key={customer.id} value={customer.id}>
-                      {customer.display_name || customer.username}
-                    </MenuItem>
+                    <MenuItem key={customer.id} value={customer.id}>{customer.display_name || customer.username}</MenuItem>
                   ))}
                 </TextField>
               </LabelField>
-            </Section>
-          )}
+            </FormAccordion>
+          ) : null}
 
-          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', xl: '1.15fr 1.05fr 1.15fr 0.9fr' }, gap: 2 }}>
-            <Section title="Contact Information">
-              <LabelField label="Company" required>
-                <TextField size="small" required value={company} disabled={locked} onChange={(e) => setCompany(e.target.value)} sx={fieldSx} />
-              </LabelField>
-              <LabelField label="Contact" required>
-                <TextField size="small" required value={contactName} disabled={locked} onChange={(e) => setContactName(e.target.value)} sx={fieldSx} />
-              </LabelField>
-              <LabelField label="Phone" required>
-                <TextField size="small" required value={phone} disabled={locked} onChange={(e) => setPhone(e.target.value)} sx={fieldSx} />
-              </LabelField>
-              <LabelField label="Email" required>
-                <TextField size="small" required type="email" value={email} disabled={locked} onChange={(e) => setEmail(e.target.value)} sx={fieldSx} />
-              </LabelField>
-              <LabelField label="Addr 1" required>
-                <TextField size="small" required value={address1} disabled={locked} onChange={(e) => setAddress1(e.target.value)} sx={fieldSx} />
-              </LabelField>
-              <LabelField label="Addr 2">
-                <TextField size="small" value={address2} disabled={locked} onChange={(e) => setAddress2(e.target.value)} sx={fieldSx} />
-              </LabelField>
-              <LabelField label="City" required>
-                <TextField size="small" required value={city} disabled={locked} onChange={(e) => setCity(e.target.value)} sx={fieldSx} />
-              </LabelField>
-              <LabelField label="State" required>
-                <TextField size="small" required value={state} disabled={locked} onChange={(e) => setState(e.target.value)} sx={fieldSx} />
-              </LabelField>
-              <LabelField label="Zip" required>
-                <TextField size="small" required value={zip} disabled={locked} onChange={(e) => setZip(e.target.value)} sx={fieldSx} />
-              </LabelField>
-            </Section>
+          <FormAccordion title="Contact">
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 1.25 }}>
+              <LabelField label="Company" required><TextField size="small" required value={company} disabled={locked} onChange={(event) => setCompany(event.target.value)} sx={fieldSx} /></LabelField>
+              <LabelField label="Contact" required><TextField size="small" required value={contactName} disabled={locked} onChange={(event) => setContactName(event.target.value)} sx={fieldSx} /></LabelField>
+              <LabelField label="Phone" required><TextField size="small" required value={phone} disabled={locked} onChange={(event) => setPhone(event.target.value)} sx={fieldSx} /></LabelField>
+              <LabelField label="Email" required><TextField size="small" required type="email" value={email} disabled={locked} onChange={(event) => setEmail(event.target.value)} sx={fieldSx} /></LabelField>
+              <LabelField label="Addr 1" required><TextField size="small" required value={address1} disabled={locked} onChange={(event) => setAddress1(event.target.value)} sx={fieldSx} /></LabelField>
+              <LabelField label="Addr 2"><TextField size="small" value={address2} disabled={locked} onChange={(event) => setAddress2(event.target.value)} sx={fieldSx} /></LabelField>
+              <LabelField label="City" required><TextField size="small" required value={city} disabled={locked} onChange={(event) => setCity(event.target.value)} sx={fieldSx} /></LabelField>
+              <LabelField label="State" required><TextField size="small" required value={stateName} disabled={locked} onChange={(event) => setStateName(event.target.value)} sx={fieldSx} /></LabelField>
+              <LabelField label="Zip" required><TextField size="small" required value={zip} disabled={locked} onChange={(event) => setZip(event.target.value)} sx={fieldSx} /></LabelField>
+            </Box>
+          </FormAccordion>
 
-            <Section title="Project Information">
-              <LabelField label="PO Number">
-                <TextField size="small" value={poNumber} disabled={locked} onChange={(e) => setPoNumber(e.target.value)} sx={fieldSx} />
-              </LabelField>
-              <LabelField label="Project Number">
-                <TextField size="small" value={projectNumber} disabled={locked} onChange={(e) => setProjectNumber(e.target.value)} sx={fieldSx} />
-              </LabelField>
-              <LabelField label="Project Name" required>
-                <TextField size="small" required value={projectName} disabled={locked} onChange={(e) => setProjectName(e.target.value)} sx={fieldSx} />
-              </LabelField>
-              <LabelField label="Notes / Instructions">
-                <TextField size="small" value={notes} disabled={locked} onChange={(e) => setNotes(e.target.value)} sx={fieldSx} />
-              </LabelField>
-            </Section>
+          <FormAccordion title="Bill To">
+            <Typography sx={{ color: brand.muted, fontSize: 13 }}>Optional. Leave this blank when the contact above is the billing contact.</Typography>
+            <LabelField label="Previous">
+              <TextField select size="small" value={billChoice} disabled={locked} onChange={(event) => applyBill(billHistory.find((entry) => String(entry.id) === event.target.value))} sx={fieldSx}>
+                <MenuItem value="">None</MenuItem>
+                {billHistory.map((entry) => <MenuItem key={entry.id} value={String(entry.id)}>{billLabel(entry)}</MenuItem>)}
+              </TextField>
+            </LabelField>
+            <Typography sx={{ fontWeight: 700, color: brand.navy }}>Person</Typography>
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 1.25 }}>
+              <LabelField label="Name"><TextField size="small" value={billTo.name} disabled={locked} onChange={(event) => setBillTo({ ...billTo, name: event.target.value })} sx={fieldSx} /></LabelField>
+              <LabelField label="Phone"><TextField size="small" value={billTo.phone} disabled={locked} onChange={(event) => setBillTo({ ...billTo, phone: event.target.value })} sx={fieldSx} /></LabelField>
+              <LabelField label="Email"><TextField size="small" value={billTo.email} disabled={locked} onChange={(event) => setBillTo({ ...billTo, email: event.target.value })} sx={fieldSx} /></LabelField>
+            </Box>
+            <Typography sx={{ fontWeight: 700, color: brand.navy }}>Company</Typography>
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 1.25 }}>
+              <LabelField label="Name"><TextField size="small" value={billTo.company} disabled={locked} onChange={(event) => setBillTo({ ...billTo, company: event.target.value })} sx={fieldSx} /></LabelField>
+              <LabelField label="Addr 1"><TextField size="small" value={billTo.address_line1} disabled={locked} onChange={(event) => setBillTo({ ...billTo, address_line1: event.target.value })} sx={fieldSx} /></LabelField>
+              <LabelField label="Addr 2"><TextField size="small" value={billTo.address_line2} disabled={locked} onChange={(event) => setBillTo({ ...billTo, address_line2: event.target.value })} sx={fieldSx} /></LabelField>
+              <LabelField label="City"><TextField size="small" value={billTo.city} disabled={locked} onChange={(event) => setBillTo({ ...billTo, city: event.target.value })} sx={fieldSx} /></LabelField>
+              <LabelField label="State"><TextField size="small" value={billTo.state} disabled={locked} onChange={(event) => setBillTo({ ...billTo, state: event.target.value })} sx={fieldSx} /></LabelField>
+              <LabelField label="Zip"><TextField size="small" value={billTo.zip} disabled={locked} onChange={(event) => setBillTo({ ...billTo, zip: event.target.value })} sx={fieldSx} /></LabelField>
+            </Box>
+          </FormAccordion>
 
-            <Section title="Delivery Information">
-              <LabelField label="Delivery Method" required>
-                <TextField
-                  select
-                  size="small"
-                  required
-                  value={deliveryMethod}
-                  disabled={locked}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    setDeliveryMethod(next);
-                    if (String(next).trim().toLowerCase() !== 'ups') setUpsAccount('');
-                  }}
-                  sx={fieldSx}
-                >
-                  {(options.delivery_methods || []).map((method) => (
-                    <MenuItem key={method.id} value={method.name}>{method.name}</MenuItem>
-                  ))}
-                </TextField>
-              </LabelField>
-              {upsSelected && (
-                <LabelField label="UPS Account">
-                  <TextField
-                    size="small"
-                    value={upsAccount}
-                    disabled={locked}
-                    onChange={(e) => setUpsAccount(e.target.value)}
-                    placeholder="Optional"
-                    helperText="Optional. Letters, digits, spaces, and dashes."
-                    inputProps={{ maxLength: 30, 'aria-label': 'UPS account number' }}
-                    sx={fieldSx}
-                  />
-                </LabelField>
-              )}
-              <LabelField label="Ship To">
-                <TextField size="small" multiline minRows={3} value={shipTo} disabled={locked} onChange={(e) => setShipTo(e.target.value)} sx={fieldSx} />
-              </LabelField>
-              <LabelField label="Attention">
-                <TextField size="small" value={attention} disabled={locked} onChange={(e) => setAttention(e.target.value)} sx={fieldSx} />
-              </LabelField>
-            </Section>
-
-            <Section title="Due Date & Time">
-              <LabelField label="Due Date" required>
-                <TextField size="small" required type="date" value={dueDate} disabled={locked} onChange={(e) => setDueDate(e.target.value)} InputLabelProps={{ shrink: true }} sx={fieldSx} />
-              </LabelField>
-              <LabelField label="Due Time" required>
-                <TextField select size="small" required value={dueTime} disabled={locked} onChange={(e) => setDueTime(e.target.value)} sx={fieldSx}>
-                  {(activeWindow?.slots || []).map((slot) => (
-                    <MenuItem key={slot} value={slot}>{formatClockLabel(slot)}</MenuItem>
-                  ))}
-                </TextField>
-              </LabelField>
-              <Typography sx={{ color: brand.muted, fontSize: 13, mt: 0.5 }}>
-                {activeWindow?.summary || 'Delivery orders 9:00 AM - 4:00 PM (15 minute increments).'}
-              </Typography>
-            </Section>
-          </Box>
-
-          <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2 }}>
-            <Typography sx={{ color: brand.navy, fontWeight: 700 }}>
-              Select Services <Box component="span" sx={{ fontWeight: 500, color: brand.muted }}>(Choose all that apply)</Box>
-            </Typography>
-            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 1.5, mt: 1.5 }}>
+          <FormAccordion title="Services">
+            <Typography sx={{ color: brand.muted, fontSize: 13 }}>Choose every service this order needs. Each one opens its own line items.</Typography>
+            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 1.5 }}>
               {options.services.map((service) => {
                 const selected = selectedServices.includes(service.id);
                 const Icon = SERVICE_ICONS[service.name] || DescriptionOutlinedIcon;
@@ -628,12 +720,12 @@ export default function CustomerOrderForm() {
                     role="checkbox"
                     aria-checked={selected}
                     tabIndex={locked ? -1 : 0}
-                    onClick={() => { if (!locked) toggleService(service.id); }}
+                    onClick={() => { if (!locked) toggleService(service); }}
                     onKeyDown={(event) => {
                       if (locked) return;
                       if (event.key === 'Enter' || event.key === ' ') {
                         event.preventDefault();
-                        toggleService(service.id);
+                        toggleService(service);
                       }
                     }}
                     sx={{
@@ -652,236 +744,213 @@ export default function CustomerOrderForm() {
                     <Typography sx={{ fontWeight: 700, fontSize: 14, mt: 1 }}>{service.name}</Typography>
                     <Typography sx={{ color: brand.muted, fontSize: 12, mt: 0.5 }}>{service.description}</Typography>
                     {service.default_turnaround_hours ? (
-                      <Typography sx={{ color: brand.muted, fontSize: 12 }}>
-                        Typical turnaround: {service.default_turnaround_hours} hours
-                      </Typography>
+                      <Typography sx={{ color: brand.muted, fontSize: 12 }}>Typical turnaround: {service.default_turnaround_hours} hours</Typography>
                     ) : null}
                   </Box>
                 );
               })}
             </Box>
-          </Box>
+          </FormAccordion>
 
-          <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2 }}>
-            <Typography sx={{ color: brand.navy, fontWeight: 700, mb: 1.5 }}>Line Items</Typography>
-            <Box sx={{ overflowX: 'auto' }}>
-              <Box component="table" sx={{ width: '100%', borderCollapse: 'collapse', minWidth: 980, '& th, & td': { borderBottom: `1px solid ${brand.border}`, p: 0.75, fontSize: 13, textAlign: 'left', verticalAlign: 'middle' }, '& th': { color: brand.navy, fontWeight: 700 } }}>
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>Description</th>
-                    {selectedServiceRows.length > 1 && <th>Service</th>}
-                    <th>Size</th>
-                    <th>Qty</th>
-                    <th>Media</th>
-                    <th>Color</th>
-                    <th>Binding / Finish</th>
-                    <th>Finishing</th>
-                    <th>Mount</th>
-                    <th>Laminate</th>
-                    {filesAttached && <th>Upload Files</th>}
-                  </tr>
-                </thead>
-                <tbody>
-                  {lines.map((line, index) => (
-                    <tr key={line.key}>
-                      <td>{index + 1}</td>
-                      <td><TextField size="small" required value={line.description} disabled={locked} onChange={(e) => updateLine(line.key, { description: e.target.value })} /></td>
-                      {selectedServiceRows.length > 1 && (
-                        <td>
-                          <TextField select size="small" value={line.service_id} disabled={locked} onChange={(e) => updateLine(line.key, { service_id: Number(e.target.value) })} sx={{ minWidth: 140 }}>
-                            {selectedServiceRows.map((service) => (
-                              <MenuItem key={service.id} value={service.id}>{service.name}</MenuItem>
-                            ))}
-                          </TextField>
-                        </td>
-                      )}
-                      <td><TextField size="small" value={line.size} disabled={locked} onChange={(e) => updateLine(line.key, { size: e.target.value })} sx={{ width: 90 }} /></td>
-                      <td><TextField size="small" value={line.quantity} disabled={locked} onChange={(e) => updateLine(line.key, { quantity: e.target.value })} sx={{ width: 90 }} /></td>
-                      <td><TextField size="small" value={line.media} disabled={locked} onChange={(e) => updateLine(line.key, { media: e.target.value })} sx={{ width: 100 }} /></td>
-                      <td><TextField size="small" value={line.color} disabled={locked} onChange={(e) => updateLine(line.key, { color: e.target.value })} sx={{ width: 90 }} /></td>
-                      <td><TextField size="small" value={line.binding_finish} disabled={locked} onChange={(e) => updateLine(line.key, { binding_finish: e.target.value })} sx={{ width: 130 }} /></td>
-                      <td>
-                        <TextField select size="small" value={line.finishing || 'None'} disabled={locked} onChange={(e) => updateLine(line.key, { finishing: e.target.value })} sx={{ minWidth: 130 }}>
-                          {finishingOptions.map((option) => (
-                            <MenuItem key={option} value={option}>{option}</MenuItem>
-                          ))}
-                        </TextField>
-                      </td>
-                      <td>
-                        <TextField select size="small" value={line.mount} disabled={locked} onChange={(e) => updateLine(line.key, { mount: e.target.value })}>
-                          <MenuItem value="No">No</MenuItem>
-                          <MenuItem value="Yes">Yes</MenuItem>
-                        </TextField>
-                      </td>
-                      <td>
-                        <TextField select size="small" value={line.laminate} disabled={locked} onChange={(e) => updateLine(line.key, { laminate: e.target.value })}>
-                          <MenuItem value="No">No</MenuItem>
-                          <MenuItem value="Yes">Yes</MenuItem>
-                        </TextField>
-                      </td>
-                      {filesAttached && (
-                      <td>
-                        {line.file ? (
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                            <Box>
-                              <Typography sx={{ fontSize: 13 }}>{line.file.original_name}</Typography>
-                              <Typography sx={{ fontSize: 12, color: line.file.status === 'error' ? brand.danger : brand.muted }}>
-                                {line.file.status === 'uploading' && 'Uploading…'}
-                                {line.file.status === 'uploaded' && formatFileSize(line.file.size_bytes)}
-                                {line.file.status === 'error' && (line.file.error || 'Upload failed')}
-                              </Typography>
-                            </Box>
-                            {!locked && (
-                              <Button
-                                size="small"
-                                color="inherit"
-                                aria-label={`Remove ${line.file.original_name}`}
-                                onClick={async () => {
-                                  await removeStoredFile(line.file);
-                                  updateLine(line.key, { file: null });
-                                }}
-                              >
-                                <CloseIcon fontSize="small" />
-                              </Button>
-                            )}
-                          </Box>
-                        ) : (
-                          <Button size="small" component="label" disabled={locked}>
-                            Upload
-                            <input
-                              hidden
-                              type="file"
-                              accept=".pdf,.png,.jpg,.jpeg,.gif,.tif,.tiff,.webp,.bmp,.dwg,.zip,.plt"
-                              onChange={(event) => {
-                                const file = event.target.files?.[0];
-                                event.target.value = '';
-                                if (!file) return;
-                                uploadFile(file, (next) => updateLine(line.key, { file: next }));
-                              }}
-                            />
-                          </Button>
-                        )}
-                      </td>
-                      )}
-                    </tr>
-                  ))}
-                  {!lines.length && (
-                    <tr>
-                      <td colSpan={12}>
-                        <Typography sx={{ color: brand.muted, py: 1 }}>No line items yet.</Typography>
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </Box>
-            </Box>
-            <Button
-              data-testid="add-line-item"
-              startIcon={<AddIcon />}
-              sx={{ mt: 1.5 }}
-              disabled={locked}
-              onClick={() => setLines((rows) => [...rows, newLine(selectedServices.length === 1 ? selectedServices[0] : '')])}
-            >
-              Add Line Item
-            </Button>
-          </Box>
+          {selectedServiceRows.map((service) => {
+            const serviceLines = lines.filter((line) => line.service_id === service.id);
+            return (
+              <FormAccordion key={service.id} title={service.name}>
+                {serviceLines.length === 0 ? <Typography sx={{ color: brand.muted }}>No lines yet.</Typography> : null}
+                {serviceLines.map((line, index) => (
+                  <Box key={line.key} sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', borderBottom: `1px solid ${brand.border}`, pb: 1 }}>
+                    <Typography sx={{ flex: 1, minWidth: 180 }}>{index + 1}. {lineSummary(service, line)}</Typography>
+                    {!locked ? (
+                      <>
+                        <Button size="small" onClick={() => setEditor({ ...line, values: { ...line.values }, error: '' })}>Edit</Button>
+                        <Button size="small" onClick={async () => {
+                          await removeStoredFile(line.file);
+                          setLines((rows) => rows.filter((row) => row.key !== line.key));
+                        }}
+                        >
+                          Remove
+                        </Button>
+                      </>
+                    ) : null}
+                  </Box>
+                ))}
+                <Button
+                  data-testid={`add-line-${service.id}`}
+                  startIcon={<AddIcon />}
+                  disabled={locked}
+                  onClick={() => setEditor({ ...newLine(service), error: '' })}
+                >
+                  Add line
+                </Button>
+              </FormAccordion>
+            );
+          })}
 
-          <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2 }}>
-            <Typography sx={{ color: brand.navy, fontWeight: 700, mb: 1.5 }}>Originals</Typography>
-            <LabelField label="Originals Source" required>
+          <FormAccordion title="Time Constraints">
+            <LabelField label="Due Date" required>
+              <TextField size="small" required type="date" value={dueDate} disabled={locked} onChange={(event) => setDueDate(event.target.value)} InputLabelProps={{ shrink: true }} sx={fieldSx} />
+            </LabelField>
+            <LabelField label="Due Time" required>
+              <TextField select size="small" required value={dueTime} disabled={locked} onChange={(event) => setDueTime(event.target.value)} sx={fieldSx}>
+                {(activeWindow?.slots || []).map((slot) => <MenuItem key={slot} value={slot}>{formatClockLabel(slot)}</MenuItem>)}
+              </TextField>
+            </LabelField>
+            <Typography sx={{ color: brand.muted, fontSize: 13 }}>{activeWindow?.summary || 'Delivery orders 9:00 AM - 4:00 PM (15 minute increments).'}</Typography>
+          </FormAccordion>
+
+          <FormAccordion title="Accounting">
+            <LabelField label="PO Number"><TextField size="small" value={poNumber} disabled={locked} onChange={(event) => setPoNumber(event.target.value)} sx={fieldSx} /></LabelField>
+            <LabelField label="Project Number"><TextField size="small" value={projectNumber} disabled={locked} onChange={(event) => setProjectNumber(event.target.value)} sx={fieldSx} /></LabelField>
+            <LabelField label="Project Name" required><TextField size="small" required value={projectName} disabled={locked} onChange={(event) => setProjectName(event.target.value)} sx={fieldSx} /></LabelField>
+          </FormAccordion>
+
+          <FormAccordion title="Payment">
+            <LabelField label="Payment Method" required>
+              <TextField select size="small" required value={paymentMethod} disabled={locked} onChange={(event) => setPaymentMethod(event.target.value)} sx={fieldSx}>
+                {paymentOptions.map((method) => <MenuItem key={method} value={method}>{method}</MenuItem>)}
+              </TextField>
+            </LabelField>
+            <Typography sx={{ color: brand.muted, fontSize: 13 }}>The method only. Card numbers are not collected.</Typography>
+          </FormAccordion>
+
+          <FormAccordion title="Deliverables">
+            <LabelField label="Return" required>
               <TextField
                 select
                 size="small"
                 required
-                value={originalsSource}
+                value={returnTo}
                 disabled={locked}
-                onChange={(e) => setOriginalsSource(e.target.value)}
+                onChange={(event) => setReturnTo(event.target.value)}
                 sx={fieldSx}
               >
-                {originalsOptions.map((option) => (
-                  <MenuItem key={option} value={option}>{option}</MenuItem>
-                ))}
+                <MenuItem value="To Me">To Me</MenuItem>
+                {shipSelected ? <MenuItem value="See ShipTo">See ShipTo</MenuItem> : null}
               </TextField>
             </LabelField>
-            {originalsSource === ORIGINALS_PICKUP && (
+            {seeShipLines ? (
+              <Typography sx={{ color: brand.muted, fontSize: 13 }}>
+                Delivery follows the Ship To lines. Pickup at Accent uses Will Call hours. Accent Truck, Ground, 1 day, and 2 day use delivery hours. The first line&apos;s Via sets the order method.
+              </Typography>
+            ) : (
+              <>
+                <LabelField label="Delivery Method" required>
+                  <TextField
+                    select
+                    size="small"
+                    required
+                    value={deliveryMethod}
+                    disabled={locked}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      setDeliveryMethod(next);
+                      if (String(next).trim().toLowerCase() !== 'ups') setUpsAccount('');
+                    }}
+                    sx={fieldSx}
+                  >
+                    {(options.delivery_methods || []).map((method) => <MenuItem key={method.id} value={method.name}>{method.name}</MenuItem>)}
+                  </TextField>
+                </LabelField>
+                {upsSelected ? (
+                  <LabelField label="UPS Account">
+                    <TextField
+                      size="small"
+                      value={upsAccount}
+                      disabled={locked}
+                      onChange={(event) => setUpsAccount(event.target.value)}
+                      placeholder="Optional"
+                      helperText="Optional. Letters, digits, spaces, and dashes."
+                      inputProps={{ maxLength: 30, 'aria-label': 'UPS account number' }}
+                      sx={fieldSx}
+                    />
+                  </LabelField>
+                ) : null}
+              </>
+            )}
+            <LabelField label="Ship To">
+              <TextField size="small" multiline minRows={3} value={shipTo} disabled={locked} onChange={(event) => setShipTo(event.target.value)} sx={fieldSx} />
+            </LabelField>
+            <LabelField label="Attention">
+              <TextField size="small" value={attention} disabled={locked} onChange={(event) => setAttention(event.target.value)} sx={fieldSx} />
+            </LabelField>
+          </FormAccordion>
+
+          <FormAccordion title="Originals">
+            <LabelField label="Originals Source" required>
+              <TextField select size="small" required value={originalsSource} disabled={locked} onChange={(event) => setOriginalsSource(event.target.value)} sx={fieldSx}>
+                {originalsOptions.map((option) => <MenuItem key={option} value={option}>{option}</MenuItem>)}
+              </TextField>
+            </LabelField>
+            {originalsSource === ORIGINALS_PICKUP ? (
               <Typography sx={{ color: brand.muted, fontSize: 13 }}>
                 This asks Accent Imaging to send a vehicle to pick up the originals. It is separate from the outbound delivery method.
               </Typography>
-            )}
-            {filesAttached && (
-              <Typography sx={{ color: brand.muted, fontSize: 13 }}>
-                Attach at least one file below or on a line item.
-              </Typography>
-            )}
-          </Box>
-
-          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: filesAttached ? '1fr 1.2fr auto' : '1.2fr auto' }, gap: 2, alignItems: 'stretch' }}>
-            {filesAttached && (
-            <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2 }}>
-              <Typography sx={{ color: brand.navy, fontWeight: 700, mb: 1 }}>Files Uploaded</Typography>
-              {uploadedFiles.length === 0 && <Typography sx={{ color: brand.muted, fontSize: 14 }}>No files uploaded yet.</Typography>}
-              {uploadedFiles.map((file) => (
-                <Box key={file.id || file.key} sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                  {file.status === 'uploaded' && <CheckCircleIcon sx={{ color: brand.green, fontSize: 18 }} />}
-                  <Box sx={{ flex: 1 }}>
-                    <Typography sx={{ fontSize: 14 }}>{file.original_name}</Typography>
-                    <Typography sx={{ fontSize: 12, color: file.status === 'error' ? brand.danger : brand.muted }}>
-                      {file.status === 'uploading' && 'Uploading…'}
-                      {file.status === 'uploaded' && formatFileSize(file.size_bytes)}
-                      {file.status === 'error' && (file.error || 'Upload failed')}
-                    </Typography>
-                  </Box>
-                  {!locked && (
-                    <Button
-                      size="small"
-                      color="inherit"
-                      aria-label={`Remove ${file.original_name}`}
-                      onClick={async () => {
+            ) : null}
+            {filesAttached ? (
+              <Box>
+                <Typography sx={{ color: brand.muted, fontSize: 13, mb: 1 }}>Attach at least one file below or on a line item.</Typography>
+                {uploadedFiles.length === 0 ? <Typography sx={{ color: brand.muted, fontSize: 14 }}>No files uploaded yet.</Typography> : null}
+                {uploadedFiles.map((file) => (
+                  <Box key={file.id || file.key} sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                    {file.status === 'uploaded' ? <CheckCircleIcon sx={{ color: brand.green, fontSize: 18 }} /> : null}
+                    <Box sx={{ flex: 1 }}>
+                      <Typography sx={{ fontSize: 14 }}>{file.original_name}</Typography>
+                      <Typography sx={{ fontSize: 12, color: file.status === 'error' ? brand.danger : brand.muted }}>
+                        {file.status === 'uploading' && 'Uploading…'}
+                        {file.status === 'uploaded' && formatFileSize(file.size_bytes)}
+                        {file.status === 'error' && (file.error || 'Upload failed')}
+                      </Typography>
+                    </Box>
+                    {!locked ? (
+                      <Button size="small" color="inherit" aria-label={`Remove ${file.original_name}`} onClick={async () => {
                         await removeStoredFile(file);
                         setLines((rows) => rows.map((row) => (row.file && (row.file.id === file.id || row.file.key === file.key) ? { ...row, file: null } : row)));
                         setLooseFiles((rows) => rows.filter((item) => item.id !== file.id && item.key !== file.key));
                       }}
-                    >
-                      <CloseIcon fontSize="small" />
-                    </Button>
-                  )}
-                </Box>
-              ))}
-              {!locked && (
-                <Button size="small" component="label" sx={{ mt: 1 }}>
-                  Upload Files
-                  <input
-                    hidden
-                    type="file"
-                    multiple
-                    accept=".pdf,.png,.jpg,.jpeg,.gif,.tif,.tiff,.webp,.bmp,.dwg,.zip,.plt"
-                    onChange={(event) => {
-                      const chosen = Array.from(event.target.files || []);
-                      event.target.value = '';
-                      chosen.forEach((file) => {
-                        uploadFile(file, (next) => {
-                          setLooseFiles((current) => {
-                            const index = current.findIndex((item) => item.key === next.key);
-                            if (index === -1) return [...current, next];
-                            const copy = current.slice();
-                            copy[index] = next;
-                            return copy;
+                      >
+                        <CloseIcon fontSize="small" />
+                      </Button>
+                    ) : null}
+                  </Box>
+                ))}
+                {!locked ? (
+                  <Button size="small" component="label" sx={{ mt: 1 }}>
+                    Upload Files
+                    <input
+                      hidden
+                      type="file"
+                      multiple
+                      accept=".pdf,.png,.jpg,.jpeg,.gif,.tif,.tiff,.webp,.bmp,.dwg,.zip,.plt"
+                      onChange={(event) => {
+                        const chosen = Array.from(event.target.files || []);
+                        event.target.value = '';
+                        chosen.forEach((file) => {
+                          uploadFile(file, (next) => {
+                            setLooseFiles((current) => {
+                              const index = current.findIndex((item) => item.key === next.key);
+                              if (index === -1) return [...current, next];
+                              const copy = current.slice();
+                              copy[index] = next;
+                              return copy;
+                            });
                           });
                         });
-                      });
-                    }}
-                  />
-                </Button>
-              )}
-            </Box>
-            )}
+                      }}
+                    />
+                  </Button>
+                ) : null}
+              </Box>
+            ) : null}
+          </FormAccordion>
 
+          <FormAccordion title="Special Instructions">
+            <TextField size="small" multiline minRows={3} value={notes} disabled={locked} onChange={(event) => setNotes(event.target.value)} placeholder="Notes for the shop" sx={fieldSx} />
+          </FormAccordion>
+
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1.2fr auto' }, gap: 2, alignItems: 'stretch' }}>
             <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2 }}>
               <Typography sx={{ color: brand.navy, fontWeight: 700 }}>Create Work Orders</Typography>
-              <Typography sx={{ color: brand.muted, fontSize: 13, mb: 1 }}>
-                Based on the services selected, the following work orders will be created.
-              </Typography>
+              <Typography sx={{ color: brand.muted, fontSize: 13, mb: 1 }}>Based on the services selected, the following work orders will be created.</Typography>
               {(preview?.work_orders || []).map((workOrder) => (
                 <Typography key={workOrder.external_id} sx={{ fontSize: 14, mb: 0.5 }}>
                   <Box component="span" sx={{ fontWeight: 700 }}>{workOrder.external_id}</Box>
@@ -889,42 +958,22 @@ export default function CustomerOrderForm() {
                   {workOrder.service_name}
                 </Typography>
               ))}
-              {!selectedServices.length && (
-                <Typography sx={{ color: brand.muted, fontSize: 14 }}>Select one or more services.</Typography>
-              )}
-              {preview?.provisional && (
-                <Typography sx={{ color: brand.muted, fontSize: 12, mt: 1 }}>
-                  Numbers are reserved when you submit.
-                </Typography>
-              )}
+              {!selectedServices.length ? <Typography sx={{ color: brand.muted, fontSize: 14 }}>Select one or more services.</Typography> : null}
+              {preview?.provisional ? <Typography sx={{ color: brand.muted, fontSize: 12, mt: 1 }}>Numbers are reserved when you submit.</Typography> : null}
             </Box>
-
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Button
-                data-testid="submit-order"
-                type="submit"
-                variant="contained"
-                disabled={locked || submitting || uploading}
-                sx={{ bgcolor: brand.green, px: 4, py: 1.5, fontWeight: 700, '&:hover': { bgcolor: brand.greenDark } }}
-              >
+              <Button data-testid="submit-order" type="submit" variant="contained" disabled={locked || submitting || uploading} sx={{ bgcolor: brand.green, px: 4, py: 1.5, fontWeight: 700, '&:hover': { bgcolor: brand.greenDark } }}>
                 {submitting ? 'Submitting…' : 'Submit Order'}
               </Button>
             </Box>
           </Box>
         </Box>
 
-        {result && (
-          <Box
-            data-testid="success-panel"
-            sx={{ bgcolor: '#fff', border: `2px solid ${brand.green}`, borderRadius: 1.5, p: 3, textAlign: 'center' }}
-          >
+        {result ? (
+          <Box data-testid="success-panel" sx={{ bgcolor: '#fff', border: `2px solid ${brand.green}`, borderRadius: 1.5, p: 3, textAlign: 'center' }}>
             <CheckCircleIcon sx={{ color: brand.green, fontSize: 72 }} />
-            <Typography sx={{ color: brand.green, fontWeight: 800, fontSize: 26, lineHeight: 1.2, mt: 1 }}>
-              Order Submitted Successfully!
-            </Typography>
-            <Typography data-testid="order-number" sx={{ mt: 2, fontWeight: 700, fontSize: 18 }}>
-              Order #: {result.order_number}
-            </Typography>
+            <Typography sx={{ color: brand.green, fontWeight: 800, fontSize: 26, lineHeight: 1.2, mt: 1 }}>Order Submitted Successfully!</Typography>
+            <Typography data-testid="order-number" sx={{ mt: 2, fontWeight: 700, fontSize: 18 }}>Order #: {result.order_number}</Typography>
             <Typography sx={{ color: brand.navy, fontWeight: 700, mt: 2, textAlign: 'left' }}>Work Orders Created</Typography>
             <Box sx={{ textAlign: 'left', mt: 1 }}>
               {(result.work_orders || []).map((workOrder) => (
@@ -936,15 +985,67 @@ export default function CustomerOrderForm() {
               ))}
             </Box>
             <Box className="no-print" sx={{ display: 'grid', gap: 1, mt: 3 }}>
-              <Button variant="contained" onClick={() => navigate(`/orders/${result.order.id}`)} sx={{ bgcolor: brand.navy }}>
-                View Submitted Order
-              </Button>
+              <Button variant="contained" onClick={() => navigate(`/orders/${result.order.id}`)} sx={{ bgcolor: brand.navy }}>View Submitted Order</Button>
               <Button variant="outlined" onClick={() => window.print()}>Print Confirmation</Button>
               <Button variant="outlined" onClick={resetForm}>Create Another Order</Button>
             </Box>
           </Box>
-        )}
+        ) : null}
       </Box>
+
+      <Dialog open={Boolean(editor)} onClose={() => setEditor(null)} fullWidth maxWidth="sm">
+        <DialogTitle>{editorService ? editorService.name : 'Line'}</DialogTitle>
+        <DialogContent>
+          {editor?.error ? <Alert severity="error" sx={{ mb: 1 }}>{editor.error}</Alert> : null}
+          <Box sx={{ display: 'grid', gap: 1.25, mt: 1 }}>
+            {(editorService?.fields || []).filter((field) => field.is_active !== false).map((field) => (
+              <FieldInput
+                key={field.key}
+                field={field}
+                value={editor?.values?.[field.key]}
+                disabled={locked}
+                onChange={(value) => setEditor((current) => ({ ...current, values: { ...current.values, [field.key]: value } }))}
+              />
+            ))}
+            {filesAttached && editor ? (
+              <Box>
+                <Typography sx={{ fontSize: 14, mb: 0.5 }}>File</Typography>
+                {editor.file ? (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography sx={{ fontSize: 14 }}>{editor.file.original_name}</Typography>
+                    <Button size="small" onClick={async () => {
+                      await removeStoredFile(editor.file);
+                      setEditor({ ...editor, file: null });
+                    }}
+                    >
+                      Remove
+                    </Button>
+                  </Box>
+                ) : (
+                  <Button size="small" component="label">
+                    Upload
+                    <input
+                      hidden
+                      type="file"
+                      accept=".pdf,.png,.jpg,.jpeg,.gif,.tif,.tiff,.webp,.bmp,.dwg,.zip,.plt"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        event.target.value = '';
+                        if (!file) return;
+                        uploadFile(file, (next) => setEditor((current) => (current ? { ...current, file: next } : current)));
+                      }}
+                    />
+                  </Button>
+                )}
+              </Box>
+            ) : null}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditor(null)}>Cancel</Button>
+          <Button variant="contained" onClick={saveEditor}>Save line</Button>
+        </DialogActions>
+      </Dialog>
 
       <Box sx={{ mt: 2, bgcolor: '#E7F0FA', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2 }}>
         <Typography sx={{ color: brand.navy, fontWeight: 700, mb: 0.5 }}>Important Information</Typography>

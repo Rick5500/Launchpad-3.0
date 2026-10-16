@@ -70,6 +70,17 @@ const workOrderFieldList = `
   o.city,
   o.state,
   o.zip,
+  o.payment_method,
+  o.return_to,
+  o.bill_to_name,
+  o.bill_to_phone,
+  o.bill_to_email,
+  o.bill_to_company,
+  o.bill_to_address_line1,
+  o.bill_to_address_line2,
+  o.bill_to_city,
+  o.bill_to_state,
+  o.bill_to_zip,
   s.name AS service_name
 `;
 

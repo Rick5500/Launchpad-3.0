@@ -11,6 +11,7 @@ const path = require('path');
 const bcrypt = require('bcryptjs');
 const sqlite3 = require('sqlite3').verbose();
 
+const { fillOrderLines, rememberService } = require('./orderLineDefaults');
 const backendDir = path.join(__dirname, '..');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-phase4-'));
 const oldDb = path.join(tmp, 'old.db');
@@ -202,7 +203,7 @@ function weekdayIso(offset = 1) {
 }
 
 function orderBody(serviceId, customerId, overrides = {}) {
-  return {
+  return fillOrderLines({
     customer_id: customerId,
     company: 'Phase Four Print Co',
     contact_name: 'Avery Cole',
@@ -220,7 +221,7 @@ function orderBody(serviceId, customerId, overrides = {}) {
     service_ids: [serviceId],
     line_items: [{ description: 'Phase four set', quantity: '2', service_id: serviceId }],
     ...overrides,
-  };
+  });
 }
 
 function startServer() {
@@ -283,7 +284,10 @@ async function assertMigration(file, label) {
   const orderColumns = await columnNames(db, 'orders');
   if (orderColumns.size) {
     assert(orderColumns.has('originals_source') && orderColumns.has('address_line1') && orderColumns.has('zip'), `${label} order originals and address columns should exist`);
+    assert(orderColumns.has('payment_method') && orderColumns.has('return_to') && orderColumns.has('bill_to_zip'), `${label} payment, return, and bill-to columns should exist`);
   }
+  const fieldCount = await db.get('SELECT COUNT(*) AS count FROM service_fields');
+  assert(fieldCount.count === 54, `${label} should seed 54 service fields once, found ${fieldCount.count}`);
   const serviceColumns = await columnNames(db, 'services');
   assert(serviceColumns.has('code') && serviceColumns.has('suffix_mode') && serviceColumns.has('default_turnaround_hours'), `${label} service columns should exist`);
   const services = await db.get('SELECT COUNT(*) AS count FROM services');
@@ -849,6 +853,7 @@ async function main() {
 
     const largeFormat = await db.get(`SELECT id FROM services WHERE name = 'Large Format' AND COALESCE(is_active, 1) = 1`);
     assert(largeFormat && largeFormat.id, 'Large Format should stay active for the mixed load');
+    rememberService(largeFormat.id, 'Large Format');
     const loadStarted = Date.now();
     const mixedLoad = await Promise.all([
       ...Array.from({ length: 40 }, (_, index) => request({

@@ -255,7 +255,9 @@ function loadDeliveryReport(range, cb) {
        wo.customer_id,
        u.display_name AS customer_name,
        o.delivery_method,
-       o.ups_account_number
+       o.ups_account_number,
+       o.payment_method,
+       o.bill_to_company
      FROM deliveries d
      LEFT JOIN work_orders wo ON wo.id = d.work_order_id
      LEFT JOIN users u ON u.id = wo.customer_id
@@ -279,6 +281,8 @@ function loadDeliveryReport(range, cb) {
           carrier: row.carrier,
           delivery_method: row.delivery_method || row.carrier || null,
           ups_account_number: row.ups_account_number || null,
+          payment_method: row.payment_method || 'Not specified',
+          bill_to_company: row.bill_to_company || '',
           status: row.status,
           overdue: flags.overdue,
           due_today: flags.due_today,

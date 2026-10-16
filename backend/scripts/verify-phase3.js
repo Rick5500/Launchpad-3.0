@@ -12,6 +12,7 @@ const sqlite3 = require('sqlite3').verbose();
 const { code128Svg } = require('../barcodeSvg');
 const { decodeCode128Svg } = require('../code128');
 
+const { fillOrderLines, setServiceNames } = require('./orderLineDefaults');
 const backendDir = path.join(__dirname, '..');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-phase3-'));
 const freshDb = path.join(tmp, 'fresh.db');
@@ -145,7 +146,7 @@ function multipartBody(files) {
 }
 
 function orderBody(overrides = {}) {
-  return {
+  return fillOrderLines({
     company: 'Acme Construction',
     contact_name: 'John Smith',
     phone: '919-555-1234',
@@ -168,7 +169,7 @@ function orderBody(overrides = {}) {
     service_ids: [],
     line_items: [{ description: 'Default line', quantity: '1' }],
     ...overrides,
-  };
+  });
 }
 
 function decodePrinted(svg, expected) {
@@ -198,6 +199,11 @@ async function initFreshTwice() {
   const db = openDb(freshDb);
   const services = await db.get('SELECT COUNT(*) AS count FROM services');
   assert(services.count === 7, 'fresh init twice should leave 7 services');
+  const fieldCount = await db.get('SELECT COUNT(*) AS count FROM service_fields');
+  assert(fieldCount.count === 54, `fresh init twice should leave 54 service fields, found ${fieldCount.count}`);
+  const orderColumns = await db.all(`PRAGMA table_info(orders)`);
+  const orderNames = new Set(orderColumns.map((row) => row.name));
+  assert(orderNames.has('payment_method') && orderNames.has('bill_to_name'), 'fresh orders should include payment and bill-to columns');
   await db.close();
   console.log('PASS fresh init_db twice');
 }
@@ -332,6 +338,7 @@ async function runApiChecks() {
     const options = await request({ method: 'GET', path: '/api/orders/options', token: customer.token });
     assert(options.status === 200, 'order options should load');
     const byName = Object.fromEntries(options.json.services.map((service) => [service.name, service]));
+    setServiceNames(byName);
     const upload = await request({
       method: 'POST',
       path: '/api/uploads',
@@ -433,8 +440,8 @@ async function runApiChecks() {
       decodePrinted(sheet.barcode_svg, sheet.external_id);
     }
     const largeItem = bySuffix.A.line_items[0];
-    assert(largeItem.size === '24x36' && largeItem.quantity === '5 Sets' && largeItem.media === 'Bond', 'line item size, quantity, and media should print');
-    assert(largeItem.binding_finish === 'Fold / Staple', 'binding should print');
+    assert(largeItem.size === 'Full Size' && largeItem.quantity === '5 Sets' && largeItem.media === 'Bond', 'line item size, quantity, and media should print');
+    assert(largeItem.binding_finish === 'Staple', 'binding should print');
     assert(largeItem.finishing === 'Grommets', 'selected finishing should print');
     assert(bySuffix.B.line_items[0].finishing === '', 'omitted finishing stays blank in the payload');
     assert(bySuffix.A.address.line1 === '1234 Builder Way' && bySuffix.A.address.line2 === 'Suite 200', 'street address should print');

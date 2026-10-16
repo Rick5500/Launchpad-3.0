@@ -103,6 +103,8 @@ router.get(
       { key: 'carrier', header: 'carrier' },
       { key: 'delivery_method', header: 'delivery_method' },
       { key: 'ups_account_number', header: 'ups_account_number' },
+      { key: 'payment_method', header: 'payment_method' },
+      { key: 'bill_to_company', header: 'bill_to_company' },
       { key: 'status', header: 'status' },
       { key: 'overdue', header: 'overdue' },
       { key: 'due_today', header: 'due_today' },

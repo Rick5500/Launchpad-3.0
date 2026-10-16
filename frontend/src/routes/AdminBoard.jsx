@@ -454,6 +454,7 @@ export default function AdminBoard() {
                     <TableCell sx={{ color: brand.navy, fontWeight: 700 }}>Company</TableCell>
                     <TableCell sx={{ color: brand.navy, fontWeight: 700 }}>Contact</TableCell>
                     <TableCell sx={{ color: brand.navy, fontWeight: 700 }}>Originals</TableCell>
+                    <TableCell sx={{ color: brand.navy, fontWeight: 700 }}>Payment</TableCell>
                     <TableCell sx={{ color: brand.navy, fontWeight: 700 }}>Department</TableCell>
                     <TableCell sx={{ color: brand.navy, fontWeight: 700 }} sortDirection={sort.field === 'arrived' ? sort.direction : false}>
                       <TableSortLabel
@@ -484,6 +485,7 @@ export default function AdminBoard() {
                       <TableCell>{row.company || '—'}</TableCell>
                       <TableCell>{row.contact_name || '—'}</TableCell>
                       <TableCell>{row.originals_source_label || 'Not specified'}</TableCell>
+                      <TableCell>{row.payment_method_label || 'Not specified'}</TableCell>
                       <TableCell>
                         <Chip
                           label={row.department || 'Unassigned'}
@@ -510,7 +512,7 @@ export default function AdminBoard() {
                     </TableRow>
                   )) : (
                     <TableRow>
-                      <TableCell colSpan={9} sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
+                      <TableCell colSpan={10} sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
                         {tableLoading ? 'Loading work orders...' : 'No work orders match this view.'}
                       </TableCell>
                     </TableRow>

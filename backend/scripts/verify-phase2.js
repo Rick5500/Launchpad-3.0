@@ -11,6 +11,7 @@ const bcrypt = require('bcryptjs');
 const sqlite3 = require('sqlite3').verbose();
 const { classifyDelivery } = require('../deliveryRules');
 
+const { fillOrderLines, setServiceNames } = require('./orderLineDefaults');
 const backendDir = path.join(__dirname, '..');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-phase2-'));
 const oldDb = path.join(tmp, 'old.db');
@@ -224,7 +225,7 @@ function weekdayIso(offset = 0) {
 }
 
 function orderBody(serviceId, overrides = {}) {
-  return {
+  return fillOrderLines({
     company: 'Phase Two Print Co',
     contact_name: 'Jordan Hale',
     phone: '919-555-0148',
@@ -241,7 +242,7 @@ function orderBody(serviceId, overrides = {}) {
     service_ids: [serviceId],
     line_items: [{ description: 'Board set', quantity: '2', service_id: serviceId }],
     ...overrides,
-  };
+  });
 }
 
 function startServer() {
@@ -345,6 +346,10 @@ async function initFreshTwice() {
   const workOrderColumns = await columnNames(db, 'work_orders');
   const scanColumns = await columnNames(db, 'barcode_events');
   assert(workOrderColumns.has('approval_by') && scanColumns.has('from_department'), 'fresh schema should include phase 2 columns');
+  const orderColumns = await columnNames(db, 'orders');
+  assert(orderColumns.has('payment_method') && orderColumns.has('bill_to_zip'), 'fresh orders should include payment and bill-to columns');
+  const fieldCount = await db.get('SELECT COUNT(*) AS count FROM service_fields');
+  assert(fieldCount.count === 54, `fresh init twice should leave 54 service fields, found ${fieldCount.count}`);
   const alerts = await db.get('SELECT COUNT(*) AS count FROM system_alerts');
   assert(alerts.count === 0, 'fresh init should not seed fake alerts');
   const operatorHash = await bcrypt.hash('OperatorPass1', 10);
@@ -421,6 +426,7 @@ async function runApiChecks() {
     const options = await request({ method: 'GET', path: '/api/orders/options', token: customer.token });
     assert(options.status === 200, 'order options failed');
     const services = Object.fromEntries(options.json.services.map((service) => [service.name, service]));
+    setServiceNames(services);
     const dueDate = weekdayIso(1);
 
     const createdIds = [];

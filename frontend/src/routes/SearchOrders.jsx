@@ -131,7 +131,9 @@ export default function SearchOrders() {
                 <TableCell>Company</TableCell>
                 <TableCell>Contact</TableCell>
                 <TableCell>Originals</TableCell>
+                <TableCell>Payment</TableCell>
                 <TableCell>Phone</TableCell>
+                <TableCell>Line details</TableCell>
                 <TableCell>Work orders</TableCell>
               </TableRow>
             </TableHead>
@@ -144,7 +146,13 @@ export default function SearchOrders() {
                   <TableCell>{order.company}</TableCell>
                   <TableCell>{order.contact_name}</TableCell>
                   <TableCell>{order.originals_source_label || 'Not specified'}</TableCell>
+                  <TableCell>{order.payment_method_label || 'Not specified'}</TableCell>
                   <TableCell>{order.phone}</TableCell>
+                  <TableCell sx={{ maxWidth: 360 }}>
+                    {(order.line_details || []).length
+                      ? (order.line_details || []).map((line) => <Box key={line} sx={{ fontSize: 12, mb: 0.5 }}>{line}</Box>)
+                      : '—'}
+                  </TableCell>
                   <TableCell>
                     {(order.work_orders || []).map((workOrder) => (
                       <Box key={workOrder.id} sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 0.5 }}>
@@ -158,7 +166,7 @@ export default function SearchOrders() {
                 </TableRow>
               ))}
               {!loading && orders.length === 0 ? (
-                <TableRow><TableCell colSpan={6}>No orders match.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={8}>No orders match.</TableCell></TableRow>
               ) : null}
             </TableBody>
           </Table>
