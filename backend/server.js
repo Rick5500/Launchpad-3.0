@@ -1,3 +1,4 @@
+process.env.UV_THREADPOOL_SIZE ||= '32';
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');

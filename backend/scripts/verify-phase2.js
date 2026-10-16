@@ -165,6 +165,7 @@ function baseEnv(databaseFile) {
     PORT: String(port),
     NODE_ENV: 'test',
     UPLOAD_DIR: path.join(tmp, 'uploads'),
+    UV_THREADPOOL_SIZE: process.env.UV_THREADPOOL_SIZE || '32',
   };
 }
 

@@ -1,4 +1,5 @@
 const db = require('./db');
+const { withTransaction } = require('./dbAsync');
 const { classifyDelivery, getRules } = require('./deliveryRules');
 const notifyEmail = require('./notifyEmail');
 
@@ -50,51 +51,47 @@ function deliveryLabel(row) {
 }
 
 function writeNotifications(items, cb) {
-  let index = 0;
-  const created = [];
-
-  const next = () => {
-    if (index >= items.length) return cb(null, created);
-    const item = items[index];
-    index += 1;
-    db.run(
-      `INSERT OR IGNORE INTO notifications
-        (type, title, body, customer_id, work_order_id, delivery_id, dedupe_key)
-       VALUES (?,?,?,?,?,?,?)`,
-      [
-        item.type,
-        item.title,
-        item.body,
-        item.customerId == null ? null : item.customerId,
-        item.workOrderId == null ? null : item.workOrderId,
-        item.deliveryId == null ? null : item.deliveryId,
-        item.dedupeKey,
-      ],
-      function onInsert(err) {
-        if (err) return cb(err);
-        if (this.changes > 0) {
-          const stored = {
-            id: this.lastID,
-            type: item.type,
-            title: item.title,
-            body: item.body,
-            customer_id: item.customerId == null ? null : item.customerId,
-            work_order_id: item.workOrderId == null ? null : item.workOrderId,
-            delivery_id: item.deliveryId == null ? null : item.deliveryId,
-          };
-          created.push(stored);
-          try {
-            notifyEmail.deliver(stored);
-          } catch (emailErr) {
-            console.error('EMAIL NOTIFICATION ERROR:', emailErr);
-          }
-        }
-        next();
+  if (!items.length) return cb(null, []);
+  withTransaction(async (tx) => {
+    const created = [];
+    for (const item of items) {
+      const inserted = await tx.run(
+        `INSERT OR IGNORE INTO notifications
+          (type, title, body, customer_id, work_order_id, delivery_id, dedupe_key)
+         VALUES (?,?,?,?,?,?,?)`,
+        [
+          item.type,
+          item.title,
+          item.body,
+          item.customerId == null ? null : item.customerId,
+          item.workOrderId == null ? null : item.workOrderId,
+          item.deliveryId == null ? null : item.deliveryId,
+          item.dedupeKey,
+        ]
+      );
+      if (inserted.changes > 0) {
+        created.push({
+          id: inserted.lastID,
+          type: item.type,
+          title: item.title,
+          body: item.body,
+          customer_id: item.customerId == null ? null : item.customerId,
+          work_order_id: item.workOrderId == null ? null : item.workOrderId,
+          delivery_id: item.deliveryId == null ? null : item.deliveryId,
+        });
       }
-    );
-  };
-
-  next();
+    }
+    return created;
+  }).then((created) => {
+    for (const stored of created) {
+      try {
+        notifyEmail.deliver(stored);
+      } catch (emailErr) {
+        console.error('EMAIL NOTIFICATION ERROR:', emailErr);
+      }
+    }
+    cb(null, created);
+  }).catch(cb);
 }
 
 function insertNotifications(items, cb) {
@@ -353,33 +350,25 @@ function markRead(user, id, cb) {
         publicMessage: 'Notification not found',
       }));
     }
-    db.run(
+    withTransaction((tx) => tx.run(
       `INSERT OR IGNORE INTO notification_reads (notification_id, user_id, read_at)
        VALUES (?, ?, datetime('now'))`,
-      [notificationId, user.userId],
-      (insertErr) => {
-        if (insertErr) return cb(insertErr);
-        cb(null, { id: notificationId, read: true });
-      }
-    );
+      [notificationId, user.userId]
+    )).then(() => cb(null, { id: notificationId, read: true })).catch(cb);
   });
 }
 
 function markAllRead(user, cb) {
   const visible = visibility(user);
-  db.run(
+  withTransaction((tx) => tx.run(
     `INSERT OR IGNORE INTO notification_reads (notification_id, user_id, read_at)
      SELECT n.id, ?, datetime('now')
      FROM notifications n
      LEFT JOIN notification_reads r
        ON r.notification_id = n.id AND r.user_id = ?
      ${visible.sql ? `${visible.sql} AND` : 'WHERE'} r.user_id IS NULL`,
-    [user.userId, user.userId, ...visible.params],
-    function onMark(err) {
-      if (err) return cb(err);
-      cb(null, { updated: this.changes || 0 });
-    }
-  );
+    [user.userId, user.userId, ...visible.params]
+  )).then((result) => cb(null, { updated: result.changes || 0 })).catch(cb);
 }
 
 module.exports = {

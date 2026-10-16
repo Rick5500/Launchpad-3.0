@@ -164,6 +164,7 @@ function baseEnv(databaseFile) {
     UPLOAD_ORPHAN_HOURS: '24',
     PORT: String(port),
     NODE_ENV: 'test',
+    UV_THREADPOOL_SIZE: process.env.UV_THREADPOOL_SIZE || '32',
   };
 }
 

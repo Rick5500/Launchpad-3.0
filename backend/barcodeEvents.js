@@ -1,6 +1,6 @@
 const db = require('./db');
 const activityLog = require('./activityLog');
-const orderService = require('./orderService');
+const { withTransaction } = require('./dbAsync');
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -279,21 +279,6 @@ function resolvePolicy(location, cb) {
   });
 }
 
-function runSql(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function onRun(err) {
-      if (err) reject(err);
-      else resolve({ lastID: this.lastID, changes: this.changes });
-    });
-  });
-}
-
-function getSql(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row || null)));
-  });
-}
-
 function isCompleteDepartment(name) {
   return String(name || '').trim().toLowerCase() === 'complete';
 }
@@ -372,44 +357,51 @@ async function writeDepartmentMove(tx, move) {
 async function applyScan({ scannedValue, location, eventTime, operatorId, workOrder, stage, departmentName }) {
   const storedTime = eventTime || utcNowNaive();
   const departmentLookup = departmentName == null ? '' : String(departmentName).trim();
-  const [matchedDepartment, operator] = await Promise.all([
-    departmentLookup
-      ? getSql(
+  const fromDepartment = workOrder.department || null;
+
+  // Lookups and the insert share the writer queue so a scan does not busy-wait
+  // on the shared connection while another transaction holds the write lock.
+  const { inserted, matchedDepartment, moved, nextStatus } = await withTransaction(async (tx) => {
+    const matched = departmentLookup
+      ? await tx.get(
         `SELECT id, name, next_department FROM departments
          WHERE is_active = 1 AND lower(name) = lower(?)`,
         [departmentLookup]
       )
-      : Promise.resolve(null),
-    operatorId
-      ? getSql('SELECT id, display_name, username FROM users WHERE id = ?', [operatorId])
-      : Promise.resolve(null),
-  ]);
-
-  const fromDepartment = workOrder.department || null;
+      : null;
+    const scannedBy = operatorId
+      ? await tx.get('SELECT id, display_name, username FROM users WHERE id = ?', [operatorId])
+      : null;
+    const toDepartment = matched ? matched.name : null;
+    const didMove = Boolean(matched) && String(fromDepartment || '').trim() !== matched.name;
+    let status = workOrder.status || 'open';
+    if (didMove && isCompleteDepartment(matched.name) && !activityLog.isFinishedStatus(status)) {
+      status = 'completed';
+    }
+    const move = {
+      scannedValue,
+      location,
+      storedTime,
+      operatorId,
+      workOrder,
+      stage,
+      matchedDepartment: matched,
+      operator: scannedBy,
+      fromDepartment,
+      toDepartment,
+      nextStatus: status,
+    };
+    const written = didMove
+      ? await writeDepartmentMove(tx, move)
+      : await tx.run(EVENT_INSERT_SQL, eventParams(move));
+    return {
+      inserted: written,
+      matchedDepartment: matched,
+      moved: didMove,
+      nextStatus: status,
+    };
+  });
   const toDepartment = matchedDepartment ? matchedDepartment.name : null;
-  const moved = Boolean(matchedDepartment)
-    && String(fromDepartment || '').trim() !== matchedDepartment.name;
-  let nextStatus = workOrder.status || 'open';
-  if (moved && isCompleteDepartment(matchedDepartment.name) && !activityLog.isFinishedStatus(nextStatus)) {
-    nextStatus = 'completed';
-  }
-
-  const move = {
-    scannedValue,
-    location,
-    storedTime,
-    operatorId,
-    workOrder,
-    stage,
-    matchedDepartment,
-    operator,
-    fromDepartment,
-    toDepartment,
-    nextStatus,
-  };
-  const inserted = moved
-    ? await orderService.withTransaction((tx) => writeDepartmentMove(tx, move))
-    : await runSql(EVENT_INSERT_SQL, eventParams(move));
 
   const payload = {
     id: inserted.lastID,
@@ -431,10 +423,10 @@ async function applyScan({ scannedValue, location, eventTime, operatorId, workOr
 
   if (stage) {
     try {
-      const stageUpdate = await runSql(
+      const stageUpdate = await withTransaction((tx) => tx.run(
         `UPDATE work_orders SET stage_id = ?, updated_at = datetime('now') WHERE id = ?`,
         [stage.id, workOrder.id]
-      );
+      ));
       payload.stage_advanced = stageUpdate.changes > 0;
     } catch (stageErr) {
       console.error('BARCODE STAGE UPDATE ERROR:', stageErr);

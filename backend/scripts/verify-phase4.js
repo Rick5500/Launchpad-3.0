@@ -138,10 +138,11 @@ function baseEnv(databaseFile) {
     PORT: String(port),
     NODE_ENV: 'test',
     UPLOAD_DIR: path.join(tmp, 'uploads'),
+    UV_THREADPOOL_SIZE: process.env.UV_THREADPOOL_SIZE || '32',
   };
 }
 
-function request({ method, path: requestPath, token, json }) {
+function request({ method, path: requestPath, token, json, timeoutMs }) {
   return new Promise((resolve, reject) => {
     const body = json != null ? Buffer.from(JSON.stringify(json)) : null;
     const headers = {};
@@ -166,6 +167,11 @@ function request({ method, path: requestPath, token, json }) {
         resolve({ status: res.statusCode, json: parsed, text, headers: res.headers });
       });
     });
+    if (timeoutMs) {
+      req.setTimeout(timeoutMs, () => {
+        req.destroy(new Error(`request timed out after ${timeoutMs}ms: ${method} ${requestPath}`));
+      });
+    }
     req.on('error', reject);
     if (body) req.end(body);
     else req.end();
@@ -807,6 +813,55 @@ async function main() {
     const activeAdmins = await db.get(`SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND COALESCE(is_active, 1) = 1`);
     assert(activeAdmins.count >= 1, 'concurrent demotion must leave an active administrator');
     await db.run(`UPDATE users SET role = 'admin', is_active = 1 WHERE username IN ('admin', 'admin2')`);
+
+    const sameName = await Promise.all(Array.from({ length: 10 }, () => request({
+      method: 'POST',
+      path: '/api/customers',
+      token: admin.token,
+      timeoutMs: 25000,
+      json: { display_name: 'Same Name Shop', password: 'CustomerPass1' },
+    })));
+    assert(sameName.every((row) => row.status < 500), `concurrent same-name customer creates should not 500: ${sameName.map((row) => `${row.status} ${row.text}`).join(' | ')}`);
+    assert(sameName.every((row) => row.status === 201), `concurrent same-name customer creates should succeed: ${sameName.map((row) => row.status).join(',')}`);
+    const sameUsernames = new Set(sameName.map((row) => row.json && row.json.username));
+    assert(sameUsernames.size === 10, `same-name creates should receive distinct usernames: ${[...sameUsernames].join(',')}`);
+
+    const largeFormat = await db.get(`SELECT id FROM services WHERE name = 'Large Format' AND COALESCE(is_active, 1) = 1`);
+    assert(largeFormat && largeFormat.id, 'Large Format should stay active for the mixed load');
+    const loadStarted = Date.now();
+    const mixedLoad = await Promise.all([
+      ...Array.from({ length: 40 }, (_, index) => request({
+        method: 'POST',
+        path: '/api/orders',
+        token: admin.token,
+        timeoutMs: 25000,
+        json: orderBody(largeFormat.id, customerResponse.json.id, { project_name: `Load ${index}` }),
+      })),
+      ...Array.from({ length: 40 }, () => request({
+        method: 'POST',
+        path: '/api/barcode',
+        token: admin.token,
+        timeoutMs: 25000,
+        json: { scanned_value: externalId, location: 'Quality Control' },
+      })),
+      ...Array.from({ length: 10 }, (_, index) => request({
+        method: 'PUT',
+        path: '/api/settings',
+        token: admin.token,
+        timeoutMs: 25000,
+        json: { last_backup_at: `2026-06-09 03:00:${String(index).padStart(2, '0')}` },
+      })),
+    ]);
+    const loadMs = Date.now() - loadStarted;
+    const loadFailures = mixedLoad.filter((row) => row.status >= 500);
+    assert(loadFailures.length === 0, `mixed load should not 500 (${loadMs}ms): ${loadFailures.map((row) => row.text).join(' | ')}\n${server.logs()}`);
+    assert(loadMs < 20000, `mixed load of 40 orders, 40 scans, and 10 admin writes should finish well under 30s, took ${loadMs}ms`);
+    const loadOrders = mixedLoad.slice(0, 40);
+    const loadScans = mixedLoad.slice(40, 80);
+    const loadWrites = mixedLoad.slice(80);
+    assert(loadOrders.every((row) => row.status === 201), `load orders should succeed: ${loadOrders.map((row) => row.status).join(',')}`);
+    assert(loadScans.every((row) => row.status === 201), `load scans should succeed: ${loadScans.map((row) => `${row.status} ${row.text}`).join(' | ')}`);
+    assert(loadWrites.every((row) => row.status === 200), `load admin writes should succeed: ${loadWrites.map((row) => `${row.status} ${row.text}`).join(' | ')}`);
 
     const csv = await request({ method: 'GET', path: '/api/activity?format=csv&type=service.created', token: admin.token });
     assert(csv.status === 200 && /text\/csv/.test(String(csv.headers['content-type'])) && csv.text.includes('service.created'), 'activity csv should export the filtered rows');

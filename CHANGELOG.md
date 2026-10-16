@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- Heavy mixed load no longer stalls scans. The server raises libuv's thread pool to 32 when unset, and barcode inserts, stage updates, and notification writes wait on the same writer queue as other transactions
+- Creating customers with the same display name at the same time no longer fails the unique username constraint. The name is reserved inside the create transaction
 - Admin writes no longer share one SQLite transaction. Concurrent user, settings, and notification updates each take a queued connection, and the last-admin check runs inside that transaction
 - Creating a customer from the older customers API records activity and uses the same username rules as the Users page. Customer lookup omits deactivated accounts
 - Passwords longer than 72 bytes are rejected. Init does not restore a barcode location an admin deleted

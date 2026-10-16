@@ -70,15 +70,20 @@ function optionalProfile(value, field, max) {
   return text;
 }
 
-function findUniqueUsername(nameBase, counter) {
-  const tryName = counter > 0 ? `${nameBase}-${counter}` : nameBase;
-  return new Promise((resolve, reject) => {
-    db.get('SELECT id FROM users WHERE username = ?', [tryName], (err, row) => {
-      if (err) return reject(err);
-      if (!row) return resolve(tryName);
-      resolve(findUniqueUsername(nameBase, counter + 1));
-    });
-  });
+function isUsernameConstraint(err) {
+  return Boolean(err) && (err.code === 'SQLITE_CONSTRAINT' || /UNIQUE constraint failed/i.test(String(err.message || '')));
+}
+
+async function reserveUsername(tx, nameBase) {
+  for (let counter = 0; counter < 1000; counter += 1) {
+    const tryName = counter > 0 ? `${nameBase}-${counter}` : nameBase;
+    const existing = await tx.get('SELECT id FROM users WHERE username = ?', [tryName]);
+    if (!existing) return tryName;
+  }
+  const error = new Error('Could not assign a username');
+  error.status = 409;
+  error.publicMessage = 'Could not assign a username';
+  throw error;
 }
 
 // Create a new customer (admin only). Accepts { display_name, username?, password? }.
@@ -118,25 +123,39 @@ router.post('/', auth.requireAuth, auth.requireRole('admin'), async (req, res) =
   }
 
   try {
-    const uniqueUsername = await findUniqueUsername(baseName, 0);
     const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
-    const row = await withTransaction(async (tx) => {
-      const inserted = await tx.run(
-        `INSERT INTO users (username, password_hash, role, display_name, company, contact_name, phone, email, created_at)
-         VALUES (?,?,?,?,?,?,?,?,datetime('now'))`,
-        [uniqueUsername, hash, 'customer', String(display_name).trim(), company, contactName, phone, email]
-      );
-      await activityLog.recordOn(tx, req.user.userId, 'user.created', 'user', inserted.lastID, {
-        username: uniqueUsername,
-        role: 'customer',
-        message: `Created customer ${uniqueUsername}`,
-      });
-      return tx.get('SELECT id, username, display_name FROM users WHERE id = ?', [inserted.lastID]);
-    });
-    const body = row || { username: uniqueUsername, display_name: String(display_name).trim() };
+    let created = null;
+    let lastErr = null;
+    for (let attempt = 0; attempt < 5 && !created; attempt += 1) {
+      try {
+        created = await withTransaction(async (tx) => {
+          const uniqueUsername = await reserveUsername(tx, baseName);
+          const inserted = await tx.run(
+            `INSERT INTO users (username, password_hash, role, display_name, company, contact_name, phone, email, created_at)
+             VALUES (?,?,?,?,?,?,?,?,datetime('now'))`,
+            [uniqueUsername, hash, 'customer', String(display_name).trim(), company, contactName, phone, email]
+          );
+          await activityLog.recordOn(tx, req.user.userId, 'user.created', 'user', inserted.lastID, {
+            username: uniqueUsername,
+            role: 'customer',
+            message: `Created customer ${uniqueUsername}`,
+          });
+          const row = await tx.get('SELECT id, username, display_name FROM users WHERE id = ?', [inserted.lastID]);
+          return { row, uniqueUsername };
+        });
+      } catch (err) {
+        lastErr = err;
+        if (!isUsernameConstraint(err) || attempt === 4) throw err;
+      }
+    }
+    if (!created) throw lastErr || new Error('Failed to create customer');
+    const body = created.row || { username: created.uniqueUsername, display_name: String(display_name).trim() };
     if (generated) body.password = password;
     return res.status(201).json(body);
   } catch (err) {
+    if (err && err.status && err.publicMessage) {
+      return res.status(err.status).json({ error: err.publicMessage });
+    }
     console.error('CUSTOMER CREATE ERROR:', err);
     return res.status(500).json({ error: 'Failed to create customer' });
   }
