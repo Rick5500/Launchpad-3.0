@@ -253,10 +253,13 @@ function loadDeliveryReport(range, cb) {
        d.status,
        wo.external_id,
        wo.customer_id,
-       u.display_name AS customer_name
+       u.display_name AS customer_name,
+       o.delivery_method,
+       o.ups_account_number
      FROM deliveries d
      LEFT JOIN work_orders wo ON wo.id = d.work_order_id
      LEFT JOIN users u ON u.id = wo.customer_id
+     LEFT JOIN orders o ON o.id = COALESCE(d.order_id, wo.order_id)
      WHERE ${clauses.join(' AND ')}
      ORDER BY d.due_time ASC, d.id ASC`,
     params,
@@ -274,6 +277,8 @@ function loadDeliveryReport(range, cb) {
           will_call: row.will_call ? 1 : 0,
           due_time: row.due_time,
           carrier: row.carrier,
+          delivery_method: row.delivery_method || row.carrier || null,
+          ups_account_number: row.ups_account_number || null,
           status: row.status,
           overdue: flags.overdue,
           due_today: flags.due_today,

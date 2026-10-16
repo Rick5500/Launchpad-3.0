@@ -183,6 +183,8 @@ function getTabContent(tab, workOrder, scanState, hideInternal) {
               'Next Department': workOrder.next_department,
               'Quantity': workOrder.quantity,
               'Due Date': workOrder.due_date,
+              'Delivery Method': workOrder.delivery_method,
+              ...(workOrder.ups_account_number ? { 'UPS Account': workOrder.ups_account_number } : {}),
               'Customer': workOrder.customer_name,
               'Customer Username': workOrder.customer_username,
               'Created At': workOrder.created_at,

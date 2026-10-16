@@ -260,6 +260,54 @@ async function migrateOldDatabase() {
     `INSERT INTO work_orders (external_id, customer_id, description, quantity, status, department)
      VALUES ('WO-LEGACY', 1, 'Legacy job', 3, 'complete', 'Quality')`
   );
+  await db.exec(`
+    CREATE TABLE delivery_methods (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      will_call INTEGER DEFAULT 0,
+      sort_order INTEGER DEFAULT 0,
+      is_active INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    INSERT INTO delivery_methods (name, will_call, sort_order, is_active) VALUES
+      ('Accent Truck', 0, 1, 1),
+      ('Will Call', 1, 2, 1),
+      ('Customer Pickup', 1, 3, 1),
+      ('UPS', 0, 4, 1),
+      ('FedEx', 0, 5, 1),
+      ('Common Carrier', 0, 6, 1);
+    CREATE TABLE orders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_number TEXT NOT NULL UNIQUE,
+      customer_id INTEGER NOT NULL,
+      company TEXT NOT NULL,
+      contact_name TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      email TEXT NOT NULL,
+      po_number TEXT,
+      project_number TEXT,
+      project_name TEXT,
+      notes TEXT,
+      delivery_method TEXT NOT NULL,
+      ship_to TEXT,
+      attention TEXT,
+      due_date TEXT NOT NULL,
+      due_time TEXT NOT NULL,
+      created_by INTEGER,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME
+    );
+  `);
+  await db.run(
+    `INSERT INTO orders (
+      order_number, customer_id, company, contact_name, phone, email, delivery_method, due_date, due_time
+    ) VALUES ('LEGACY-PICKUP', 1, 'Legacy Co', 'Pat', '919-555-0100', 'pat@legacy.example', 'Customer Pickup', '2020-01-06', '18:00')`
+  );
+  await db.run(
+    `INSERT INTO orders (
+      order_number, customer_id, company, contact_name, phone, email, delivery_method, due_date, due_time
+    ) VALUES ('LEGACY-FEDEX', 1, 'Legacy Co', 'Pat', '919-555-0100', 'pat@legacy.example', 'FedEx', '2020-01-06', '16:30')`
+  );
   await db.close();
 
   await initDatabase(oldDb);
@@ -300,6 +348,19 @@ async function migrateOldDatabase() {
   assert(externalIndex, 'unique external_id index should be created when existing values are unique');
   const notifications = await check.get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'notifications'`);
   assert(notifications, 'notifications table should be created on an older database');
+  const orderColumns = await columnNames(check, 'orders');
+  assert(orderColumns.has('ups_account_number'), 'orders.ups_account_number should be added on an older database');
+  const pickup = await check.get(`SELECT delivery_method, due_time, ups_account_number FROM orders WHERE order_number = 'LEGACY-PICKUP'`);
+  assert(pickup && pickup.delivery_method === 'Customer Pickup' && pickup.due_time === '18:00', 'legacy Customer Pickup label and time should stay');
+  assert(pickup.ups_account_number == null, 'migrated orders should leave the new account column empty');
+  const fedex = await check.get(`SELECT delivery_method, due_time FROM orders WHERE order_number = 'LEGACY-FEDEX'`);
+  assert(fedex && fedex.delivery_method === 'FedEx' && fedex.due_time === '16:30', 'legacy FedEx label should stay');
+  const methodRows = await check.all(`SELECT name, is_active FROM delivery_methods ORDER BY name`);
+  assert(methodRows.length === 6, `retired methods should be kept, found ${methodRows.length}`);
+  const inactive = new Set(methodRows.filter((row) => row.is_active === 0).map((row) => row.name));
+  assert(inactive.has('Customer Pickup') && inactive.has('FedEx') && inactive.has('Common Carrier'), 'retired methods should be inactive, not deleted');
+  const activeNames = methodRows.filter((row) => row.is_active === 1).map((row) => row.name).sort().join(',');
+  assert(activeNames === 'Accent Truck,UPS,Will Call', `active methods were ${activeNames}`);
   await check.close();
   console.log('PASS older database migration, twice');
 }
@@ -387,8 +448,12 @@ async function initFreshTwice() {
   const db = openDb(freshDb);
     const services = await db.get('SELECT COUNT(*) AS count FROM services');
   assert(services.count === 7, 'fresh init twice should leave 7 services');
-  const methods = await db.get(`SELECT COUNT(*) AS count FROM delivery_methods`);
-  assert(methods.count === 6, 'delivery methods should be seeded once');
+  const methods = await db.all(`SELECT name, is_active FROM delivery_methods ORDER BY name`);
+  assert(methods.length === 3, `fresh init should seed 3 delivery methods, found ${methods.length}`);
+  assert(methods.every((row) => row.is_active === 1), 'fresh methods should be active');
+  assert(methods.map((row) => row.name).join(',') === 'Accent Truck,UPS,Will Call', `fresh methods were ${methods.map((row) => row.name).join(',')}`);
+  const orderColumns = await columnNames(db, 'orders');
+  assert(orderColumns.has('ups_account_number'), 'fresh orders table should include ups_account_number');
   const externalIndex = await db.get(
     `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_work_orders_external_id'`
   );
@@ -549,6 +614,13 @@ async function runApiChecks() {
     assert(servicesResponse.json.due_window.slots.includes('14:00'), 'window should include 2:00 PM');
     assert(!servicesResponse.json.due_window.slots.includes('15:00'), 'window should stop at 2:00 PM');
     assert(!servicesResponse.json.due_window.slots.includes('13:07'), 'window should use 15 minute increments');
+    const methodNames = servicesResponse.json.delivery_methods.map((method) => method.name);
+    assert(methodNames.includes('Accent Truck') && methodNames.includes('Will Call') && methodNames.includes('UPS'), `selectable methods were ${methodNames.join(',')}`);
+    assert(!methodNames.some((name) => /customer pickup|fedex|common carrier/i.test(name)), 'retired methods must not be selectable');
+    assert(servicesResponse.json.due_windows.will_call.slots.includes('08:00'), 'Will Call should open at 8:00 AM');
+    assert(servicesResponse.json.due_windows.will_call.slots.includes('17:00'), 'Will Call should include 5:00 PM');
+    assert(!servicesResponse.json.due_windows.will_call.slots.includes('17:15'), 'Will Call should stop at 5:00 PM');
+    assert(!servicesResponse.json.due_windows.delivery.slots.includes('08:00'), 'delivery hours should not open at 8:00 AM');
 
     const missing = await request({
       method: 'POST',
@@ -581,6 +653,58 @@ async function runApiChecks() {
       json: orderBody({ due_time: '15:00', service_ids: [byName['Large Format'].id] }),
     });
     assert(afterWindow.status === 400 && /due_time/.test(afterWindow.json.error), '3:00 PM should be outside the window');
+
+    for (const removed of ['Customer Pickup', 'FedEx', 'Common Carrier', 'fedex', 'customer pickup']) {
+      const rejected = await request({
+        method: 'POST',
+        path: '/api/orders',
+        token: customerToken,
+        json: orderBody({ delivery_method: removed, service_ids: [byName['Large Format'].id] }),
+      });
+      assert(rejected.status === 400 && /no longer available/i.test(rejected.json.error), `${removed} should be rejected, got ${rejected.status} ${rejected.text}`);
+    }
+    const earlyDelivery = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({ due_time: '08:00', service_ids: [byName['Large Format'].id] }),
+    });
+    assert(earlyDelivery.status === 400 && /due_time/.test(earlyDelivery.json.error), '8:00 AM should be outside delivery hours');
+    const earlyWillCall = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({ due_time: '07:45', delivery_method: 'Will Call', service_ids: [byName['Large Format'].id] }),
+    });
+    assert(earlyWillCall.status === 400 && /Will Call/.test(earlyWillCall.json.error), '7:45 AM should be outside Will Call hours');
+    const lateWillCall = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({ due_time: '17:15', delivery_method: 'Will Call', service_ids: [byName['Large Format'].id] }),
+    });
+    assert(lateWillCall.status === 400 && /due_time/.test(lateWillCall.json.error), '5:15 PM should be outside Will Call hours');
+    const upsOnTruck = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({ ups_account_number: 'AB-12', service_ids: [byName['Large Format'].id] }),
+    });
+    assert(upsOnTruck.status === 400 && /ups_account_number/.test(upsOnTruck.json.error), 'a UPS account should be rejected on Accent Truck');
+    const badAccount = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({ delivery_method: 'UPS', ups_account_number: 'AB_12!', service_ids: [byName['Large Format'].id] }),
+    });
+    assert(badAccount.status === 400 && /ups_account_number/.test(badAccount.json.error), 'invalid UPS account characters should be rejected');
+    const longAccount = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({ delivery_method: 'UPS', ups_account_number: '1234567890123456789012345678901', service_ids: [byName['Large Format'].id] }),
+    });
+    assert(longAccount.status === 400 && /30 characters/.test(longAccount.json.error), 'a 31 character UPS account should be rejected');
 
     const weekend = await request({
       method: 'POST',
@@ -924,6 +1048,111 @@ async function runApiChecks() {
     assert(today.last_number === 57, `today's sequence should be 57 after 17 orders, got ${today && today.last_number}`);
     assert(oldDay.last_number === 7, 'another day sequence must stay untouched');
     await sequence.close();
+
+    const willCallOpen = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({ due_time: '08:00', delivery_method: 'Will Call', service_ids: [byName.Planroom.id] }),
+    });
+    assert(willCallOpen.status === 201 && willCallOpen.json.delivery.will_call === true, `8:00 AM Will Call should be accepted: ${willCallOpen.text}`);
+    assert(willCallOpen.json.order.delivery_hours.start === '08:00' && willCallOpen.json.order.delivery_hours.end === '17:00', 'Will Call hours should be 8:00 AM to 5:00 PM');
+    const willCallClose = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({ due_time: '17:00', delivery_method: 'Will Call', service_ids: [byName.Planroom.id] }),
+    });
+    assert(willCallClose.status === 201, `5:00 PM Will Call should be accepted: ${willCallClose.text}`);
+
+    const upsBlank = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({ delivery_method: 'UPS', ups_account_number: '   ', service_ids: [byName['Large Format'].id] }),
+    });
+    assert(upsBlank.status === 201 && upsBlank.json.order.ups_account_number == null, `UPS without an account should be accepted: ${upsBlank.text}`);
+    const upsSaved = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customerToken,
+      json: orderBody({
+        delivery_method: 'UPS',
+        ups_account_number: '  AB-12 9 ',
+        service_ids: [byName['Large Format'].id],
+        line_items: [{ description: 'UPS set', quantity: '1' }],
+      }),
+    });
+    assert(upsSaved.status === 201 && upsSaved.json.order.ups_account_number === 'AB-12 9', `UPS account should be trimmed and stored: ${upsSaved.text}`);
+    assert(upsSaved.json.order.delivery_method === 'UPS', 'UPS should stay the stored method');
+    const upsDetail = await request({ method: 'GET', path: `/api/orders/${upsSaved.json.order.id}`, token: customerToken });
+    assert(upsDetail.status === 200 && upsDetail.json.order.ups_account_number === 'AB-12 9', 'the owner should see the UPS account');
+    const upsHidden = await request({ method: 'GET', path: `/api/orders/${upsSaved.json.order.id}`, token: otherLogin.token });
+    assert(upsHidden.status === 404 && !upsHidden.text.includes('AB-12 9'), 'another customer must not see the UPS account');
+    const upsWorkOrder = await request({
+      method: 'GET',
+      path: `/api/workorders/${upsSaved.json.work_orders[0].id}`,
+      token: adminToken,
+    });
+    assert(upsWorkOrder.status === 200 && upsWorkOrder.json.ups_account_number === 'AB-12 9', 'staff work order detail should include the UPS account');
+    const upsEdit = await request({
+      method: 'PUT',
+      path: `/api/workorders/${upsSaved.json.work_orders[0].id}`,
+      token: adminToken,
+      json: {
+        customer_id: customer.json.id,
+        description: upsWorkOrder.json.description,
+        quantity: upsWorkOrder.json.quantity,
+        status: 'open',
+        department: upsWorkOrder.json.department,
+      },
+    });
+    assert(upsEdit.status === 200, `editing the work order should not force a delivery change: ${upsEdit.text}`);
+    const upsStill = await request({ method: 'GET', path: `/api/orders/${upsSaved.json.order.id}`, token: adminToken });
+    assert(upsStill.json.order.delivery_method === 'UPS' && upsStill.json.order.ups_account_number === 'AB-12 9', 'an edit should leave the UPS order unchanged');
+
+    const legacyDb = openDb(freshDb);
+    const legacyOrder = await legacyDb.run(
+      `INSERT INTO orders (
+        order_number, customer_id, company, contact_name, phone, email, delivery_method, due_date, due_time
+      ) VALUES ('LEGACY-PICKUP', ?, 'Acme Construction', 'John Smith', '919-555-1234', 'jsmith@acmeconstruction.com', 'Customer Pickup', ?, '18:00')`,
+      [customer.json.id, isoDate(utcDate(0))]
+    );
+    const legacyWorkOrder = await legacyDb.run(
+      `INSERT INTO work_orders (external_id, customer_id, description, quantity, status, department, order_id)
+       VALUES ('LEGACY-PICKUP-A', ?, 'Legacy pickup', 1, 'open', 'Large Format', ?)`,
+      [customer.json.id, legacyOrder.lastID]
+    );
+    await legacyDb.run(
+      `INSERT INTO deliveries (work_order_id, order_id, will_call, due_time, carrier, status)
+       VALUES (?, ?, 1, ?, 'Customer Pickup', 'pending')`,
+      [legacyWorkOrder.lastID, legacyOrder.lastID, `${isoDate(utcDate(0))} 18:00:00`]
+    );
+    await legacyDb.close();
+    const legacyLoaded = await request({ method: 'GET', path: `/api/orders/${legacyOrder.lastID}`, token: customerToken });
+    assert(legacyLoaded.status === 200 && legacyLoaded.json.order.delivery_method === 'Customer Pickup', `legacy Customer Pickup should load: ${legacyLoaded.text}`);
+    assert(legacyLoaded.json.order.due_time === '18:00', 'legacy due time outside the new window should stay');
+    assert(legacyLoaded.json.order.delivery_hours.start === '08:00', 'Customer Pickup should use Will Call hours');
+    const legacyEdited = await request({
+      method: 'PUT',
+      path: `/api/workorders/${legacyWorkOrder.lastID}`,
+      token: adminToken,
+      json: {
+        customer_id: customer.json.id,
+        description: 'Legacy pickup updated',
+        quantity: 1,
+        status: 'open',
+        department: 'Large Format',
+      },
+    });
+    assert(legacyEdited.status === 200, `legacy work order edit failed: ${legacyEdited.text}`);
+    const legacyAfterEdit = await request({ method: 'GET', path: `/api/orders/${legacyOrder.lastID}`, token: adminToken });
+    assert(legacyAfterEdit.json.order.delivery_method === 'Customer Pickup' && legacyAfterEdit.json.order.due_time === '18:00', 'editing a legacy order must not rewrite the method');
+
+    const deliveryCsv = await request({ method: 'GET', path: '/api/reports/deliveries?format=csv', token: adminToken });
+    assert(deliveryCsv.status === 200 && /ups_account_number/.test(deliveryCsv.text), `delivery CSV should include the account column: ${deliveryCsv.status} ${deliveryCsv.text.slice(0, 300)}`);
+    assert(deliveryCsv.text.includes('AB-12 9'), 'delivery CSV should include the stored UPS account');
+    assert(deliveryCsv.text.includes('Customer Pickup'), 'delivery CSV should keep the legacy carrier label');
 
     console.log('PASS order API, roles, sequence, concurrency, uploads, reports, and customer isolation');
   } finally {

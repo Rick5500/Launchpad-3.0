@@ -565,6 +565,88 @@ async function runApiChecks() {
     assert(willCallPrint.status === 200, willCallPrint.text);
     assert(willCallPrint.json.work_orders[0].delivery.method === 'Will Call', 'will-call method should print');
     assert(willCallPrint.json.work_orders[0].delivery.will_call === true, 'will-call flag should print');
+    assert(willCallPrint.json.work_orders[0].delivery.hours_label === '8:00 AM - 5:00 PM (15 min increments)', willCallPrint.json.work_orders[0].delivery.hours_label);
+    assert(willCallPrint.json.delivery_window_label === '8:00 AM - 5:00 PM (15 min increments)', 'order print should use Will Call hours');
+    assert(willCallPrint.json.work_orders[0].delivery.ups_account_number == null, 'Will Call should not invent a UPS account');
+
+    const upsOrder = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customer.token,
+      json: orderBody({
+        delivery_method: 'UPS',
+        ups_account_number: '  AB-12 9 ',
+        service_ids: [byName['Large Format'].id],
+        line_items: [{ description: 'Shipped set', quantity: '1', service_id: byName['Large Format'].id }],
+      }),
+    });
+    assert(upsOrder.status === 201, `UPS order failed: ${upsOrder.text}`);
+    const upsPrint = await request({
+      method: 'GET',
+      path: `/api/orders/${upsOrder.json.order.id}/print`,
+      token: customer.token,
+    });
+    assert(upsPrint.status === 200, upsPrint.text);
+    assert(upsPrint.json.work_orders[0].delivery.method === 'UPS', 'UPS method should print');
+    assert(upsPrint.json.work_orders[0].delivery.ups_account_number === 'AB-12 9', 'trimmed UPS account should print');
+    assert(upsPrint.json.work_orders[0].delivery.hours_label === '9:00 AM - 2:00 PM (15 min increments)', 'UPS should use delivery hours');
+    const upsHidden = await request({
+      method: 'GET',
+      path: `/api/orders/${upsOrder.json.order.id}/print`,
+      token: other.token,
+    });
+    assert(upsHidden.status === 404 && !upsHidden.text.includes('AB-12 9'), 'another customer must not print the UPS account');
+
+    const legacyPickup = await db.run(
+      `INSERT INTO orders (
+        order_number, customer_id, company, contact_name, phone, email, delivery_method, due_date, due_time
+      ) VALUES ('LEGACY-PICKUP', ?, 'Acme Construction', 'John Smith', '919-555-1234', 'jsmith@acmeconstruction.com', 'Customer Pickup', ?, '18:00')`,
+      [customerResponse.json.id, dueDate()]
+    );
+    const legacyPickupWork = await db.run(
+      `INSERT INTO work_orders (external_id, customer_id, description, quantity, status, department, order_id)
+       VALUES ('LEGACY-PICKUP-A', ?, 'Legacy pickup', 1, 'open', 'Large Format', ?)`,
+      [customerResponse.json.id, legacyPickup.lastID]
+    );
+    await db.run(
+      `INSERT INTO deliveries (work_order_id, order_id, will_call, due_time, carrier, status)
+       VALUES (?, ?, 1, ?, 'Customer Pickup', 'pending')`,
+      [legacyPickupWork.lastID, legacyPickup.lastID, `${dueDate()} 18:00:00`]
+    );
+    const pickupPrint = await request({
+      method: 'GET',
+      path: `/api/orders/${legacyPickup.lastID}/print`,
+      token: admin.token,
+    });
+    assert(pickupPrint.status === 200, pickupPrint.text);
+    assert(pickupPrint.json.work_orders[0].delivery.method === 'Customer Pickup', 'legacy Customer Pickup label should print');
+    assert(pickupPrint.json.work_orders[0].delivery.hours_label === '8:00 AM - 5:00 PM (15 min increments)', 'Customer Pickup should print Will Call hours');
+
+    const legacyFedex = await db.run(
+      `INSERT INTO orders (
+        order_number, customer_id, company, contact_name, phone, email, delivery_method, due_date, due_time
+      ) VALUES ('LEGACY-FEDEX', ?, 'Acme Construction', 'John Smith', '919-555-1234', 'jsmith@acmeconstruction.com', 'FedEx', ?, '16:30')`,
+      [customerResponse.json.id, dueDate()]
+    );
+    await db.run(
+      `INSERT INTO work_orders (external_id, customer_id, description, quantity, status, department, order_id)
+       VALUES ('LEGACY-FEDEX-A', ?, 'Legacy FedEx', 1, 'open', 'Large Format', ?)`,
+      [customerResponse.json.id, legacyFedex.lastID]
+    );
+    const fedexPrint = await request({
+      method: 'GET',
+      path: `/api/orders/${legacyFedex.lastID}/print`,
+      token: admin.token,
+    });
+    assert(fedexPrint.status === 200 && fedexPrint.json.work_orders[0].delivery.method === 'FedEx', `legacy FedEx label should print: ${fedexPrint.text}`);
+    assert(fedexPrint.json.work_orders[0].delivery.hours_label === '9:00 AM - 2:00 PM (15 min increments)', 'FedEx should print delivery hours');
+    const removed = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customer.token,
+      json: orderBody({ delivery_method: 'Common Carrier', service_ids: [byName['Large Format'].id] }),
+    });
+    assert(removed.status === 400 && /no longer available/i.test(removed.json.error), `Common Carrier should be rejected: ${removed.text}`);
 
     const legacy = await db.get(`SELECT id, external_id FROM work_orders WHERE external_id = 'WO-1001'`);
     assert(legacy, 'seeded WO-1001 should exist');

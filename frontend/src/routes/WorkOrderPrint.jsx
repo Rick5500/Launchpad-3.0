@@ -144,9 +144,12 @@ function WorkOrderSheet({ payload, sheet }) {
           <h2>DELIVERY INFORMATION</h2>
           <div className="wo-panel-body">
             <Field label="Delivery Method:" value={sheet.delivery?.method} />
+            {sheet.delivery?.ups_account_number ? (
+              <Field label="UPS Account:" value={sheet.delivery.ups_account_number} />
+            ) : null}
             <Field label="Ship To:" value={sheet.delivery?.ship_to} />
             <Field label="Attention:" value={sheet.delivery?.attention} />
-            <Field label="Delivery Window:" value={payload.delivery_window_label} />
+            <Field label="Hours:" value={sheet.delivery?.hours_label || payload.delivery_window_label} />
           </div>
         </section>
       </div>

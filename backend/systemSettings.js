@@ -2,7 +2,7 @@ const activityLog = require('./activityLog');
 const { get, all, withTransaction } = require('./dbAsync');
 const { httpError } = require('./httpError');
 const { parseText, parseInteger } = require('./fields');
-const { getRules, orderWindow } = require('./deliveryRules');
+const { getRules } = require('./deliveryRules');
 const { setDueSoonHoursOverride } = require('./runtimeSettings');
 const { maxUploadMb, maxFilesPerRequest } = require('./fileStore');
 const { maxUnattachedUploads } = require('./uploadMaintenance');
@@ -84,7 +84,8 @@ async function readMap() {
 
 function present(map) {
   const rules = getRules();
-  const window = orderWindow();
+  const window = rules.deliveryHours;
+  const willCallHours = rules.willCallHours;
   const letterhead = letterheadFromMap(map);
   const storedDue = map.due_soon_hours == null || String(map.due_soon_hours).trim() === ''
     ? null
@@ -119,6 +120,8 @@ function present(map) {
       delivery_timezone_configured: timezoneConfigured,
       will_call_cutoff: rules.willCallCutoff.label,
       carrier_cutoff: rules.carrierCutoff.label,
+      will_call_window_start: willCallHours.start,
+      will_call_window_end: willCallHours.end,
       delivery_window_start: window.start,
       delivery_window_end: window.end,
       delivery_slot_minutes: window.incrementMinutes,

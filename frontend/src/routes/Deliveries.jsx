@@ -207,6 +207,14 @@ export default function Deliveries() {
         <SectionCard title="Due-time rules" subtitle={rules.rules.summary}>
           <Grid container spacing={2}>
             <Grid item xs={12} sm={6} md={3}>
+              <Typography variant="subtitle2" color="text.secondary">Will Call hours</Typography>
+              <Typography>{rules.rules.windows?.willCall?.label || rules.rules.willCallCutoff}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <Typography variant="subtitle2" color="text.secondary">Delivery hours</Typography>
+              <Typography>{rules.rules.windows?.delivery?.label || rules.rules.orderWindow?.label}</Typography>
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
               <Typography variant="subtitle2" color="text.secondary">Will-call cutoff</Typography>
               <Typography>{rules.rules.willCallCutoff}</Typography>
             </Grid>
@@ -372,7 +380,12 @@ export default function Deliveries() {
                         color={timingColors[delivery.timing] || 'default'}
                       />
                     </TableCell>
-                    <TableCell>{delivery.carrier || '—'}</TableCell>
+                    <TableCell>
+                      {delivery.carrier || '—'}
+                      {delivery.ups_account_number ? (
+                        <Typography variant="caption" display="block">UPS account {delivery.ups_account_number}</Typography>
+                      ) : null}
+                    </TableCell>
                     <TableCell>{delivery.status}</TableCell>
                     {canWrite && (
                       <TableCell>

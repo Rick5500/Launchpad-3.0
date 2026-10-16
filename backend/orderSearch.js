@@ -168,7 +168,7 @@ async function searchOrders(query) {
   const count = await get(`SELECT COUNT(*) AS count FROM orders o ${where.sql}`, where.params);
   const orders = await all(
     `SELECT o.id, o.order_number, o.company, o.contact_name, o.phone, o.email,
-            o.due_date, o.due_time, o.created_at, o.delivery_method, o.project_name
+            o.due_date, o.due_time, o.created_at, o.delivery_method, o.ups_account_number, o.project_name
      FROM orders o
      ${where.sql}
      ORDER BY ${SORTS[filters.sort]} ${filters.dir.toUpperCase()}, o.id DESC
@@ -208,6 +208,7 @@ async function searchOrders(query) {
       due_time: row.due_time,
       created_at: row.created_at,
       delivery_method: row.delivery_method,
+      ups_account_number: row.ups_account_number || null,
       project_name: row.project_name || '',
       detail_path: `/orders/${row.id}`,
       work_orders: grouped.get(row.id) || [],

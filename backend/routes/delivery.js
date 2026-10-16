@@ -32,10 +32,13 @@ const deliverySelect = `
     wo.external_id,
     wo.description,
     wo.customer_id,
-    u.display_name AS customer_name
+    u.display_name AS customer_name,
+    o.ups_account_number,
+    o.delivery_method AS order_delivery_method
   FROM deliveries d
   LEFT JOIN work_orders wo ON d.work_order_id = wo.id
   LEFT JOIN users u ON wo.customer_id = u.id
+  LEFT JOIN orders o ON o.id = COALESCE(d.order_id, wo.order_id)
 `;
 
 function parseLimit(value) {
@@ -113,6 +116,8 @@ function annotate(row, now = new Date(), rules = getRules()) {
     will_call: row.will_call ? 1 : 0,
     due_time: row.due_time,
     carrier: row.carrier,
+    delivery_method: row.order_delivery_method || row.carrier || null,
+    ups_account_number: row.ups_account_number || null,
     status: row.status,
     created_at: row.created_at,
     updated_at: row.updated_at,

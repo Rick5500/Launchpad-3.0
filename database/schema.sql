@@ -81,10 +81,11 @@ CREATE TABLE IF NOT EXISTS orders (
   project_name TEXT,
   notes TEXT,
   delivery_method TEXT NOT NULL,
+  ups_account_number TEXT, -- optional UPS shipping account; not a password
   ship_to TEXT,
   attention TEXT,
   due_date TEXT NOT NULL, -- YYYY-MM-DD in the shop calendar
-  due_time TEXT NOT NULL, -- HH:MM, 15 minute slot inside the delivery window
+  due_time TEXT NOT NULL, -- HH:MM slot inside the method window (Will Call 08:00-17:00, delivery 09:00-16:00)
   created_by INTEGER,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME,
