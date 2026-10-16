@@ -117,7 +117,15 @@ async function canonicalDepartment(tx, value) {
     `SELECT name FROM departments WHERE lower(name) = lower(?)`,
     [parsed.value]
   );
-  if (!row) return { error: 'department must be an existing department' };
+  if (!row) {
+    const names = await tx.all(`SELECT name FROM departments ORDER BY sort_order ASC, name ASC`);
+    const list = names.map((item) => item.name).filter(Boolean).join(', ');
+    return {
+      error: list
+        ? `department must be an existing department: ${list}`
+        : 'department must be an existing department',
+    };
+  }
   return { value: row.name };
 }
 

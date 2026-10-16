@@ -418,7 +418,13 @@ export default function AdminBoard() {
       {(summary?.viewer?.restricted || summary?.viewer?.can_clear) && (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
           {summary.viewer.restricted && (
-            <Chip color="primary" label={`Showing: ${summary.viewer.department}`} sx={{ fontWeight: 700 }} />
+            <Chip
+              color="primary"
+              label={summary.viewer.filter
+                ? `Showing: ${summary.viewer.department} · ${summary.viewer.filter}`
+                : `Showing: ${summary.viewer.department}`}
+              sx={{ fontWeight: 700 }}
+            />
           )}
           {summary.viewer.can_clear && (
             <Button

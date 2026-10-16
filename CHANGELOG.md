@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- The header scan box stays focused after a scan. `readOnly` is used while a scan is posting, and barcodes entered during that request are queued and posted in order. The box clears on Enter, and each result gets its own snackbar
+- Recent Activity and pending approvals for a staff user with a department stay on work orders in that department. User and system events such as creating an operator are omitted. An admin with no department, and an admin who chooses All departments, still see the full lists
+- A login whose department is Complete defaults to work orders completed this month, newest first, instead of an empty active list. The board chip reads `Showing: Complete · completed this month`
+- Renaming a department updates `users.department` for logins assigned to the old name, in the same transaction, and writes an activity row
+- Assigning a department that is not in the departments table, including legacy board names such as Manufacturing and Assembly, returns the valid department names in the error
 - The staff drawer lists Scan (`/scan`) for admin and operator, directly after Create Order. Customers still do not see it
 - Scan locations follow department names. Quality Control maps to Quality and Shipping maps to Dispatch, so a scan moves the work order and the Admin Board shows the new department. Finishing is no longer offered as a default location. Init updates an already-seeded database once and leaves locations an admin has edited
 - Heavy mixed load no longer stalls scans. The server raises libuv's thread pool to 32 when unset, and barcode inserts, stage updates, and notification writes wait on the same writer queue as other transactions

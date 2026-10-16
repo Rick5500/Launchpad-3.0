@@ -75,11 +75,15 @@ function resolveBoardScope(user, query) {
 }
 
 function presentViewer(scope) {
-  return {
+  const viewer = {
     department: scope.assigned,
     restricted: scope.restricted,
     can_clear: scope.canClear,
   };
+  if (scope.restricted && scope.department && scope.department.toLowerCase() === 'complete') {
+    viewer.filter = 'completed this month';
+  }
+  return viewer;
 }
 
 function scanDepartmentSql(alias = 'e') {
@@ -88,6 +92,30 @@ function scanDepartmentSql(alias = 'e') {
     OR lower(trim(coalesce(${alias}.from_department, ''))) = lower(?)
     OR lower(trim(coalesce(${alias}.to_department, ''))) = lower(?)
   )`;
+}
+
+// Work-order events only. A row matches when the work order is in the
+// department now, or the event names that department as current, from, or to.
+function activityDepartmentSql(alias = 'a') {
+  return `(
+    lower(coalesce(${alias}.entity_type, '')) = 'work_order'
+    AND (
+      lower(trim(coalesce(json_extract(${alias}.detail, '$.department'), ''))) = lower(?)
+      OR lower(trim(coalesce(json_extract(${alias}.detail, '$.from_department'), ''))) = lower(?)
+      OR lower(trim(coalesce(json_extract(${alias}.detail, '$.to_department'), ''))) = lower(?)
+      OR EXISTS (
+        SELECT 1 FROM work_orders wo
+        WHERE wo.id = ${alias}.entity_id
+          AND lower(trim(coalesce(wo.department, ''))) = lower(?)
+      )
+    )
+  )`;
+}
+
+function finishedThisMonthSql() {
+  return `${FINISHED_SQL}
+    AND datetime(coalesce(wo.updated_at, wo.created_at)) >= datetime(?)
+    AND datetime(coalesce(wo.updated_at, wo.created_at)) < datetime(?)`;
 }
 
 function run(sql, params = []) {
@@ -379,8 +407,14 @@ function workOrderFilters(query, scope) {
   const params = [];
   const departmentKey = department ? department.toLowerCase() : 'all';
   const statusKey = status ? status.toLowerCase() : null;
+  // Complete has no active queue. Default that login to finished work this month.
+  const completeDefault = locked && departmentKey === 'complete' && !statusKey;
+  const monthWindow = completeDefault ? completionWindow() : null;
 
-  if (locked) {
+  if (completeDefault) {
+    clauses.push(finishedThisMonthSql());
+    params.push(monthWindow.start, monthWindow.end);
+  } else if (locked) {
     if (statusKey === 'completed') {
       clauses.push(FINISHED_SQL);
     } else if (statusKey) {
@@ -440,10 +474,13 @@ function workOrderFilters(query, scope) {
     params.push(pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern);
   }
 
+  const orderColumn = completeDefault && sort === 'arrived'
+    ? `datetime(coalesce(wo.updated_at, wo.created_at))`
+    : SORT_COLUMNS[sort];
   return {
     where: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '',
     params,
-    orderBy: `${SORT_COLUMNS[sort]} ${direction.toUpperCase()}, wo.id ${direction.toUpperCase()}`,
+    orderBy: `${orderColumn} ${direction.toUpperCase()}, wo.id ${direction.toUpperCase()}`,
   };
 }
 
@@ -472,20 +509,27 @@ async function listWorkOrders(query, user) {
   };
 }
 
-async function listActivity(query, preview) {
+async function listActivity(query, preview, department) {
   const limit = preview ? ACTIVITY_PREVIEW : parseLimit(query.limit, 20);
   const offset = preview ? 0 : parseOffset(query.offset);
   const window = completionWindow();
   const now = new Date();
-  const totalRow = await get('SELECT COUNT(*) AS count FROM activity_log');
+  const params = [];
+  let where = '';
+  if (department) {
+    where = `WHERE ${activityDepartmentSql('a')}`;
+    params.push(department, department, department, department);
+  }
+  const totalRow = await get(`SELECT COUNT(*) AS count FROM activity_log a ${where}`, params);
   const rows = await all(
     `SELECT a.id, a.actor_id, a.action, a.entity_type, a.entity_id, a.detail, a.created_at,
             COALESCE(NULLIF(trim(u.display_name), ''), NULLIF(trim(u.username), ''), 'System') AS actor_name
      FROM activity_log a
      LEFT JOIN users u ON u.id = a.actor_id
+     ${where}
      ORDER BY a.created_at DESC, a.id DESC
      LIMIT ? OFFSET ?`,
-    [limit, offset]
+    [...params, limit, offset]
   );
   return {
     activity: rows.map((row) => presentActivity(row, window.timezone, now)),
@@ -508,12 +552,17 @@ function presentApproval(row, timeZone) {
   };
 }
 
-async function listApprovals(query, preview) {
+async function listApprovals(query, preview, department) {
   const limit = preview ? APPROVAL_PREVIEW : parseLimit(query.limit, 20);
   const offset = preview ? 0 : parseOffset(query.offset);
   const window = completionWindow();
-  const where = `WHERE wo.requires_approval = 1 AND lower(trim(coalesce(wo.approval_status, ''))) = 'pending'`;
-  const totalRow = await get(`SELECT COUNT(*) AS count FROM work_orders wo ${where}`);
+  const params = [];
+  let where = `WHERE wo.requires_approval = 1 AND lower(trim(coalesce(wo.approval_status, ''))) = 'pending'`;
+  if (department) {
+    where += ` AND lower(trim(coalesce(wo.department, ''))) = lower(?)`;
+    params.push(department);
+  }
+  const totalRow = await get(`SELECT COUNT(*) AS count FROM work_orders wo ${where}`, params);
   const rows = await all(
     `SELECT wo.id, wo.external_id, wo.department, wo.created_at, wo.approval_status, s.name AS service_name,
             COALESCE(
@@ -529,7 +578,7 @@ async function listApprovals(query, preview) {
      ${where}
      ORDER BY wo.created_at ASC, wo.id ASC
      LIMIT ? OFFSET ?`,
-    [limit, offset]
+    [...params, limit, offset]
   );
   return {
     approvals: rows.map((row) => presentApproval(row, window.timezone)),
@@ -740,8 +789,8 @@ async function loadSummary(user, query) {
          AND datetime(coalesce(wo.updated_at, wo.created_at)) < datetime(?)`,
       [window.start, window.end]
     ),
-    listActivity({}, true),
-    listApprovals({}, true),
+    listActivity({}, true, scope.restricted ? scope.department : null),
+    listApprovals({}, true, scope.restricted ? scope.department : null),
     listScans(SCAN_PREVIEW, scope.restricted ? scope.department : null),
     loadAlerts(now, scope),
   ]);
@@ -825,23 +874,29 @@ async function loadSummary(user, query) {
   const deptRow = known.get(key);
   const label = deptRow ? deptRow.name : scope.department;
   const color = (deptRow && deptRow.color) || '#607D8B';
-  const completedRow = await get(
-    `SELECT COUNT(*) AS count
-     FROM work_orders wo
-     WHERE ${FINISHED_SQL}
-       AND lower(trim(coalesce(wo.department, ''))) = lower(?)
-       AND datetime(coalesce(wo.updated_at, wo.created_at)) >= datetime(?)
-       AND datetime(coalesce(wo.updated_at, wo.created_at)) < datetime(?)`,
-    [scope.department, window.start, window.end]
-  );
-  body.tabs = [{ key: label, label, count: activeCount, color }];
+  const completedRow = key === 'complete'
+    ? await get(
+      `SELECT COUNT(*) AS count FROM work_orders wo WHERE ${finishedThisMonthSql()}`,
+      [window.start, window.end]
+    )
+    : await get(
+      `SELECT COUNT(*) AS count
+       FROM work_orders wo
+       WHERE ${FINISHED_SQL}
+         AND lower(trim(coalesce(wo.department, ''))) = lower(?)
+         AND datetime(coalesce(wo.updated_at, wo.created_at)) >= datetime(?)
+         AND datetime(coalesce(wo.updated_at, wo.created_at)) < datetime(?)`,
+      [scope.department, window.start, window.end]
+    );
+  const tabCount = key === 'complete' ? (completedRow ? completedRow.count : 0) : activeCount;
+  body.tabs = [{ key: label, label, count: tabCount, color }];
   body.stats = {
     ...body.stats,
     total_active: activeCount,
     completed_this_month: completedRow ? completedRow.count : 0,
     departments: [],
   };
-  body.queue = [{ name: label, count: activeCount, color }];
+  body.queue = [{ name: label, count: tabCount, color }];
   return body;
 }
 
@@ -924,6 +979,7 @@ module.exports = {
   ACTIVE_SQL,
   FINISHED_SQL,
   COMPLETE_SCOPE_SQL,
+  resolveBoardScope,
   loadSummary,
   listWorkOrders,
   listActivity,

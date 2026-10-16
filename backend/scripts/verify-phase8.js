@@ -254,6 +254,31 @@ async function main() {
       json: staffBody({ username: 'baddept', role: 'operator', department: 'Not A Department', password: 'OperatorPass123' }),
     });
     assert(badDepartment.status === 400, `unknown department should be rejected: ${badDepartment.text}`);
+    assert(
+      /Large Format/.test(badDepartment.json.error || '') && /Complete/.test(badDepartment.json.error || ''),
+      `unknown department should list valid names: ${badDepartment.text}`
+    );
+    const manufacturing = await request({
+      method: 'POST',
+      path: '/api/users',
+      token: admin.token,
+      json: staffBody({ username: 'legacydept', role: 'operator', department: 'Manufacturing', password: 'OperatorPass123' }),
+    });
+    assert(manufacturing.status === 400, `Manufacturing should stay unassignable: ${manufacturing.text}`);
+    assert(
+      /Large Format/.test(manufacturing.json.error || '') && !/\bManufacturing\b/.test(manufacturing.json.error || ''),
+      `the error should list departments from the table, not legacy board names: ${manufacturing.text}`
+    );
+    const assembly = await request({
+      method: 'POST',
+      path: '/api/users',
+      token: admin.token,
+      json: staffBody({ username: 'assemblydept', role: 'operator', department: 'Assembly', password: 'OperatorPass123' }),
+    });
+    assert(
+      assembly.status === 400 && /Quality/.test(assembly.json.error || '') && !/\bAssembly\b/.test(assembly.json.error || ''),
+      `Assembly should stay unassignable: ${assembly.text}`
+    );
 
     const customerDepartment = await request({
       method: 'POST',
@@ -451,6 +476,184 @@ async function main() {
       const names = [row.location, row.from_department, row.to_department].map((value) => String(value || '').toLowerCase());
       return names.includes('quality');
     }), 'Scan Activity should stay on the operator department');
+
+    const qualRow = await db.get(`SELECT id FROM work_orders WHERE external_id = 'P8-QUAL'`);
+    const dispRow = await db.get(`SELECT id FROM work_orders WHERE external_id = 'P8-DISP'`);
+    await db.run(
+      `INSERT INTO activity_log (actor_id, action, entity_type, entity_id, detail)
+       VALUES (?, 'work_order.moved', 'work_order', ?, ?)`,
+      [admin.user.id, qualRow.id, JSON.stringify({
+        external_id: 'P8-QUAL',
+        from_department: 'Large Format',
+        to_department: 'Quality',
+        message: 'Moved to Quality',
+      })]
+    );
+    await db.run(
+      `INSERT INTO activity_log (actor_id, action, entity_type, entity_id, detail)
+       VALUES (?, 'work_order.moved', 'work_order', ?, ?)`,
+      [admin.user.id, dispRow.id, JSON.stringify({
+        external_id: 'P8-DISP',
+        from_department: 'Large Format',
+        to_department: 'Dispatch',
+        message: 'Moved to Dispatch',
+      })]
+    );
+    await db.run(
+      `INSERT INTO activity_log (actor_id, action, entity_type, entity_id, detail)
+       VALUES (?, 'user.created', 'user', ?, ?)`,
+      [admin.user.id, created.json.id, JSON.stringify({
+        department: 'Quality',
+        message: 'Created operator qualityop in Quality',
+      })]
+    );
+    await db.run(
+      `UPDATE work_orders
+       SET requires_approval = 1, approval_status = 'pending'
+       WHERE external_id IN ('P8-QUAL', 'P8-DISP')`
+    );
+
+    function activityText(body) {
+      return (body.activity || []).map((row) => `${row.action} ${row.external_id || ''} ${row.summary || ''}`).join('\n');
+    }
+    const operatorActivity = await request({
+      method: 'GET',
+      path: '/api/admin-board/activity?limit=100&scope=all',
+      token: operatorLogin.token,
+    });
+    assert(operatorActivity.status === 200, operatorActivity.text);
+    const operatorActivityText = activityText(operatorActivity.json);
+    assert(/P8-QUAL/.test(operatorActivityText), `operator activity should include the Quality work order: ${operatorActivityText}`);
+    assert(!/P8-DISP/.test(operatorActivityText), `operator activity should omit Dispatch-only events: ${operatorActivityText}`);
+    assert(!/Created operator/.test(operatorActivityText), `operator activity should omit user events: ${operatorActivityText}`);
+    assert((operatorActivity.json.activity || []).every((row) => row.entity_type === 'work_order'), 'restricted activity should be work order events');
+    const operatorSummary = await request({ method: 'GET', path: '/api/admin-board', token: operatorLogin.token });
+    const operatorSummaryText = activityText(operatorSummary.json);
+    assert(/P8-QUAL/.test(operatorSummaryText) && !/Created operator/.test(operatorSummaryText),
+      `the activity panel should stay on Quality: ${operatorSummaryText}`);
+    const adminActivity = await request({
+      method: 'GET',
+      path: '/api/admin-board/activity?limit=100',
+      token: admin.token,
+    });
+    const adminActivityText = activityText(adminActivity.json);
+    assert(/Created operator qualityop in Quality/.test(adminActivityText), 'an unrestricted admin still sees user events');
+    assert(/P8-DISP/.test(adminActivityText) && /P8-QUAL/.test(adminActivityText), 'an unrestricted admin still sees every department');
+    const widenedActivity = await request({
+      method: 'GET',
+      path: '/api/admin-board/activity?limit=100&scope=all',
+      token: qualityAdmin.token,
+    });
+    assert(/Created operator/.test(activityText(widenedActivity.json)), 'scope=all should restore the full activity list for an admin');
+
+    function approvalIds(body) {
+      return (body.approvals || []).map((row) => row.external_id);
+    }
+    const operatorApprovals = await request({
+      method: 'GET',
+      path: '/api/admin-board/approvals?limit=100',
+      token: operatorLogin.token,
+    });
+    assert(operatorApprovals.status === 200, operatorApprovals.text);
+    assert(approvalIds(operatorApprovals.json).includes('P8-QUAL'), 'the operator should see a Quality approval');
+    assert(!approvalIds(operatorApprovals.json).includes('P8-DISP'), 'the operator should not see a Dispatch approval');
+    assert(
+      (operatorSummary.json.approvals || []).every((row) => String(row.department || '').toLowerCase() === 'quality')
+        && !approvalIds(operatorSummary.json).includes('P8-DISP'),
+      'the approval preview should stay on the operator department'
+    );
+    const adminApprovals = await request({
+      method: 'GET',
+      path: '/api/admin-board/approvals?limit=100',
+      token: admin.token,
+    });
+    assert(approvalIds(adminApprovals.json).includes('P8-QUAL') && approvalIds(adminApprovals.json).includes('P8-DISP'),
+      'an unrestricted admin should see approvals in every department');
+
+    await db.run(
+      `INSERT INTO work_orders (external_id, description, quantity, status, department, created_at, updated_at)
+       VALUES ('P8-NEW', 'Completed today', 1, 'completed', 'Complete', datetime('now', '-1 hour'), datetime('now'))`
+    );
+    await db.run(
+      `INSERT INTO work_orders (external_id, description, quantity, status, department, created_at, updated_at)
+       VALUES ('P8-OLDER', 'Completed earlier today', 1, 'completed', 'Dispatch', datetime('now', '-3 hours'), datetime('now', '-2 hours'))`
+    );
+    await db.run(
+      `INSERT INTO work_orders (external_id, description, quantity, status, department, created_at, updated_at)
+       VALUES ('P8-LASTYEAR', 'Old completed job', 1, 'completed', 'Complete', '2020-06-01 12:00:00', '2020-06-01 12:00:00')`
+    );
+    const completeUser = await request({
+      method: 'POST',
+      path: '/api/users',
+      token: admin.token,
+      json: staffBody({ username: 'completeop', display_name: 'Complete Operator', role: 'operator', department: 'Complete', password: 'OperatorPass123' }),
+    });
+    assert(completeUser.status === 201 && completeUser.json.department === 'Complete', completeUser.text);
+    const completeLogin = await login('completeop', 'OperatorPass123');
+    const completeBoard = await request({ method: 'GET', path: '/api/admin-board', token: completeLogin.token });
+    assert(completeBoard.status === 200, completeBoard.text);
+    assert(completeBoard.json.viewer.department === 'Complete' && completeBoard.json.viewer.restricted === true, 'a Complete login should stay restricted');
+    assert(completeBoard.json.viewer.filter === 'completed this month', 'the Complete chip should name the default filter');
+    assert(completeBoard.json.tabs.length === 1 && completeBoard.json.tabs[0].key === 'Complete', 'the Complete board should keep a Complete tab');
+    const completeRows = await request({
+      method: 'GET',
+      path: '/api/admin-board/work-orders?limit=100&sort=arrived&direction=desc&q=P8-',
+      token: completeLogin.token,
+    });
+    assert(completeRows.status === 200, completeRows.text);
+    const completeIds = (completeRows.json.work_orders || []).map((row) => row.external_id);
+    assert(completeIds[0] === 'P8-NEW' && completeIds.includes('P8-OLDER'), `completed this month should be newest first: ${completeIds.join(',')}`);
+    assert(completeIds.indexOf('P8-NEW') < completeIds.indexOf('P8-OLDER'), 'newer completed work should come first');
+    assert(!completeIds.includes('P8-LASTYEAR'), 'a Complete login should not default to older completed work');
+    assert(!completeIds.includes('P8-QUAL') && !completeIds.includes('P8-DISP'), 'open work should stay off the Complete default');
+    const adminComplete = await request({
+      method: 'GET',
+      path: '/api/admin-board/work-orders?limit=100&department=Complete&q=P8-',
+      token: admin.token,
+    });
+    const adminCompleteIds = (adminComplete.json.work_orders || []).map((row) => row.external_id);
+    assert(adminCompleteIds.includes('P8-LASTYEAR') && adminCompleteIds.includes('P8-NEW'), 'an unrestricted Complete tab should keep its existing scope');
+    const adminActive = await request({
+      method: 'GET',
+      path: '/api/admin-board/work-orders?limit=100&q=P8-',
+      token: admin.token,
+    });
+    const adminActiveIds = (adminActive.json.work_orders || []).map((row) => row.external_id);
+    assert(!adminActiveIds.includes('P8-NEW') && !adminActiveIds.includes('P8-LASTYEAR'), 'the active table should still omit completed work');
+
+    const tempDepartment = await request({
+      method: 'POST',
+      path: '/api/departments',
+      token: admin.token,
+      json: { name: 'P8 Temp', sort_order: 80 },
+    });
+    assert(tempDepartment.status === 201 && tempDepartment.json.id, `department create failed: ${tempDepartment.text}`);
+    const tempUser = await request({
+      method: 'POST',
+      path: '/api/users',
+      token: admin.token,
+      json: staffBody({ username: 'p8temp', display_name: 'Temp Op', role: 'operator', department: 'P8 Temp', password: 'OperatorPass123' }),
+    });
+    assert(tempUser.status === 201 && tempUser.json.department === 'P8 Temp', tempUser.text);
+    const renamed = await request({
+      method: 'PUT',
+      path: `/api/departments/${tempDepartment.json.id}`,
+      token: admin.token,
+      json: { name: 'P8 Renamed', description: 'renamed', color: '#112233', sort_order: 81, is_active: 1 },
+    });
+    assert(renamed.status === 200 && renamed.json.name === 'P8 Renamed', `department rename failed: ${renamed.text}`);
+    const renamedUser = await db.get(`SELECT department FROM users WHERE username = 'p8temp'`);
+    const untouchedUser = await db.get(`SELECT department FROM users WHERE username = 'qualityop'`);
+    assert(renamedUser && renamedUser.department === 'P8 Renamed', 'renaming a department should update assigned logins');
+    assert(untouchedUser && untouchedUser.department === 'Quality', 'a rename should leave other departments alone');
+    const renameActivity = await db.get(
+      `SELECT action, detail FROM activity_log WHERE action = 'department.updated' AND entity_id = ?`,
+      [tempDepartment.json.id]
+    );
+    assert(
+      renameActivity && /P8 Temp/.test(renameActivity.detail) && /P8 Renamed/.test(renameActivity.detail),
+      'a department rename should be logged in the same change'
+    );
 
     const customerLogin = await login('phase8cust', 'CustomerPass1');
     assert(customerLogin.user.department == null, 'a customer login should not carry a department');

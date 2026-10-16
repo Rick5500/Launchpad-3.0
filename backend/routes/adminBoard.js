@@ -40,7 +40,9 @@ router.get('/work-orders', async (req, res) => {
 
 router.get('/activity', async (req, res) => {
   try {
-    sendBoard(res, await adminBoard.listActivity(req.query, false));
+    const access = await users.loadAccess(req.user.userId);
+    const scope = adminBoard.resolveBoardScope(access, req.query);
+    sendBoard(res, await adminBoard.listActivity(req.query, false, scope.restricted ? scope.department : null));
   } catch (err) {
     sendError(res, err, 'ADMIN BOARD ACTIVITY ERROR:', 'Failed to load activity');
   }
@@ -48,7 +50,9 @@ router.get('/activity', async (req, res) => {
 
 router.get('/approvals', async (req, res) => {
   try {
-    sendBoard(res, await adminBoard.listApprovals(req.query, false));
+    const access = await users.loadAccess(req.user.userId);
+    const scope = adminBoard.resolveBoardScope(access, req.query);
+    sendBoard(res, await adminBoard.listApprovals(req.query, false, scope.restricted ? scope.department : null));
   } catch (err) {
     sendError(res, err, 'ADMIN BOARD APPROVALS ERROR:', 'Failed to load approvals');
   }

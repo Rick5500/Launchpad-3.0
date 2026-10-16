@@ -43,13 +43,31 @@ function noticeFor(body) {
 
 export default function HeaderScan({ user, autoFocus }) {
   const inputRef = useRef(null);
+  const draftRef = useRef('');
+  const queueRef = useRef([]);
+  const drainingRef = useRef(false);
+  const submittingRef = useRef(false);
+  const userRef = useRef(user);
+  const noticeSeq = useRef(0);
   const [value, setValue] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState(null);
 
+  userRef.current = user;
+
   function focusInput() {
     const node = inputRef.current;
     if (node && typeof node.focus === 'function') node.focus();
+  }
+
+  function setBusy(next) {
+    submittingRef.current = next;
+    setSubmitting(next);
+  }
+
+  function showNotice(next) {
+    noticeSeq.current += 1;
+    setNotice({ ...next, id: noticeSeq.current });
   }
 
   useEffect(() => {
@@ -69,39 +87,84 @@ export default function HeaderScan({ user, autoFocus }) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  async function submit(event) {
-    event.preventDefault();
-    const scanned = value.trim();
-    if (!scanned || submitting) {
-      focusInput();
-      return;
-    }
-    setSubmitting(true);
+  async function postBarcode(scanned) {
     try {
       const response = await authFetch('/api/barcode', {
         method: 'POST',
         body: JSON.stringify({
           scanned_value: scanned,
-          location: user?.department || null,
+          location: userRef.current?.department || null,
         }),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        setNotice({
+        showNotice({
           severity: 'error',
           message: response.status === 404 ? 'Unknown barcode' : (body.error || 'Scan failed'),
         });
-      } else {
-        setNotice(noticeFor(body));
-        requestBoardRefresh();
+        return;
       }
-      setValue('');
+      showNotice(noticeFor(body));
+      requestBoardRefresh();
     } catch (err) {
-      setNotice({ severity: 'error', message: err.message || 'Scan failed' });
+      showNotice({ severity: 'error', message: err.message || 'Scan failed' });
+    }
+  }
+
+  async function drain() {
+    try {
+      while (queueRef.current.length) {
+        const scanned = queueRef.current.shift();
+        await postBarcode(scanned);
+      }
     } finally {
-      setSubmitting(false);
+      if (queueRef.current.length) {
+        void drain();
+        return;
+      }
+      drainingRef.current = false;
+      if (queueRef.current.length) {
+        drainingRef.current = true;
+        void drain();
+        return;
+      }
+      setBusy(false);
       focusInput();
     }
+  }
+
+  function enqueue(raw) {
+    const scanned = String(raw || '').trim();
+    draftRef.current = '';
+    setValue('');
+    focusInput();
+    if (!scanned) return;
+    queueRef.current.push(scanned);
+    if (drainingRef.current) return;
+    drainingRef.current = true;
+    setBusy(true);
+    void drain();
+  }
+
+  function submit(event) {
+    event.preventDefault();
+    const scanned = draftRef.current || (inputRef.current && inputRef.current.value) || '';
+    enqueue(scanned);
+  }
+
+  function onKeyDown(event) {
+    if (!submittingRef.current) return;
+    if (event.key === 'Enter' || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.key === 'Backspace') {
+      event.preventDefault();
+      draftRef.current = draftRef.current.slice(0, -1);
+      setValue(draftRef.current);
+      return;
+    }
+    if (event.key.length !== 1) return;
+    event.preventDefault();
+    draftRef.current += event.key;
+    setValue(draftRef.current);
   }
 
   return (
@@ -129,9 +192,13 @@ export default function HeaderScan({ user, autoFocus }) {
         <InputBase
           inputRef={inputRef}
           value={value}
-          onChange={(event) => setValue(event.target.value)}
+          onChange={(event) => {
+            draftRef.current = event.target.value;
+            setValue(event.target.value);
+          }}
+          onKeyDown={onKeyDown}
           placeholder="Scan barcode"
-          disabled={submitting}
+          readOnly={submitting}
           inputProps={{
             'aria-label': 'Scan barcode',
             'aria-keyshortcuts': 'Alt+S',
@@ -145,6 +212,7 @@ export default function HeaderScan({ user, autoFocus }) {
         <BarcodeMark />
       </Box>
       <Snackbar
+        key={notice ? notice.id : 'scan-notice'}
         open={Boolean(notice)}
         autoHideDuration={4000}
         onClose={() => setNotice(null)}
