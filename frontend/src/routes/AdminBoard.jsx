@@ -220,16 +220,21 @@ export default function AdminBoard() {
   }, [summary, department]);
 
   useEffect(() => {
-    function refresh() {
-      setRefreshKey((value) => value + 1);
+    let timer = 0;
+    function scheduleRefresh() {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        setRefreshKey((value) => value + 1);
+      }, 50);
     }
     function onVisible() {
-      if (document.visibilityState === 'visible') refresh();
+      if (document.visibilityState === 'visible') scheduleRefresh();
     }
-    window.addEventListener('focus', refresh);
+    window.addEventListener('focus', scheduleRefresh);
     document.addEventListener('visibilitychange', onVisible);
     return () => {
-      window.removeEventListener('focus', refresh);
+      window.clearTimeout(timer);
+      window.removeEventListener('focus', scheduleRefresh);
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, []);

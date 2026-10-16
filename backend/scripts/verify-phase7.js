@@ -1,7 +1,7 @@
 /**
- * Phase 6 checks: scan locations follow department names on a fresh database
+ * Phase 7 checks: scan locations follow department names on a fresh database
  * and on a database that still has the old stage-only seed.
- * Usage (from backend/): node scripts/verify-phase6.js
+ * Usage (from backend/): node scripts/verify-phase7.js
  */
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -11,7 +11,7 @@ const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 
 const backendDir = path.join(__dirname, '..');
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-phase6-'));
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-phase7-'));
 const freshDb = path.join(tmp, 'fresh.db');
 const legacyDb = path.join(tmp, 'legacy.db');
 const aliasDb = path.join(tmp, 'alias.db');
@@ -493,7 +493,7 @@ async function main() {
     await aliasServer.stop();
   }
 
-  console.log('Phase 6 checks passed.');
+  console.log('Phase 7 checks passed.');
 }
 
 main().catch((err) => {
