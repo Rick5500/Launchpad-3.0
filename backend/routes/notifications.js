@@ -1,6 +1,8 @@
 const express = require('express');
 const auth = require('../auth');
 const notifications = require('../notifications');
+const notificationSettings = require('../notificationSettings');
+const { sendError } = require('../httpError');
 
 const router = express.Router();
 
@@ -11,6 +13,22 @@ function sendServiceError(res, err, logLabel, fallback) {
   console.error(logLabel, err);
   return res.status(500).json({ error: fallback });
 }
+
+router.get('/settings', auth.requireAuth, auth.requireRole('admin'), async (req, res) => {
+  try {
+    res.json(await notificationSettings.getSettings());
+  } catch (err) {
+    sendError(res, err, 'NOTIFICATION SETTINGS ERROR:', 'Failed to load notification settings');
+  }
+});
+
+router.put('/settings', auth.requireAuth, auth.requireRole('admin'), async (req, res) => {
+  try {
+    res.json(await notificationSettings.updateSettings(req.user.userId, req.body));
+  } catch (err) {
+    sendError(res, err, 'NOTIFICATION SETTINGS ERROR:', 'Failed to update notification settings');
+  }
+});
 
 router.get('/', auth.requireAuth, (req, res) => {
   notifications.listNotifications(req.user, req.query, (err, result) => {

@@ -6,6 +6,8 @@ import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
 import { authFetch } from '../api';
 import { notifyNotificationsChanged } from '../components/NotificationBell';
+import { useAuth } from '../context/AuthContext';
+import NotificationSettings from './NotificationSettings';
 
 const POLL_MS = 45000;
 const LIMIT = 20;
@@ -25,6 +27,7 @@ function formatStamp(value) {
 
 export default function Notifications() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [items, setItems] = useState([]);
   const [unread, setUnread] = useState(0);
   const [total, setTotal] = useState(0);
@@ -93,6 +96,8 @@ export default function Notifications() {
           Mark all read
         </Button>
       </Box>
+
+      {user?.role === 'admin' ? <NotificationSettings /> : null}
 
       {loading && items.length === 0 ? <LoadingState message="Loading notifications..." /> : null}
       {error ? <ErrorState message={error} /> : null}

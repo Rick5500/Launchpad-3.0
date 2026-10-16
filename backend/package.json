@@ -7,7 +7,8 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "verify:phase1": "node scripts/verify-phase1.js",
-    "verify:phase2": "node scripts/verify-phase2.js"
+    "verify:phase2": "node scripts/verify-phase2.js",
+    "verify:phase4": "node scripts/verify-phase4.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

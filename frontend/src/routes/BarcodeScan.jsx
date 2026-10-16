@@ -31,6 +31,7 @@ export default function BarcodeScan() {
   const [scannedValue, setScannedValue] = useState('');
   const [location, setLocation] = useState(() => sessionStorage.getItem(LOCATION_STORAGE_KEY) || '');
   const [locationStages, setLocationStages] = useState([]);
+  const [locations, setLocations] = useState([]);
   const [events, setEvents] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -58,6 +59,7 @@ export default function BarcodeScan() {
       })
       .then((body) => {
         if (body?.locationStages) setLocationStages(body.locationStages);
+        if (body?.locations) setLocations(body.locations);
       })
       .catch(() => {});
     loadEvents();
@@ -118,14 +120,14 @@ export default function BarcodeScan() {
               label="Location"
               value={location}
               onChange={(e) => setLocation(e.target.value)}
-              helperText="Optional station. Shipping, Quality Control, and Finishing advance that production stage unless the server mapping is changed."
+              helperText="Optional station. A saved location can move the work order to a department or advance a production stage."
               fullWidth
             />
-            {locationStages.length > 0 && (
+            {(locations.length > 0 ? locations : locationStages).length > 0 && (
               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                {locationStages.map((entry) => (
+                {(locations.length > 0 ? locations : locationStages).map((entry) => (
                   <Chip
-                    key={entry.location}
+                    key={entry.id || entry.location}
                     label={entry.location}
                     clickable
                     color={location.trim().toLowerCase() === entry.location.toLowerCase() ? 'primary' : 'default'}

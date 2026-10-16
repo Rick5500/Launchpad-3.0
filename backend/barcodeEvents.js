@@ -197,8 +197,7 @@ function resolveWorkOrder(scannedValue, cb) {
   );
 }
 
-function resolveStage(location, cb) {
-  const stageName = stageNameForLocation(location);
+function resolveStageByName(stageName, cb) {
   if (!stageName) return cb(null, null);
   db.get(
     'SELECT id, name FROM production_stages WHERE lower(name) = lower(?)',
@@ -215,6 +214,68 @@ function resolveStage(location, cb) {
       cb(null, row);
     }
   );
+}
+
+function resolveStage(location, cb) {
+  resolveStageByName(stageNameForLocation(location), cb);
+}
+
+// An empty barcode_locations table keeps the environment stage map and department-name match.
+// Once any row exists, only active rows in that table move a department or advance a stage.
+function fallbackPolicy(location) {
+  const text = location ? String(location).trim() : '';
+  return {
+    mode: 'fallback',
+    matched: Boolean(text),
+    configuredLocation: text || null,
+    departmentName: text || null,
+    stageName: stageNameForLocation(text),
+  };
+}
+
+function resolvePolicy(location, cb) {
+  const text = location ? String(location).trim() : '';
+  db.get('SELECT COUNT(*) AS count FROM barcode_locations', [], (err, row) => {
+    if (err) {
+      if (/no such table/i.test(String(err.message || ''))) return cb(null, fallbackPolicy(text));
+      return cb(err);
+    }
+    if (!row || !row.count) return cb(null, fallbackPolicy(text));
+    if (!text) {
+      return cb(null, {
+        mode: 'table',
+        matched: false,
+        configuredLocation: null,
+        departmentName: null,
+        stageName: null,
+      });
+    }
+    db.get(
+      `SELECT location, department_name, stage_name
+       FROM barcode_locations
+       WHERE is_active = 1 AND lower(location) = lower(?)`,
+      [text],
+      (err2, found) => {
+        if (err2) return cb(err2);
+        if (!found) {
+          return cb(null, {
+            mode: 'table',
+            matched: false,
+            configuredLocation: null,
+            departmentName: null,
+            stageName: null,
+          });
+        }
+        cb(null, {
+          mode: 'table',
+          matched: true,
+          configuredLocation: found.location,
+          departmentName: found.department_name || null,
+          stageName: found.stage_name || null,
+        });
+      }
+    );
+  });
 }
 
 function runSql(sql, params = []) {
@@ -238,14 +299,14 @@ function isCompleteDepartment(name) {
 
 // A scan location that names a department moves the work order there.
 // Shipping / Quality Control / Finishing still advance production stages and do not match a department.
-async function applyScan({ scannedValue, location, eventTime, operatorId, workOrder, stage }) {
+async function applyScan({ scannedValue, location, eventTime, operatorId, workOrder, stage, departmentName }) {
   const storedTime = eventTime || utcNowNaive();
   const [matchedDepartment, operator] = await Promise.all([
-    location
+    departmentName
       ? getSql(
         `SELECT id, name, next_department FROM departments
          WHERE is_active = 1 AND lower(name) = lower(?)`,
-        [String(location).trim()]
+        [String(departmentName).trim()]
       )
       : Promise.resolve(null),
     operatorId
@@ -364,11 +425,84 @@ function recordScan({ scannedValue, location, eventTime, operatorId }, cb) {
     if (err) return cb(err);
     if (!workOrder) return cb(httpError(404, 'Work order not found'));
 
-    resolveStage(location, (stageErr, stage) => {
-      if (stageErr) return cb(stageErr);
-      applyScan({ scannedValue, location, eventTime, operatorId, workOrder, stage })
-        .then((payload) => cb(null, payload))
-        .catch(cb);
+    resolvePolicy(location, (policyErr, policy) => {
+      if (policyErr) return cb(policyErr);
+      resolveStageByName(policy.stageName, (stageErr, stage) => {
+        if (stageErr) return cb(stageErr);
+        applyScan({
+          scannedValue,
+          location,
+          eventTime,
+          operatorId,
+          workOrder,
+          stage,
+          departmentName: policy.departmentName,
+        })
+          .then((payload) => cb(null, payload))
+          .catch(cb);
+      });
+    });
+  });
+}
+
+function previewScan({ scannedValue, location }, cb) {
+  resolveWorkOrder(scannedValue, (err, workOrder) => {
+    if (err) return cb(err);
+    resolvePolicy(location, (policyErr, policy) => {
+      if (policyErr) return cb(policyErr);
+      resolveStageByName(policy.stageName, (stageErr, stage) => {
+        if (stageErr) return cb(stageErr);
+        const finish = (department) => {
+          const fromDepartment = workOrder ? (workOrder.department || null) : null;
+          const toName = department ? department.name : null;
+          const moved = Boolean(workOrder && department && String(fromDepartment || '').trim() !== department.name);
+          let resultingStatus = workOrder ? workOrder.status : null;
+          const wouldComplete = Boolean(
+            moved
+            && isCompleteDepartment(department.name)
+            && !activityLog.isFinishedStatus(workOrder.status)
+          );
+          if (wouldComplete) resultingStatus = 'completed';
+          cb(null, {
+            scanned_value: scannedValue,
+            dry_run: true,
+            work_order: workOrder ? {
+              id: workOrder.id,
+              external_id: workOrder.external_id,
+              description: workOrder.description,
+              department: workOrder.department,
+              status: workOrder.status,
+              detail_path: `/work-orders/${workOrder.id}`,
+              print_path: `/work-orders/${workOrder.id}/print`,
+            } : null,
+            location: {
+              input: location || null,
+              matched: Boolean(policy.matched && policy.mode === 'table'),
+              source: policy.mode,
+              configured_location: policy.configuredLocation,
+              department_name: policy.departmentName,
+              stage_name: policy.stageName,
+              department_found: Boolean(department),
+              stage_found: Boolean(stage),
+              would_move_department: moved,
+              would_advance_stage: Boolean(workOrder && stage),
+              would_complete: wouldComplete,
+              resulting_department: moved ? toName : fromDepartment,
+              resulting_status: resultingStatus,
+            },
+          });
+        };
+        if (!policy.departmentName) return finish(null);
+        db.get(
+          `SELECT id, name, next_department FROM departments
+           WHERE is_active = 1 AND lower(name) = lower(?)`,
+          [String(policy.departmentName).trim()],
+          (deptErr, department) => {
+            if (deptErr) return cb(deptErr);
+            finish(department || null);
+          }
+        );
+      });
     });
   });
 }
@@ -450,5 +584,6 @@ module.exports = {
   parseListQuery,
   resolveWorkOrder,
   recordScan,
+  previewScan,
   listEvents,
 };

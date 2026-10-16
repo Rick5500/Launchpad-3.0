@@ -94,6 +94,19 @@ function decisionEntry({ actorId, workOrder, decision, note }) {
   };
 }
 
+function record(actorId, action, entityType, entityId, detail) {
+  const db = require('./db');
+  return new Promise((resolve, reject) => {
+    insertEntries(db, [{
+      actorId,
+      action,
+      entityType,
+      entityId,
+      detail,
+    }], (err) => (err ? reject(err) : resolve()));
+  });
+}
+
 function insertEntries(conn, entries, cb) {
   const pending = entries.slice();
   const step = () => {
@@ -115,4 +128,5 @@ module.exports = {
   transitionEntries,
   decisionEntry,
   insertEntries,
+  record,
 };

@@ -1,6 +1,7 @@
 const express = require('express');
 const auth = require('../auth');
 const barcodeEvents = require('../barcodeEvents');
+const barcodeLocations = require('../barcodeLocations');
 const { createFixedWindowLimiter } = require('../rateLimit');
 
 const router = express.Router();
@@ -49,13 +50,41 @@ function parseOptionalText(value, field, maxLength) {
   return { value: trimmed };
 }
 
+router.use('/locations', require('./barcodeLocations'));
+
 router.get('/config', auth.requireAuth, staffRoles, (req, res) => {
-  res.json({
+  const payload = {
     locationStages: barcodeEvents.locationStageEntries(),
+    locations: [],
     rateLimit: {
       max: rateSettings.max,
       windowSeconds: rateSettings.windowSeconds,
     },
+  };
+  barcodeLocations.listLocations()
+    .then((rows) => {
+      payload.locations = rows.filter((row) => row.is_active);
+      res.json(payload);
+    })
+    .catch((err) => {
+      console.error('BARCODE CONFIG ERROR:', err);
+      res.json(payload);
+    });
+});
+
+router.post('/dry-run', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
+  const body = req.body || {};
+  const scanned = parseOptionalText(body.scanned_value, 'scanned_value', barcodeEvents.MAX_SCANNED_VALUE_LENGTH);
+  if (scanned.error) return res.status(400).json({ error: scanned.error });
+  if (!scanned.value) return res.status(400).json({ error: 'scanned_value is required' });
+  const location = parseOptionalText(body.location, 'location', barcodeEvents.MAX_LOCATION_LENGTH);
+  if (location.error) return res.status(400).json({ error: location.error });
+  barcodeEvents.previewScan({
+    scannedValue: scanned.value,
+    location: location.value,
+  }, (err, result) => {
+    if (err) return sendServiceError(res, err, 'BARCODE DRY RUN ERROR:', 'Failed to resolve scan');
+    res.json(result);
   });
 });
 

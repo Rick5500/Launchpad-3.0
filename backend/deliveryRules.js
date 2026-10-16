@@ -1,4 +1,5 @@
 const { DELIVERY_STATUSES } = require('./statuses');
+const { getDueSoonHoursOverride } = require('./runtimeSettings');
 
 const DEFAULT_TIMEZONE = 'UTC';
 const DEFAULT_WILL_CALL_CUTOFF = '15:00';
@@ -62,7 +63,9 @@ function getRules() {
     timezone: resolveTimeZone(process.env.DELIVERY_TIMEZONE),
     willCallCutoff: parseCutoff(process.env.WILL_CALL_CUTOFF, DEFAULT_WILL_CALL_CUTOFF),
     carrierCutoff: parseCutoff(process.env.CARRIER_CUTOFF, DEFAULT_CARRIER_CUTOFF),
-    dueSoonHours: parseDueSoonHours(process.env.DUE_SOON_HOURS),
+    dueSoonHours: getDueSoonHoursOverride() == null
+      ? parseDueSoonHours(process.env.DUE_SOON_HOURS)
+      : getDueSoonHoursOverride(),
     businessDays: BUSINESS_DAYS,
     statuses: DELIVERY_STATUSES,
   };

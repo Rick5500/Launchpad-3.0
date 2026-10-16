@@ -190,6 +190,16 @@ async function applyDepartmentRoutes() {
   }
 }
 
+const SERVICE_CODES = {
+  'Large Format': 'LF',
+  'Small Format': 'SF',
+  'Signs & Graphics': 'SG',
+  Scanning: 'SC',
+  Planroom: 'PL',
+  'Archive File Request': 'AF',
+  'Ship To (3rd Party)': 'ST',
+};
+
 async function seedServices() {
   const services = [
     ['Large Format', 'Plans, Drawings, Bid Sets', 'Large Format', 1, 0],
@@ -205,11 +215,39 @@ async function seedServices() {
     const existing = await get('SELECT id FROM services WHERE name = ?', [service[0]]);
     if (existing) continue;
     await run(
-      `INSERT INTO services (name, description, department_name, sort_order, requires_approval, is_active)
-       VALUES (?,?,?,?,?,1)`,
-      service
+      `INSERT INTO services (
+         name, description, department_name, sort_order, requires_approval, is_active, code, suffix_mode
+       ) VALUES (?,?,?,?,?,1,?, 'sequence')`,
+      [...service, SERVICE_CODES[service[0]]]
     );
   }
+}
+
+async function backfillServiceCodes() {
+  for (const [name, code] of Object.entries(SERVICE_CODES)) {
+    await run(
+      `UPDATE services SET code = ? WHERE name = ? AND (code IS NULL OR trim(code) = '')`,
+      [code, name]
+    );
+  }
+  await run(
+    `UPDATE services SET suffix_mode = 'sequence' WHERE suffix_mode IS NULL OR trim(suffix_mode) = ''`
+  );
+}
+
+async function ensureServiceCodeIndex() {
+  const duplicate = await get(
+    `SELECT code FROM services
+     WHERE code IS NOT NULL AND trim(code) != ''
+     GROUP BY lower(code)
+     HAVING COUNT(*) > 1
+     LIMIT 1`
+  );
+  if (duplicate) {
+    console.warn(`Skipping unique index on services.code because duplicates exist (${duplicate.code})`);
+    return;
+  }
+  await run('CREATE UNIQUE INDEX IF NOT EXISTS idx_services_code ON services(code)');
 }
 
 async function seedDeliveryMethods() {
@@ -237,6 +275,11 @@ async function seedNotificationSettings() {
     ['order_submitted', 0, 'email'],
     ['work_order_status', 0, 'email'],
     ['delivery_reminder', 0, 'email'],
+    ['delivery_overdue', 1, 'in_app'],
+    ['delivery_due_soon', 1, 'in_app'],
+    ['work_order_on_hold', 1, 'in_app'],
+    ['work_order_completed', 1, 'in_app'],
+    ['work_order_rush', 1, 'in_app'],
   ];
 
   for (const event of events) {
@@ -388,6 +431,76 @@ async function normalizeLegacyWorkOrderStatuses() {
   }
 }
 
+function parseStageMap(raw) {
+  const text = raw === undefined
+    ? 'Shipping=Shipping;Quality Control=Quality Control;Finishing=Finishing'
+    : String(raw).trim();
+  const entries = [];
+  if (!text) return entries;
+  for (const pair of text.split(';')) {
+    const separator = pair.indexOf('=');
+    if (separator <= 0) continue;
+    const location = pair.slice(0, separator).trim();
+    const stage = pair.slice(separator + 1).trim();
+    if (!location || !stage) continue;
+    const key = location.toLowerCase();
+    const existing = entries.findIndex((entry) => entry.location.toLowerCase() === key);
+    if (existing >= 0) entries.splice(existing, 1);
+    entries.push({ location, stage });
+  }
+  return entries;
+}
+
+async function seedSystemSettings() {
+  const defaults = [
+    ['company_name', 'Accent Imaging, Inc.'],
+    ['company_address', '8121 Brownleigh Drive\nRaleigh, NC 27617'],
+    ['company_phone', '919-782-3332'],
+  ];
+  for (const [key, value] of defaults) {
+    const existing = await get('SELECT key FROM system_settings WHERE key = ?', [key]);
+    if (existing) continue;
+    await run(
+      `INSERT INTO system_settings (key, value, updated_at) VALUES (?,?,datetime('now'))`,
+      [key, value]
+    );
+  }
+}
+
+async function seedBarcodeLocations() {
+  const stages = parseStageMap(process.env.BARCODE_LOCATION_STAGES);
+  let sort = 1;
+  for (const entry of stages) {
+    const existing = await get(
+      'SELECT id FROM barcode_locations WHERE lower(location) = lower(?)',
+      [entry.location]
+    );
+    if (!existing) {
+      await run(
+        `INSERT INTO barcode_locations (location, department_name, stage_name, sort_order, is_active, updated_at)
+         VALUES (?,?,?,?,1,datetime('now'))`,
+        [entry.location, null, entry.stage, sort]
+      );
+    }
+    sort += 1;
+  }
+  const departments = await all(
+    'SELECT name, sort_order FROM departments WHERE is_active = 1 ORDER BY sort_order, name'
+  );
+  for (const department of departments) {
+    const existing = await get(
+      'SELECT id FROM barcode_locations WHERE lower(location) = lower(?)',
+      [department.name]
+    );
+    if (existing) continue;
+    await run(
+      `INSERT INTO barcode_locations (location, department_name, stage_name, sort_order, is_active, updated_at)
+       VALUES (?,?,?,?,1,datetime('now'))`,
+      [department.name, department.name, null, department.sort_order || sort]
+    );
+  }
+}
+
 async function main() {
   await exec(schema);
   await ensureColumns('work_orders', [
@@ -423,6 +536,15 @@ async function main() {
     { name: 'contact_name', definition: 'TEXT' },
     { name: 'phone', definition: 'TEXT' },
     { name: 'email', definition: 'TEXT' },
+    { name: 'is_active', definition: 'INTEGER DEFAULT 1' },
+    { name: 'updated_at', definition: 'DATETIME' },
+  ]);
+  await run('UPDATE users SET is_active = 1 WHERE is_active IS NULL');
+  await ensureColumns('services', [
+    { name: 'code', definition: 'TEXT' },
+    { name: 'suffix_mode', definition: "TEXT DEFAULT 'sequence'" },
+    { name: 'default_turnaround_hours', definition: 'INTEGER' },
+    { name: 'updated_at', definition: 'DATETIME' },
   ]);
   await ensureColumns('departments', [
     { name: 'next_department', definition: 'TEXT' },
@@ -445,9 +567,13 @@ async function main() {
   await seedDepartments();
   await applyDepartmentRoutes();
   await seedServices();
+  await backfillServiceCodes();
+  await ensureServiceCodeIndex();
   await seedDeliveryMethods();
   await seedNotificationSettings();
   await seedStages();
+  await seedSystemSettings();
+  await seedBarcodeLocations();
   await seedSampleOrders();
   await seedProductionBoard();
   await seedDeliveries();

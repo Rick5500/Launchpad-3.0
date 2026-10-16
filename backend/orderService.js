@@ -198,6 +198,27 @@ function suffixForIndex(index) {
   return label;
 }
 
+function suffixForService(service, index) {
+  const mode = String(service.suffix_mode || 'sequence').trim().toLowerCase();
+  if (mode === 'code') {
+    const code = String(service.code || '').trim();
+    if (!/^[A-Za-z0-9]{1,12}$/.test(code)) {
+      throw new OrderError(`Service ${service.name} has no code for its work order suffix`);
+    }
+    return code;
+  }
+  return suffixForIndex(index);
+}
+
+function suffixesFor(services) {
+  const suffixes = services.map((service, index) => suffixForService(service, index));
+  const keys = suffixes.map((suffix) => suffix.toLowerCase());
+  if (new Set(keys).size !== keys.length) {
+    throw new OrderError('Work order suffixes must be unique. Adjust service codes or suffix mode.');
+  }
+  return suffixes;
+}
+
 function leadingQuantity(value) {
   const match = /^(\d+)/.exec(String(value || '').trim());
   if (!match) return 0;
@@ -515,10 +536,10 @@ async function createOrder(user, body, now = new Date()) {
 
   const orderId = await withTransaction(async (tx) => {
     const customer = await tx.get(
-      'SELECT id, role FROM users WHERE id = ?',
+      'SELECT id, role, is_active FROM users WHERE id = ?',
       [customerId]
     );
-    if (!customer || customer.role !== 'customer') {
+    if (!customer || customer.role !== 'customer' || customer.is_active === 0) {
       throw new OrderError('customer_id must be an existing customer', 400);
     }
 
@@ -531,7 +552,7 @@ async function createOrder(user, body, now = new Date()) {
 
     const placeholders = serviceIds.map(() => '?').join(', ');
     const services = await tx.all(
-      `SELECT id, name, description, department_name, sort_order, requires_approval
+      `SELECT id, name, description, department_name, sort_order, requires_approval, code, suffix_mode
        FROM services
        WHERE is_active = 1 AND id IN (${placeholders})
        ORDER BY sort_order, id`,
@@ -618,9 +639,10 @@ async function createOrder(user, body, now = new Date()) {
     }
 
     const createdWorkOrders = [];
+    const suffixes = suffixesFor(services);
     for (let index = 0; index < services.length; index += 1) {
       const service = services[index];
-      const externalId = `${orderNumber}-${suffixForIndex(index)}`;
+      const externalId = `${orderNumber}-${suffixes[index]}`;
       const existing = await tx.get('SELECT id FROM work_orders WHERE external_id = ?', [externalId]);
       if (existing) throw new OrderError('Could not assign a work order number', 409);
 
@@ -810,7 +832,8 @@ async function getOrder(user, id) {
 async function orderOptions() {
   const services = await allOn(
     db,
-    `SELECT id, name, description, department_name, sort_order, requires_approval
+    `SELECT id, name, description, department_name, sort_order, requires_approval,
+            code, suffix_mode, default_turnaround_hours
      FROM services
      WHERE is_active = 1
      ORDER BY sort_order, id`
@@ -861,7 +884,7 @@ async function previewOrder(query, now = new Date()) {
     const placeholders = serviceIds.map(() => '?').join(', ');
     services = await allOn(
       db,
-      `SELECT id, name, department_name, sort_order
+      `SELECT id, name, department_name, sort_order, code, suffix_mode
        FROM services
        WHERE is_active = 1 AND id IN (${placeholders})
        ORDER BY sort_order, id`,
@@ -872,11 +895,11 @@ async function previewOrder(query, now = new Date()) {
   return {
     provisional: true,
     order_number: orderNumber,
-    work_orders: services.map((service, index) => ({
-      external_id: `${orderNumber}-${suffixForIndex(index)}`,
-      service_id: service.id,
-      service_name: service.name,
-      department: service.department_name,
+    work_orders: suffixesFor(services).map((suffix, index) => ({
+      external_id: `${orderNumber}-${suffix}`,
+      service_id: services[index].id,
+      service_name: services[index].name,
+      department: services[index].department_name,
     })),
   };
 }

@@ -518,6 +518,11 @@ export default function CustomerOrderForm() {
                     <Icon sx={{ fontSize: 42, color: brand.navy, mt: 2 }} />
                     <Typography sx={{ fontWeight: 700, fontSize: 14, mt: 1 }}>{service.name}</Typography>
                     <Typography sx={{ color: brand.muted, fontSize: 12, mt: 0.5 }}>{service.description}</Typography>
+                    {service.default_turnaround_hours ? (
+                      <Typography sx={{ color: brand.muted, fontSize: 12 }}>
+                        Typical turnaround: {service.default_turnaround_hours} hours
+                      </Typography>
+                    ) : null}
                   </Box>
                 );
               })}

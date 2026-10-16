@@ -1,0 +1,149 @@
+import React, { useEffect, useState } from 'react';
+import {
+  Alert,
+  Box,
+  Button,
+  Table,
+  TableBody,
+  TableCell,
+  TableRow,
+  TextField,
+  Typography,
+} from '@mui/material';
+import SectionCard from '../components/SectionCard';
+import LoadingState from '../components/LoadingState';
+import { authFetch } from '../api';
+
+export default function SystemSettingsPage() {
+  const [settings, setSettings] = useState(null);
+  const [form, setForm] = useState({
+    company_name: '',
+    company_address: '',
+    company_phone: '',
+    due_soon_hours: '',
+    last_backup_at: '',
+  });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  function apply(body) {
+    setSettings(body);
+    setForm({
+      company_name: body.letterhead?.company_name || '',
+      company_address: body.letterhead?.company_address || '',
+      company_phone: body.letterhead?.company_phone || '',
+      due_soon_hours: body.due_soon_hours?.value == null ? '' : String(body.due_soon_hours.value),
+      last_backup_at: body.last_backup_at || '',
+    });
+  }
+
+  useEffect(() => {
+    authFetch('/api/settings')
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || 'Unable to load settings');
+        apply(body);
+      })
+      .catch((err) => setError(err.message || 'Unable to load settings'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function save(event) {
+    event.preventDefault();
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const response = await authFetch('/api/settings', {
+        method: 'PUT',
+        body: JSON.stringify({
+          company_name: form.company_name,
+          company_address: form.company_address,
+          company_phone: form.company_phone,
+          due_soon_hours: form.due_soon_hours === '' ? null : Number(form.due_soon_hours),
+          last_backup_at: form.last_backup_at.trim() === '' ? null : form.last_backup_at.trim(),
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Unable to save settings');
+      apply(body);
+      setNotice('Settings saved.');
+    } catch (err) {
+      setError(err.message || 'Unable to save settings');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const readOnly = settings?.read_only || {};
+  const rows = [
+    ['Delivery timezone', readOnly.delivery_timezone],
+    ['Will-call cutoff', readOnly.will_call_cutoff],
+    ['Carrier cutoff', readOnly.carrier_cutoff],
+    ['Order window', readOnly.delivery_window_start ? `${readOnly.delivery_window_start} – ${readOnly.delivery_window_end}` : ''],
+    ['Slot minutes', readOnly.delivery_slot_minutes],
+    ['Max upload size', readOnly.max_upload_mb != null ? `${readOnly.max_upload_mb} MB` : ''],
+    ['Max files per request', readOnly.max_upload_files],
+    ['Max unattached uploads', readOnly.max_unattached_uploads],
+    ['Unattached file retention', readOnly.upload_orphan_hours != null ? `${readOnly.upload_orphan_hours} hours` : ''],
+  ];
+
+  return (
+    <Box data-testid="settings-page">
+      <Typography variant="h4" gutterBottom>System Settings</Typography>
+      <Typography color="text.secondary" sx={{ mb: 2 }}>
+        Letterhead is used by the printable work order. Cutoffs, timezone, and upload limits come from the server environment and are read-only here.
+      </Typography>
+      {loading ? <LoadingState message="Loading settings..." /> : null}
+      {error ? <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert> : null}
+      {notice ? <Alert severity="success" sx={{ mb: 2 }}>{notice}</Alert> : null}
+
+      <SectionCard title="Company letterhead" subtitle="Defaults match Accent Imaging, Inc., 8121 Brownleigh Drive, Raleigh, NC 27617, 919-782-3332.">
+        <Box component="form" onSubmit={save} sx={{ display: 'grid', gap: 2, maxWidth: 640 }}>
+          <TextField label="Company name" value={form.company_name} onChange={(event) => setForm({ ...form, company_name: event.target.value })} required />
+          <TextField label="Address" value={form.company_address} onChange={(event) => setForm({ ...form, company_address: event.target.value })} required multiline minRows={3} />
+          <TextField label="Phone" value={form.company_phone} onChange={(event) => setForm({ ...form, company_phone: event.target.value })} required />
+          <TextField
+            label="Due-soon hours"
+            type="number"
+            value={form.due_soon_hours}
+            onChange={(event) => setForm({ ...form, due_soon_hours: event.target.value })}
+            helperText={settings?.due_soon_hours
+              ? `Environment value is ${settings.due_soon_hours.environment_value}. Current source: ${settings.due_soon_hours.source}. Clear and save to follow the environment again.`
+              : 'Hours before a due time that count as due soon.'}
+          />
+          <TextField
+            label="Last backup"
+            value={form.last_backup_at}
+            onChange={(event) => setForm({ ...form, last_backup_at: event.target.value })}
+            placeholder="YYYY-MM-DD HH:MM:SS"
+            helperText="Leave blank if no backup has been recorded. The Admin Board shows this timestamp."
+          />
+          <Box>
+            <Button type="submit" variant="contained" disabled={saving || loading}>{saving ? 'Saving...' : 'Save settings'}</Button>
+          </Box>
+        </Box>
+      </SectionCard>
+
+      <SectionCard title="Environment" subtitle="These values are read from the server environment. Restart the server after changing them.">
+        <Table size="small">
+          <TableBody>
+            {rows.map(([label, value]) => (
+              <TableRow key={label}>
+                <TableCell sx={{ fontWeight: 600, width: '40%' }}>{label}</TableCell>
+                <TableCell>{value == null || value === '' ? '—' : String(value)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+        {readOnly.delivery_timezone_configured == null ? (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            DELIVERY_TIMEZONE is not set, so the code default is in use.
+          </Typography>
+        ) : null}
+      </SectionCard>
+    </Box>
+  );
+}

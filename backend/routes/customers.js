@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const auth = require('../auth');
 const db = require('../db');
+const { resetUserPassword } = require('../passwordReset');
 
 const router = express.Router();
 const BCRYPT_ROUNDS = 10;
@@ -158,26 +159,17 @@ router.put('/:id/password', auth.requireAuth, auth.requireRole('admin'), (req, r
       return res.status(404).json({ error: 'Customer not found' });
     }
 
-    auth.hashPassword(password)
-      .then((hash) => {
-        db.run(
-          'UPDATE users SET password_hash = ? WHERE id = ? AND role = ?',
-          [hash, id, 'customer'],
-          function (updateErr) {
-            if (updateErr) {
-              console.error('CUSTOMER PASSWORD RESET ERROR:', updateErr);
-              return res.status(500).json({ error: 'Failed to reset password' });
-            }
-            if (this.changes === 0) return res.status(404).json({ error: 'Customer not found' });
-
-            auth.clearSessionsForUser(row.id);
-            auth.clearLoginFailuresForUsername(row.username);
-            res.json({ id: row.id, username: row.username, password });
-          }
-        );
-      })
-      .catch((hashErr) => {
-        console.error('CUSTOMER PASSWORD RESET ERROR:', hashErr);
+    resetUserPassword({
+      user: row,
+      password,
+      actorId: req.user.userId,
+    })
+      .then((result) => res.json(result))
+      .catch((resetErr) => {
+        if (resetErr && resetErr.status && resetErr.publicMessage) {
+          return res.status(resetErr.status).json({ error: resetErr.publicMessage });
+        }
+        console.error('CUSTOMER PASSWORD RESET ERROR:', resetErr);
         return res.status(500).json({ error: 'Failed to reset password' });
       });
   });

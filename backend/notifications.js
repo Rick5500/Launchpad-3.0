@@ -49,7 +49,7 @@ function deliveryLabel(row) {
   return row.carrier ? `${order} (${row.carrier})` : order;
 }
 
-function insertNotifications(items, cb) {
+function writeNotifications(items, cb) {
   let index = 0;
   const created = [];
 
@@ -95,6 +95,22 @@ function insertNotifications(items, cb) {
   };
 
   next();
+}
+
+function insertNotifications(items, cb) {
+  if (!items.length) return cb(null, []);
+  db.all(
+    `SELECT event_key FROM notification_settings WHERE channel = 'in_app' AND enabled = 0`,
+    [],
+    (err, rows) => {
+      if (err) {
+        console.error('NOTIFICATION SETTINGS ERROR:', err);
+        return writeNotifications(items, cb);
+      }
+      const disabled = new Set((rows || []).map((row) => row.event_key));
+      writeNotifications(items.filter((item) => !disabled.has(item.type)), cb);
+    }
+  );
 }
 
 function notifyWorkOrderCreated(row, cb) {
