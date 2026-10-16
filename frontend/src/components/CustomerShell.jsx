@@ -17,19 +17,25 @@ export default function CustomerShell({ title, welcome, children, onLogout, extr
         sx={{
           bgcolor: brand.navy,
           color: '#fff',
-          px: { xs: 2, md: 4 },
-          py: 1.5,
+          px: { xs: 2, md: 3 },
+          py: 1.25,
           display: 'grid',
-          gridTemplateColumns: { xs: '1fr', md: '220px 1fr auto' },
+          gridTemplateColumns: { xs: '1fr', md: 'auto 1fr auto' },
           alignItems: 'center',
-          gap: 2,
+          gap: { xs: 1.5, md: 2 },
         }}
       >
         <Box
           component="img"
           src="/logo.png"
-          alt="LaunchPad 3.0"
-          sx={{ height: 72, width: 'auto', justifySelf: { xs: 'center', md: 'start' }, bgcolor: '#fff', borderRadius: 1, px: 1 }}
+          alt="Accent Imaging"
+          sx={{
+            height: { xs: 68, md: 80 },
+            width: 'auto',
+            maxWidth: '100%',
+            display: 'block',
+            justifySelf: { xs: 'center', md: 'start' },
+          }}
         />
         <Box sx={{ textAlign: { xs: 'center', md: 'left' } }}>
           <Typography sx={{ fontSize: { xs: 22, md: 28 }, fontWeight: 700, lineHeight: 1.2 }}>{title}</Typography>

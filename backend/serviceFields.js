@@ -3,7 +3,7 @@ const { get, all, withTransaction } = require('./dbAsync');
 const { httpError } = require('./httpError');
 const { parseText, parseBool, parseInteger } = require('./fields');
 
-const FIELD_TYPES = new Set(['text', 'select', 'number', 'checkbox', 'textarea']);
+const FIELD_TYPES = new Set(['text', 'select', 'multiselect', 'number', 'checkbox', 'textarea']);
 const KEY_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
 const RESERVED_KEYS = new Set([
   '__proto__',
@@ -55,6 +55,23 @@ function checkField(key, label, sort) {
   return { key, label, type: 'checkbox', required: false, sort_order: sort, options: null };
 }
 
+function multiField(key, label, sort, options, required = false) {
+  return { key, label, type: 'multiselect', required, sort_order: sort, options };
+}
+
+const {
+  SMALL_FORMAT_BINDING,
+  SMALL_FORMAT_COLOR_MODES,
+  SMALL_FORMAT_FINISHING,
+  SMALL_FORMAT_FOLDING,
+  SMALL_FORMAT_PAPER,
+  SMALL_FORMAT_PREVIOUS,
+  SMALL_FORMAT_PRODUCTS,
+  SMALL_FORMAT_PROOFS,
+  SMALL_FORMAT_SIDES,
+  SMALL_FORMAT_SIZES,
+} = require('./smallFormatCatalog');
+
 const SEED = [
   {
     service: 'Large Format',
@@ -71,24 +88,17 @@ const SEED = [
   {
     service: 'Small Format',
     fields: [
+      selectField('product', 'Product', 5, SMALL_FORMAT_PRODUCTS),
       textField('originals', 'Originals', 10),
       textField('copies', 'Copies', 20),
-      selectField('size', 'Size', 30, ['8.5x11', '8.5x14', '11x17', '12x18', 'See Note']),
-      selectField('process', 'Process', 40, ['Black & White', 'Color']),
-      selectField('sides', 'Sides', 50, ['1-Simplex', '2-Duplex']),
-      selectField('media', 'Media', 60, [
-        '20lb Standard Bond',
-        '20lb Tree Zero',
-        '28lb Color Laser',
-        '65lb Matt Cover',
-        '80lb Matt Cover',
-        '70lb Gloss Text',
-        '80lb Gloss Cover',
-        'See Note',
-      ]),
-      selectField('binding', 'Binding', 70, [
-        'None', 'Cutting', 'GBC', 'Perfect', 'Spiral', 'Screw Post', 'Staple', '3HD', 'Binder', 'Wire-O',
-      ]),
+      selectField('size', 'Finished Size', 30, SMALL_FORMAT_SIZES),
+      selectField('process', 'Process', 40, SMALL_FORMAT_COLOR_MODES),
+      selectField('sides', 'Sides/Color', 50, SMALL_FORMAT_SIDES),
+      selectField('media', 'Paper Stock', 60, SMALL_FORMAT_PAPER),
+      selectField('binding', 'Binding', 70, SMALL_FORMAT_BINDING),
+      selectField('folding', 'Folding', 72, SMALL_FORMAT_FOLDING, false),
+      multiField('finishing', 'Finishing', 74, SMALL_FORMAT_FINISHING),
+      selectField('proof', 'Proof', 76, SMALL_FORMAT_PROOFS, false),
       areaField('notes', 'Notes', 80),
     ],
   },
@@ -267,6 +277,8 @@ function parseOneField(field, raw, label) {
   }
   if (field.type === 'select') {
     if (raw == null || (typeof raw === 'string' && raw.trim() === '')) {
+      const fallback = proofDefault(field);
+      if (fallback) return { value: fallback, keep: true };
       if (field.required) return { error: `${label} is required` };
       return { omit: true };
     }
@@ -279,6 +291,31 @@ function parseOneField(field, raw, label) {
       return { error: names.length ? `${label} must be one of ${names.join(', ')}` : `${label} is invalid` };
     }
     return { value: match.value, keep: true };
+  }
+  if (field.type === 'multiselect') {
+    if (raw == null || raw === '' || (Array.isArray(raw) && raw.length === 0)) {
+      if (field.required) return { error: `${label} is required` };
+      return { omit: true };
+    }
+    const list = Array.isArray(raw) ? raw : [raw];
+    if (list.length > 40) return { error: `${label} has too many selections` };
+    const options = parseStoredOptions(field.options_json).filter((option) => option.active);
+    const names = options.map((option) => option.value);
+    const chosen = [];
+    const seen = new Set();
+    for (const entry of list) {
+      if (typeof entry !== 'string' && typeof entry !== 'number') return { error: `${label} is invalid` };
+      const text = String(entry).trim();
+      const match = options.find((option) => option.value === text);
+      if (!match) {
+        return { error: names.length ? `${label} must be one of ${names.join(', ')}` : `${label} is invalid` };
+      }
+      const token = match.value.toLowerCase();
+      if (seen.has(token)) return { error: `${label} option ${match.value} is duplicated` };
+      seen.add(token);
+      chosen.push(match.value);
+    }
+    return { value: chosen, keep: true };
   }
   const parsed = parseText(raw, label, {
     required: Boolean(field.required),
@@ -336,6 +373,9 @@ function validateLineFields(definitions, raw, lineLabel) {
 
 function displayOf(field, value) {
   if (field && field.type === 'checkbox') return value ? 'Yes' : 'No';
+  if (Array.isArray(value)) {
+    return value.filter((item) => item != null && String(item).trim() !== '').join(', ');
+  }
   if (value == null || value === '') return '';
   return String(value);
 }
@@ -397,7 +437,11 @@ function mirrorLegacy(values, legacy) {
   else if (values.ink != null) next.color = String(values.ink);
   if (values.binding != null) next.bindingFinish = String(values.binding);
   if (Object.prototype.hasOwnProperty.call(values, 'finishing')) {
-    next.finishing = values.finishing === 'None' ? null : String(values.finishing);
+    if (Array.isArray(values.finishing)) {
+      next.finishing = values.finishing.length ? values.finishing.join(', ') : null;
+    } else {
+      next.finishing = values.finishing === 'None' ? null : String(values.finishing);
+    }
   }
   if (values.mount != null) next.mount = String(values.mount).trim().toLowerCase() === 'no' ? 0 : 1;
   if (values.laminate != null) next.laminate = String(values.laminate).trim().toLowerCase() === 'no' ? 0 : 1;
@@ -412,30 +456,103 @@ function methodFromVia(via) {
   return null;
 }
 
+function usesOptions(type) {
+  return type === 'select' || type === 'multiselect';
+}
+
+function proofDefault(field) {
+  if (!field || field.key !== 'proof') return null;
+  const options = parseStoredOptions(field.options_json).filter((option) => option.active);
+  const none = options.find((option) => option.value === 'None');
+  if (none) return none.value;
+  const digital = options.find((option) => /digital/i.test(option.value));
+  return digital ? digital.value : null;
+}
+
+function sameActiveList(stored, expected) {
+  if (stored.length !== expected.length) return false;
+  for (let index = 0; index < stored.length; index += 1) {
+    if (!stored[index].active || stored[index].value !== expected[index]) return false;
+  }
+  return true;
+}
+
+function reconcileSelectOptions(stored, previous, next) {
+  if (sameActiveList(stored, next)) return { options: null, replaced: false };
+  const untouched = stored.length === 0 || sameActiveList(stored, previous);
+  if (untouched) {
+    return {
+      options: next.map((value) => ({ value, active: true })),
+      replaced: true,
+    };
+  }
+  const seen = new Set(stored.map((option) => String(option.value || '').trim().toLowerCase()));
+  const merged = stored.map((option) => ({ value: option.value, active: option.active }));
+  let added = false;
+  for (const value of next) {
+    const token = String(value || '').trim().toLowerCase();
+    if (!token || seen.has(token)) continue;
+    seen.add(token);
+    merged.push({ value, active: true });
+    added = true;
+  }
+  if (!added) return { options: null, replaced: false };
+  return { options: merged, replaced: false };
+}
+
+async function upgradeExistingField(run, existing, field, previous) {
+  if (!usesOptions(field.type) || !usesOptions(existing.type)) return;
+  const stored = parseStoredOptions(existing.options_json);
+  const result = reconcileSelectOptions(stored, previous.options || [], field.options || []);
+  const sets = [];
+  const params = [];
+  if (result.options) {
+    sets.push('options_json = ?');
+    params.push(JSON.stringify(result.options));
+  }
+  if (result.replaced && previous.label && existing.label === previous.label && existing.label !== field.label) {
+    sets.push('label = ?');
+    params.push(field.label);
+  }
+  if (result.replaced && existing.type !== field.type) {
+    sets.push('type = ?');
+    params.push(field.type);
+  }
+  if (!sets.length) return;
+  sets.push("updated_at = datetime('now')");
+  params.push(existing.id);
+  await run(`UPDATE service_fields SET ${sets.join(', ')} WHERE id = ?`, params);
+}
+
 async function seedServiceFields(run, getRow) {
   for (const group of SEED) {
     const service = await getRow('SELECT id FROM services WHERE name = ?', [group.service]);
     if (!service) continue;
+    const previousByKey = group.service === 'Small Format' ? SMALL_FORMAT_PREVIOUS : null;
     for (const field of group.fields) {
       const existing = await getRow(
-        'SELECT id FROM service_fields WHERE service_id = ? AND key = ?',
+        'SELECT id, label, type, options_json FROM service_fields WHERE service_id = ? AND key = ?',
         [service.id, field.key]
       );
-      if (existing) continue;
-      await run(
-        `INSERT INTO service_fields (
-           service_id, key, label, type, options_json, required, sort_order, is_active, updated_at
-         ) VALUES (?,?,?,?,?,?,?,1,datetime('now'))`,
-        [
-          service.id,
-          field.key,
-          field.label,
-          field.type,
-          optionsToJson(field.options),
-          field.required ? 1 : 0,
-          field.sort_order,
-        ]
-      );
+      if (!existing) {
+        await run(
+          `INSERT INTO service_fields (
+             service_id, key, label, type, options_json, required, sort_order, is_active, updated_at
+           ) VALUES (?,?,?,?,?,?,?,1,datetime('now'))`,
+          [
+            service.id,
+            field.key,
+            field.label,
+            field.type,
+            optionsToJson(field.options),
+            field.required ? 1 : 0,
+            field.sort_order,
+          ]
+        );
+        continue;
+      }
+      const previous = previousByKey && previousByKey[field.key];
+      if (previous) await upgradeExistingField(run, existing, field, previous);
     }
   }
 }
@@ -477,7 +594,7 @@ function parseFieldPayload(body) {
     if (label.error) return label;
     const type = parseText(row.type, `${prefix} type`, { required: true, max: 20 });
     if (type.error) return type;
-    if (!FIELD_TYPES.has(type.value)) return { error: `${prefix} type must be text, select, number, checkbox, or textarea` };
+    if (!FIELD_TYPES.has(type.value)) return { error: `${prefix} type must be text, select, multiselect, number, checkbox, or textarea` };
     const required = parseBool(row.required, `${prefix} required`, false);
     if (required.error) return required;
     const active = parseBool(row.is_active == null ? row.active : row.is_active, `${prefix} active`, true);
@@ -485,7 +602,7 @@ function parseFieldPayload(body) {
     const sort = parseInteger(row.sort_order, `${prefix} sort_order`, { min: 0, max: 10000, allowNull: true });
     if (sort.error) return sort;
     let options = [];
-    if (type.value === 'select') {
+    if (usesOptions(type.value)) {
       if (!Array.isArray(row.options) || row.options.length === 0) return { error: `${prefix} options are required` };
       if (row.options.length > 60) return { error: `${prefix} has too many options` };
       const seen = new Set();
@@ -499,7 +616,7 @@ function parseFieldPayload(body) {
       }
       if (!options.some((option) => option.active)) return { error: `${prefix} needs an active option` };
     } else if (row.options != null && row.options !== '' && !(Array.isArray(row.options) && row.options.length === 0)) {
-      return { error: `${prefix} options are only used by select fields` };
+      return { error: `${prefix} options are only used by select or multiselect fields` };
     }
     fields.push({
       key: key.value,
@@ -560,9 +677,9 @@ function fieldChangeSummary(serviceName, beforeRows, afterFields) {
     if (previous.label !== field.label) notes.push(`label "${previous.label}" to "${field.label}"`);
     if (previous.type !== field.type) notes.push(`type ${previous.type} to ${field.type}`);
     if ((previous.required !== 0) !== field.required) notes.push(field.required ? 'required' : 'optional');
-    if (field.type === 'select' || previous.type === 'select') {
+    if (usesOptions(field.type) || usesOptions(previous.type)) {
       const oldNames = activeOptionNames(parseStoredOptions(previous.options_json));
-      const newNames = field.type === 'select' ? activeOptionNames(field.options) : [];
+      const newNames = usesOptions(field.type) ? activeOptionNames(field.options) : [];
       const addedOptions = newNames.filter((name) => !oldNames.includes(name));
       const removedOptions = oldNames.filter((name) => !newNames.includes(name));
       if (addedOptions.length) notes.push(`added options ${addedOptions.slice(0, 8).join(', ')}`);
@@ -611,7 +728,7 @@ async function replaceServiceFields(actorId, serviceId, body) {
     const seen = new Set();
     for (const field of parsed.value) {
       seen.add(field.key);
-      const optionsJson = field.type === 'select' ? JSON.stringify(field.options) : null;
+      const optionsJson = usesOptions(field.type) ? JSON.stringify(field.options) : null;
       const current = byKey.get(field.key);
       if (current) {
         await tx.run(

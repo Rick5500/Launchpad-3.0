@@ -363,7 +363,7 @@ function cloneFields(fields) {
       is_active: field.is_active,
       sort_order: field.sort_order,
     };
-    if (field.type === 'select') {
+    if (field.type === 'select' || field.type === 'multiselect') {
       copy.options = (field.options || []).map((option) => ({
         value: option.value,
         active: option.active !== false,
@@ -404,7 +404,7 @@ async function migrateOldDatabase() {
   const pickup = await check.get(`SELECT payment_method, delivery_method FROM orders WHERE order_number = 'LEGACY-PICKUP'`);
   assert(pickup.payment_method == null && pickup.delivery_method === 'Customer Pickup', 'legacy payment stays null and the delivery label stays');
   const fields = await check.get('SELECT COUNT(*) AS count FROM service_fields');
-  assert(fields.count === 54, `two inits should leave 54 service fields, found ${fields.count}`);
+  assert(fields.count === 58, `two inits should leave 58 service fields, found ${fields.count}`);
   await check.close();
   console.log('PASS older database migration, twice');
 }
@@ -425,7 +425,7 @@ async function keepOwnerEdits() {
   const kept = await again.get(`SELECT label FROM service_fields WHERE id = ?`, [note.id]);
   const count = await again.get('SELECT COUNT(*) AS count FROM service_fields');
   assert(kept && kept.label === 'Shop Note', 'a second init should not overwrite an owner field label');
-  assert(count.count === 54, `a second init should not duplicate fields, found ${count.count}`);
+  assert(count.count === 58, `a second init should not duplicate fields, found ${count.count}`);
   await again.close();
   console.log('PASS init keeps owner field edits');
 }

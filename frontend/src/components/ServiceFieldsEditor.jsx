@@ -19,7 +19,7 @@ import AddIcon from '@mui/icons-material/Add';
 import CloseIcon from '@mui/icons-material/Close';
 import { authFetch } from '../api';
 
-const TYPES = ['text', 'select', 'number', 'checkbox', 'textarea'];
+const TYPES = ['text', 'select', 'multiselect', 'number', 'checkbox', 'textarea'];
 const SHIP_TO_SERVICE = 'Ship To (3rd Party)';
 const MAPPED_VIAS = new Set(['pickup at accent', 'accent truck', 'ground', '1 day', '2 day']);
 
@@ -82,7 +82,7 @@ function payloadFields(fields) {
     const { _cid, options, ...rest } = field;
     return {
       ...rest,
-      options: field.type === 'select'
+      options: field.type === 'select' || field.type === 'multiselect'
         ? (options || []).filter((option) => String(option.value || '').trim()).map(({ _cid: optionId, ...option }) => option)
         : [],
     };
@@ -193,8 +193,13 @@ export default function ServiceFieldsEditor({ service, open, onClose }) {
                 <FormControlLabel control={<Switch checked={field.required} onChange={(event) => updateField(index, { required: event.target.checked })} />} label="Required" />
                 <FormControlLabel control={<Switch checked={field.is_active} onChange={(event) => updateField(index, { is_active: event.target.checked })} />} label="Active" />
               </Box>
-              {field.type === 'select' ? (
+              {field.type === 'select' || field.type === 'multiselect' ? (
                 <Box sx={{ mt: 1, display: 'grid', gap: 0.75 }}>
+                  {field.type === 'multiselect' ? (
+                    <Typography sx={{ color: 'text.secondary', fontSize: 13 }}>
+                      Customers can select more than one option.
+                    </Typography>
+                  ) : null}
                   {field.key === 'via' && service?.name === SHIP_TO_SERVICE ? (
                     <Typography sx={{ color: 'text.secondary', fontSize: 13 }}>
                       Each active option must be Pickup at Accent, Accent Truck, Ground, 1 day, or 2 day.

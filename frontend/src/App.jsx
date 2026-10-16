@@ -58,12 +58,15 @@ function LoginScreen() {
   }
 
   return (
-    <Box sx={{ minHeight: '100vh', bgcolor: brand.navy, display: 'flex', alignItems: 'center', justifyContent: 'center', p: 2 }}>
+    <Box sx={{ minHeight: '100vh', bgcolor: brand.navy, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2.5, p: 2 }}>
+      <Box
+        component="img"
+        src="/logo.png"
+        alt="Accent Imaging"
+        sx={{ width: { xs: 'min(100%, 420px)', sm: 450 }, height: 'auto', display: 'block' }}
+      />
       <Box sx={{ width: 440, maxWidth: '100%', bgcolor: '#fff', borderRadius: 2, boxShadow: 6, overflow: 'hidden' }}>
-        <Box sx={{ bgcolor: '#fff', px: 3, pt: 3, textAlign: 'center' }}>
-          <Box component="img" src="/logo.png" alt="LaunchPad 3.0" sx={{ width: 280, maxWidth: '100%', height: 'auto' }} />
-        </Box>
-        <Box sx={{ p: 4, pt: 1 }}>
+        <Box sx={{ p: 4 }}>
         <Typography variant="h5" sx={{ color: brand.navy, fontWeight: 700, mb: 2 }}>
           Sign in
         </Typography>
