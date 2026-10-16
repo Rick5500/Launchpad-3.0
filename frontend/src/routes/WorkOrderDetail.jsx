@@ -283,11 +283,16 @@ export default function WorkOrderDetail() {
             Detailed information for work order {workOrder.external_id || `#${workOrder.id}`}
           </Typography>
         </Box>
-        {canManageOrders && (
-          <Button variant="contained" onClick={() => navigate(`/work-orders/${id}/edit`)}>
-            Edit Work Order
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+          <Button variant="outlined" onClick={() => navigate(`/work-orders/${id}/print`)}>
+            Print Work Order
           </Button>
-        )}
+          {canManageOrders && (
+            <Button variant="contained" onClick={() => navigate(`/work-orders/${id}/edit`)}>
+              Edit Work Order
+            </Button>
+          )}
+        </Box>
       </Box>
 
       <Box sx={{ mt: 2, mb: 3 }}>

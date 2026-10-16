@@ -4,13 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Staff cannot save a work order number that Code 128 cannot draw. `external_id` must be 1 to 80 printable ASCII characters, or be left blank. A value already stored that cannot be encoded prints "barcode unavailable" instead of failing that sheet or the rest of the order
+- A barcode scan that moves a department writes the scan, the department change, production history, and the activity row in one transaction
+
 ### Added
+- Printable work orders at `/work-orders/:id/print` and `/orders/:id/print`, linked from the Admin Board, the work order list, work order detail, and order detail
+- `GET /api/workorders/:id/print` and `GET /api/orders/:id/print` for the signed-in user. Customers receive only their own orders and work orders (HTTP 404 otherwise) and do not receive staff history notes or scanner names
+- Code 128 SVG of the work order number, including `-A`, `-B`, and `-C`, drawn with `jsbarcode`. Scanning that number with `POST /api/barcode` resolves the work order
+- Letter-size print CSS that hides the toolbar, keeps the barcode black on white, and starts each additional work order on a new page. Download PDF uses the browser print dialog
+- `backend/scripts/verify-phase3.js` for print roles, payload checks, and the barcode scan round trip
+- GitHub Actions workflow that runs the phase verify scripts and the frontend build on pull requests
 - Admin Board at `/` for admin and operator, with department tabs, stat cards, a paginated active work order table, department queue summary, recent activity, the last 10 scans, pending approvals, and system alerts
 - `GET /api/admin-board`, `GET /api/admin-board/work-orders`, `GET /api/admin-board/activity`, and `GET /api/admin-board/approvals` for admin and operator. Customers receive HTTP 403
 - Admin-only `POST /api/admin-board/approvals/:id` to approve or reject a pending request, recording `approval_by`, `approval_at`, and an activity row
 - Activity rows when a work order is created, moved to another department, or completed, including a department move when a barcode location matches a department name
 - `barcode_events.from_department` and `barcode_events.to_department`, filled in when a scan is recorded
-- Placeholder pages for Search Orders, Services, Users, System Settings, Activity Log, and Barcode Settings, and a print-work-order placeholder for the next phase
+- Placeholder pages for Search Orders, Services, Users, System Settings, Activity Log, and Barcode Settings
 - Customer order intake: `orders`, `services`, `order_line_items`, `order_files`, `delivery_methods`, and a daily `order_sequences` counter (`YYYYMMDD-NNN`, work orders suffixed `-A`, `-B`, `-C`)
 - `POST /api/orders`, `GET /api/orders`, and `GET /api/orders/:id` for admin, operator, and customer, with customers limited to their own orders
 - Multipart uploads at `POST /api/uploads` with type and size limits, random stored names under `UPLOAD_DIR`, and authenticated download and delete
