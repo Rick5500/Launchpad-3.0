@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { authFetch } from '../api';
-import { formatClockLabel, formatFileSize } from '../brand';
+import { formatClockLabel, formatFileSize, formatShopStamp, timezoneLabel } from '../brand';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
 import './workOrderPrint.css';
+
+const SIGN_OFF = ['Prepress', 'Production', 'Finishing', 'Quality', 'Dispatch'];
 
 function formatStamp(value) {
   if (!value) return '';
@@ -19,11 +21,31 @@ function formatStamp(value) {
   return `${date} ${hour12}:${match[5]} ${suffix}`;
 }
 
+function shopStamp(value, timeZone) {
+  return formatShopStamp(value, timeZone) || formatStamp(value);
+}
+
 function dueLabel(sheet) {
   const date = formatStamp(sheet.due_date);
   const time = formatClockLabel(sheet.due_time);
-  if (date && time) return `${date} ${time}`;
-  return date || time || '';
+  const wall = [sheet.due_date, sheet.due_time].filter(Boolean).join(' ');
+  const zone = timezoneLabel(sheet.timezone, wall);
+  const main = [date, time].filter(Boolean).join(' ');
+  if (!main) return '';
+  return zone ? `${main} ${zone}` : main;
+}
+
+function isActiveStatus(status) {
+  const value = String(status || '').trim().toLowerCase();
+  return value === 'open' || value === 'in-progress';
+}
+
+function specGroups(rows, width = 3) {
+  const groups = [];
+  for (let index = 0; index < rows.length; index += width) {
+    groups.push(rows.slice(index, index + width));
+  }
+  return groups;
 }
 
 function display(value, fallback = '—') {
@@ -38,6 +60,21 @@ function yesNo(value) {
 function finishingLabel(value) {
   const text = String(value || '').trim();
   return text || 'None';
+}
+
+function isProofField(field) {
+  if (!field) return false;
+  if (field.key === 'proof') return true;
+  return /^proof$/i.test(String(field.label || '').replace(/:$/, '').trim());
+}
+
+function cityLine(parts) {
+  if (!parts) return '';
+  const city = String(parts.city || '').trim();
+  const state = String(parts.state || '').trim();
+  const zip = String(parts.zip || '').trim();
+  const region = [state, zip].filter(Boolean).join(' ');
+  return [city, region].filter(Boolean).join(', ');
 }
 
 function Barcode({ svg, className }) {
@@ -67,48 +104,108 @@ function billToPresent(bill) {
   return ['name', 'phone', 'email', 'company', 'line1', 'line2', 'city', 'state', 'zip'].some((key) => String(bill[key] || '').trim());
 }
 
-function SpecBlock({ item, special }) {
+function detailRows(item) {
   const dynamic = Array.isArray(item.fields) && item.fields.length ? item.fields : null;
   if (!dynamic) {
-    return (
-      <div className="wo-spec-block">
-        {item.description ? <div className="wo-spec-title">{item.description}</div> : null}
-        <div className="wo-spec-grid">
-          <div>
-            <Field label="Size:" value={item.size} />
-            <Field label="Quantity:" value={item.quantity} />
-            <Field label="Media:" value={item.media} />
-            <Field label="Color:" value={item.color} />
-            <Field label="Binding / Finish:" value={item.binding_finish} />
-          </div>
-          <div>
-            <Field label="Mounting:" value={item.mount_label || yesNo(item.mount)} />
-            <Field label="Lamination:" value={item.laminate_label || yesNo(item.laminate)} />
-            <Field label="Finishing:" value={finishingLabel(item.finishing)} />
-            {special != null ? <Field label="Special Instructions:" value={special} /> : null}
-          </div>
-        </div>
-      </div>
-    );
+    return [
+      ['Size', item.size],
+      ['Media', item.media],
+      ['Color', item.color],
+      ['Binding / Finish', item.binding_finish],
+      ['Mounting', item.mount_label || yesNo(item.mount)],
+      ['Lamination', item.laminate_label || yesNo(item.laminate)],
+      ['Finishing', finishingLabel(item.finishing)],
+    ];
   }
   const keys = new Set(dynamic.map((field) => field.key));
+  const rows = dynamic
+    .filter((field) => !isProofField(field))
+    .map((field) => [field.label, field.display]);
+  if (!keys.has('mount')) rows.push(['Mounting', item.mount_label || yesNo(item.mount)]);
+  if (!keys.has('laminate')) rows.push(['Lamination', item.laminate_label || yesNo(item.laminate)]);
+  if (!keys.has('finishing')) rows.push(['Finishing', finishingLabel(item.finishing)]);
+  return rows;
+}
+
+function proofRows(items) {
+  const rows = [];
+  for (const item of items) {
+    const proof = (item.fields || []).find(isProofField);
+    if (!proof) continue;
+    rows.push({
+      title: item.description || '',
+      value: proof.display,
+    });
+  }
+  return rows;
+}
+
+function Section({ title, children, keep = false }) {
   return (
-    <div className="wo-spec-block">
-      {item.description ? <div className="wo-spec-title">{item.description}</div> : null}
-      <div className="wo-spec-grid">
-        <div>
-          {dynamic.map((field) => (
-            <Field key={field.key} label={`${field.label}:`} value={field.display} />
-          ))}
-        </div>
-        <div>
-          {!keys.has('mount') ? <Field label="Mounting:" value={item.mount_label || yesNo(item.mount)} /> : null}
-          {!keys.has('laminate') ? <Field label="Lamination:" value={item.laminate_label || yesNo(item.laminate)} /> : null}
-          {!keys.has('finishing') ? <Field label="Finishing:" value={finishingLabel(item.finishing)} /> : null}
-          {special != null ? <Field label="Special Instructions:" value={special} /> : null}
-        </div>
+    <section className={keep ? 'wo-section wo-keep' : 'wo-section'}>
+      <h2 className="wo-section-title">{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+function AddressFields({ address }) {
+  if (!address) return null;
+  return (
+    <>
+      <Field label="Addr 1" value={address.line1} />
+      {address.line2 ? <Field label="Addr 2" value={address.line2} /> : null}
+      <Field label="City" value={cityLine(address) || address.city} />
+    </>
+  );
+}
+
+function LineBlock({ item }) {
+  const rows = detailRows(item);
+  return (
+    <div className="wo-line">
+      <div className="wo-line-head">
+        <span className="wo-line-num">{item.line_number || ''}</span>
+        <div className="wo-summary">{display(item.description, 'Line item')}</div>
+        <span className="wo-line-qty">{item.quantity ? `Qty ${item.quantity}` : ''}</span>
       </div>
+      {rows.length ? (
+        <table className="wo-spec-table">
+          <tbody>
+            {specGroups(rows).map((group, groupIndex) => (
+              <tr key={group.map(([label]) => label).join('|') || groupIndex}>
+                {group.map(([label, value]) => (
+                  <React.Fragment key={label}>
+                    <th scope="row">{label}</th>
+                    <td>{display(value)}</td>
+                  </React.Fragment>
+                ))}
+                {group.length < 3 ? <td className="wo-spec-pad" colSpan={(3 - group.length) * 2} /> : null}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
     </div>
+  );
+}
+
+function SignOff() {
+  return (
+    <Section title="PRODUCTION SIGN-OFF" keep>
+      <div className="wo-sign-grid">
+        {SIGN_OFF.map((stage) => (
+          <div className="wo-sign-cell" key={stage}>
+            <div className="wo-sign-stage">
+              <span className="wo-check" aria-hidden="true" />
+              <span>{stage}</span>
+            </div>
+            <div className="wo-sign-line">Initials</div>
+            <div className="wo-sign-line">Date</div>
+          </div>
+        ))}
+      </div>
+    </Section>
   );
 }
 
@@ -116,120 +213,134 @@ function WorkOrderSheet({ payload, sheet }) {
   const history = sheet.production_history || [];
   const showStaff = Boolean(payload.staff_history);
   const items = sheet.line_items || [];
-  const serviceLabel = sheet.service_name || sheet.routing?.department || 'GENERAL';
+  const proofs = proofRows(items);
   const due = dueLabel(sheet);
+  const rush = String(sheet.priority || '').trim().toLowerCase() === 'rush';
+  const overdue = Boolean(sheet.overdue) && isActiveStatus(sheet.routing?.current_status);
+  const customerName = sheet.contact?.company || sheet.contact?.contact_name || '';
+  const continuation = [sheet.barcode_value, customerName].filter((part) => String(part || '').trim()).join(' · ');
+  const zone = sheet.timezone;
+  const instructions = (payload.scan_instructions || []).join(' ');
+  const shopLines = [
+    payload.shop?.name,
+    ...((payload.shop?.address_lines || []).filter((line) => String(line || '').trim())),
+    payload.shop?.phone,
+  ].filter((line) => String(line || '').trim());
+  const projectNotes = String(sheet.project?.notes || '').trim();
+  const special = String(sheet.special_instructions || '').trim();
 
   return (
     <article className="work-order-sheet">
-      <header className="wo-header">
-        <div>
-          <img className="wo-logo" src="/logo.png" alt="LaunchPad 3.0" />
-          <div className="wo-shop">
-            <strong>{payload.shop?.name}</strong>
-            {(payload.shop?.address_lines || []).map((line) => (
-              <div key={line}>{line}</div>
-            ))}
-            {payload.shop?.phone ? <div>{payload.shop.phone}</div> : null}
+      <table className="wo-flow">
+        <thead>
+          <tr>
+            <th>
+              <div className="wo-continue">{continuation}</div>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+      <header className="wo-band">
+        <div className="wo-band-main">
+          <img className="wo-logo" src="/logo.png" alt="Accent Imaging" />
+          <div className="wo-band-copy">
+            <div className="wo-kicker">WORK ORDER</div>
+            <div className="wo-number">{display(sheet.barcode_value, '')}</div>
           </div>
         </div>
         <div className="wo-barcode-block">
-          <Barcode svg={sheet.barcode_svg} className="wo-barcode wo-barcode-lg" />
-          <div className="wo-number">{sheet.barcode_value}</div>
+          <Barcode svg={sheet.barcode_svg} className="wo-barcode" />
+          <div className="wo-barcode-text">{display(sheet.barcode_value, '')}</div>
+          {instructions ? <div className="wo-scan-note">{instructions}</div> : null}
         </div>
       </header>
 
-      <h1 className="wo-title">WORK ORDER</h1>
-
-      <div className="wo-meta">
-        <div>ORDER #: {sheet.barcode_value}</div>
-        <div className="wo-meta-right">
-          <div>DATE/TIME SUBMITTED: {display(formatStamp(sheet.submitted_at))}</div>
-          {due ? <div>DUE: {due}</div> : null}
+      <div className="wo-facts">
+        <div>
+          <div className="wo-fact-label">Order date</div>
+          <div className="wo-fact-value">{display(shopStamp(sheet.submitted_at, zone))}</div>
+          {sheet.order_number ? <div className="wo-fact-sub">Order {sheet.order_number}</div> : null}
         </div>
+        <div className="wo-fact-due">
+          <div className="wo-fact-label">Due</div>
+          <div className="wo-fact-value">{display(due)}</div>
+        </div>
+        <div className="wo-fact-delivery">
+          <div className="wo-fact-label">Delivery</div>
+          <div className="wo-fact-value">{display(sheet.delivery?.method)}</div>
+          {sheet.delivery?.hours_label ? <div className="wo-fact-sub">{sheet.delivery.hours_label}</div> : null}
+        </div>
+        {(rush || overdue) ? (
+          <div className="wo-flags">
+            {rush ? <div className="wo-flag wo-flag-rush">RUSH</div> : null}
+            {overdue ? <div className="wo-flag wo-flag-overdue">OVERDUE</div> : null}
+          </div>
+        ) : null}
       </div>
 
       <div className="wo-columns">
-        <section className="wo-panel">
-          <h2>CONTACT INFORMATION</h2>
+        <Section title="CUSTOMER">
           <div className="wo-panel-body">
-            <Field label="Company:" value={sheet.contact?.company} />
-            <Field label="Contact:" value={sheet.contact?.contact_name} />
-            <Field label="Phone:" value={sheet.contact?.phone} />
-            <Field label="Email:" value={sheet.contact?.email} />
-            <Field label="Addr 1:" value={sheet.address?.line1} />
-            {sheet.address?.line2 ? <Field label="Addr 2:" value={sheet.address.line2} /> : null}
-            <Field label="City:" value={sheet.address?.city} />
-            <Field label="State:" value={sheet.address?.state} />
-            <Field label="Zip:" value={sheet.address?.zip} />
+            <Field label="Company" value={sheet.contact?.company} />
+            <Field label="Contact" value={sheet.contact?.contact_name} />
+            <Field label="Phone" value={sheet.contact?.phone} />
+            <Field label="Email" value={sheet.contact?.email} />
+            <AddressFields address={sheet.address} />
           </div>
-        </section>
-        <section className="wo-panel">
-          <h2>PROJECT INFORMATION</h2>
+        </Section>
+        <Section title="BILL TO / SHIP TO / DELIVERY">
           <div className="wo-panel-body">
-            <Field label="PO Number:" value={sheet.project?.po_number} />
-            <Field label="Project Number:" value={sheet.project?.project_number} />
-            <Field label="Project Name:" value={sheet.project?.project_name} />
-            <Field label="Originals Source:" value={sheet.originals_source_label || 'Not specified'} />
-            <Field label="Payment Method:" value={sheet.payment_method_label || 'Not specified'} />
-            <Field label="Return:" value={sheet.return_to_label || 'Not specified'} />
-            {sheet.originals_pickup ? (
-              <div className="wo-note">Inbound pickup of originals. This is separate from the delivery method.</div>
-            ) : null}
-            <Field label="Notes:" value={sheet.project?.notes} />
-          </div>
-        </section>
-        <section className="wo-panel">
-          <h2>DELIVERY INFORMATION</h2>
-          <div className="wo-panel-body">
-            <Field label="Delivery Method:" value={sheet.delivery?.method} />
+            <Field label="Method" value={sheet.delivery?.method} />
+            <Field label="Return" value={sheet.return_to_label} />
             {sheet.delivery?.ups_account_number ? (
-              <Field label="UPS Account:" value={sheet.delivery.ups_account_number} />
+              <Field label="UPS Account" value={sheet.delivery.ups_account_number} />
             ) : null}
-            <Field label="Ship To:" value={sheet.delivery?.ship_to} />
-            <Field label="Attention:" value={sheet.delivery?.attention} />
-            <Field label="Hours:" value={sheet.delivery?.hours_label || payload.delivery_window_label} />
+            <Field label="Ship To" value={sheet.delivery?.ship_to} />
+            <Field label="Attention" value={sheet.delivery?.attention} />
+            {billToPresent(sheet.bill_to) ? (
+              <>
+                <Field label="Bill To" value={sheet.bill_to.name} />
+                <Field label="Bill Phone" value={sheet.bill_to.phone} />
+                <Field label="Bill Email" value={sheet.bill_to.email} />
+                <Field label="Bill Company" value={sheet.bill_to.company} />
+                <Field label="Bill Addr 1" value={sheet.bill_to.line1} />
+                {sheet.bill_to.line2 ? <Field label="Bill Addr 2" value={sheet.bill_to.line2} /> : null}
+                <Field label="Bill City" value={cityLine(sheet.bill_to)} />
+              </>
+            ) : <Field label="Bill To" value="" />}
           </div>
-        </section>
+        </Section>
       </div>
 
-      {billToPresent(sheet.bill_to) ? (
-        <section className="wo-section">
-          <h2 className="wo-section-title">BILL TO</h2>
-          <div className="wo-panel-body">
-            <Field label="Person:" value={sheet.bill_to.name} />
-            <Field label="Phone:" value={sheet.bill_to.phone} />
-            <Field label="Email:" value={sheet.bill_to.email} />
-            <Field label="Company:" value={sheet.bill_to.company} />
-            <Field label="Addr 1:" value={sheet.bill_to.line1} />
-            {sheet.bill_to.line2 ? <Field label="Addr 2:" value={sheet.bill_to.line2} /> : null}
-            <Field label="City:" value={sheet.bill_to.city} />
-            <Field label="State:" value={sheet.bill_to.state} />
-            <Field label="Zip:" value={sheet.bill_to.zip} />
-          </div>
-        </section>
-      ) : null}
-
-      <section className="wo-section">
-        <h2 className="wo-section-title">SPECIFICATIONS ({String(serviceLabel).toUpperCase()})</h2>
-        {sheet.process ? <div className="wo-process"><strong>Process:</strong> {sheet.process}</div> : null}
-        {items.length ? items.map((item, index) => (
-          <SpecBlock
-            key={item.id}
-            item={item}
-            special={index === items.length - 1 ? sheet.special_instructions : null}
-          />
+      <Section title="JOB DETAILS">
+        <div className="wo-meta-line">
+          <span><strong>Service:</strong> {display(sheet.service_name)}</span>
+          <span><strong>Department:</strong> {display(sheet.routing?.department)}</span>
+          <span><strong>Status:</strong> {display(sheet.routing?.current_status_label || sheet.routing?.current_status)}</span>
+          <span><strong>Next:</strong> {display(sheet.routing?.next_department)}</span>
+        </div>
+        <div className="wo-panel-body">
+          <Field label="Project" value={sheet.project?.project_name} />
+          <Field label="Project #" value={sheet.project?.project_number} />
+          <Field label="PO Number" value={sheet.project?.po_number} />
+          {sheet.process ? <Field label="Process" value={sheet.process} /> : null}
+        </div>
+        {items.length ? items.map((item) => (
+          <LineBlock key={item.id} item={item} />
         )) : (
           <div className="wo-empty">{sheet.specifications || 'No specifications recorded.'}</div>
         )}
-        {items.length === 0 && sheet.special_instructions ? (
-          <div className="wo-panel-body">
-            <Field label="Special Instructions:" value={sheet.special_instructions} />
-          </div>
-        ) : null}
-      </section>
+      </Section>
 
-      <section className="wo-section">
-        <h2 className="wo-section-title">ATTACHED FILES</h2>
+      <Section title="ORIGINALS / FILES">
+        <div className="wo-panel-body">
+          <Field label="Originals" value={sheet.originals_source_label || 'Not specified'} />
+          {sheet.originals_pickup ? (
+            <div className="wo-note">Inbound pickup of originals. This is separate from the delivery method.</div>
+          ) : null}
+        </div>
         {(sheet.files || []).length ? (
           <table className="wo-table">
             <thead>
@@ -243,40 +354,46 @@ function WorkOrderSheet({ payload, sheet }) {
               {sheet.files.map((file) => (
                 <tr key={file.id}>
                   <td>{file.original_name}</td>
-                  <td>{display(formatStamp(file.uploaded_at))}</td>
+                  <td>{display(shopStamp(file.uploaded_at, zone))}</td>
                   <td>{formatFileSize(file.size_bytes)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         ) : <div className="wo-empty">No files are attached.</div>}
-      </section>
+      </Section>
 
-      <div className="wo-split">
-        <section className="wo-panel">
-          <h2>ROUTING INFORMATION</h2>
+      <div className="wo-columns">
+        <Section title="SPECIAL INSTRUCTIONS">
           <div className="wo-panel-body">
-            <Field label="Department:" value={sheet.routing?.department} />
-            <Field label="Current Status:" value={sheet.routing?.current_status_label || sheet.routing?.current_status} />
-            <Field label="Next Department:" value={sheet.routing?.next_department} />
+            <div className="wo-value">{display(special)}</div>
+            {projectNotes && projectNotes !== special ? (
+              <div className="wo-note">Project notes: {projectNotes}</div>
+            ) : null}
           </div>
-        </section>
-        <section className="wo-panel">
-          <h2>SCAN INSTRUCTIONS</h2>
+        </Section>
+        <Section title="PROOF">
           <div className="wo-panel-body">
-            <ol className="wo-scan-copy">
-              {(payload.scan_instructions || []).map((line) => <li key={line}>{line}</li>)}
-            </ol>
-            <div className="scan-barcode-wrap">
-              <Barcode svg={sheet.barcode_svg} className="wo-barcode" />
-              <div className="scan-laser" />
-            </div>
+            {proofs.length ? proofs.map((row, index) => (
+              <Field
+                key={`${index}-${row.value}`}
+                label={proofs.length > 1 ? `Line ${index + 1}` : 'Proof'}
+                value={row.value || 'Not specified'}
+              />
+            )) : <Field label="Proof" value="Not specified" />}
           </div>
-        </section>
+        </Section>
       </div>
 
-      <section className="wo-section">
-        <h2 className="wo-section-title">PRODUCTION HISTORY</h2>
+      <Section title="PAYMENT METHOD">
+        <div className="wo-panel-body">
+          <Field label="Payment" value={sheet.payment_method_label || 'Not specified'} />
+        </div>
+      </Section>
+
+      <SignOff />
+
+      <Section title="PRODUCTION HISTORY">
         {history.length ? (
           <table className="wo-table">
             <thead>
@@ -284,7 +401,7 @@ function WorkOrderSheet({ payload, sheet }) {
                 <th>Department</th>
                 <th>Status</th>
                 <th>Date / Time</th>
-                {showStaff ? <th>Scanned By</th> : null}
+                {showStaff ? <th>Recorded By</th> : null}
                 {showStaff ? <th>Notes</th> : null}
               </tr>
             </thead>
@@ -293,7 +410,7 @@ function WorkOrderSheet({ payload, sheet }) {
                 <tr key={row.id}>
                   <td>{display(row.department)}</td>
                   <td>{display(row.status_label || row.status)}</td>
-                  <td>{display(formatStamp(row.event_time))}</td>
+                  <td>{display(shopStamp(row.event_time, zone))}</td>
                   {showStaff ? <td>{display(row.scanned_by)}</td> : null}
                   {showStaff ? <td>{display(row.notes)}</td> : null}
                 </tr>
@@ -301,15 +418,20 @@ function WorkOrderSheet({ payload, sheet }) {
             </tbody>
           </table>
         ) : <div className="wo-empty">No production history recorded.</div>}
-      </section>
+      </Section>
 
       <footer className="wo-footer">
-        <div className="wo-footer-row">
-          <span>Work Order: {sheet.barcode_value}</span>
-          <span>Generated: {display(formatStamp(payload.generated_at))}</span>
+        <div className="wo-shop-footer">
+          {shopLines.map((line) => <div key={line}>{line}</div>)}
         </div>
-        <p className="wo-thanks">THANK YOU FOR YOUR BUSINESS!</p>
+        <div className="wo-footer-meta">
+          <div>Printed {display(shopStamp(payload.generated_at, zone))}</div>
+        </div>
       </footer>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </article>
   );
 }
