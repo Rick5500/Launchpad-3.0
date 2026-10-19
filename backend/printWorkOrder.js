@@ -2,6 +2,7 @@ const db = require('./db');
 const { getOrder } = require('./orderService');
 const { classifyDelivery, deliveryWindow, getRules, hoursLabel, usesWillCallHours, willCallWindow } = require('./deliveryRules');
 const { code128Svg } = require('./barcodeSvg');
+const { ACTIVE_WORK_ORDER_STATUSES } = require('./statuses');
 const { loadLetterhead, DEFAULT_NAME, DEFAULT_ADDRESS, DEFAULT_PHONE, addressLines } = require('./shopProfile');
 const { displayFieldList, readFieldValues, PAYMENT_UNSPECIFIED, RETURN_UNSPECIFIED } = require('./serviceFields');
 
@@ -57,41 +58,93 @@ function utcNow() {
   return new Date().toISOString().slice(0, 19).replace('T', ' ');
 }
 
-const EASTERN_ZONES = new Set([
-  'America/New_York',
-  'America/Detroit',
-  'America/Indiana/Indianapolis',
-  'America/Kentucky/Louisville',
-  'America/Toronto',
-  'US/Eastern',
-  'EST5EDT',
-]);
+function wallClockToUtc(timeZone, wall) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/.exec(String(wall || '').trim());
+  if (!match) return null;
+  const desiredUtc = Date.UTC(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    match[4] != null ? Number(match[4]) : 12,
+    match[5] != null ? Number(match[5]) : 0,
+    match[6] != null ? Number(match[6]) : 0
+  );
+  const format = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  });
+  let guess = desiredUtc;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const parts = Object.fromEntries(format.formatToParts(new Date(guess)).map((part) => [part.type, part.value]));
+    const asUtc = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour) % 24,
+      Number(parts.minute),
+      Number(parts.second)
+    );
+    const delta = asUtc - desiredUtc;
+    if (delta === 0) return new Date(guess);
+    guess -= delta;
+  }
+  return new Date(guess);
+}
 
-function timezoneLabel(timeZone) {
+function timezoneLabel(timeZone, wallClock) {
   const zone = String(timeZone || '').trim();
   if (!zone) return '';
-  if (EASTERN_ZONES.has(zone)) return 'Eastern';
-  return zone;
+  let instant = wallClock ? wallClockToUtc(zone, wallClock) : new Date();
+  if (!instant || Number.isNaN(instant.valueOf())) instant = new Date();
+  try {
+    const part = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'short' })
+      .formatToParts(instant)
+      .find((item) => item.type === 'timeZoneName');
+    return part && part.value ? part.value : zone;
+  } catch (err) {
+    return zone;
+  }
+}
+
+function clockHHMM(value) {
+  const match = /^(\d{2}):(\d{2})/.exec(String(value || '').trim());
+  if (!match) return null;
+  return `${match[1]}:${match[2]}`;
+}
+
+function splitDue(orderDate, orderTime, workOrderDue) {
+  const orderDay = /^(\d{4}-\d{2}-\d{2})/.exec(String(orderDate || '').trim());
+  const woMatch = /^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}))?/.exec(String(workOrderDue || '').trim());
+  const date = orderDay ? orderDay[1] : (woMatch ? woMatch[1] : null);
+  const time = clockHHMM(orderTime) || (woMatch ? clockHHMM(woMatch[2]) : null);
+  return { date, time };
 }
 
 function sheetTiming(dueDate, dueTime, status) {
   const rules = getRules();
-  const finished = /^(completed|complete)$/i.test(String(status || '').trim());
+  const active = ACTIVE_WORK_ORDER_STATUSES.includes(String(status || '').trim().toLowerCase());
   const date = String(dueDate || '').trim().slice(0, 10);
-  const clock = /^(\d{2}):(\d{2})/.exec(String(dueTime || '').trim());
+  const clock = clockHHMM(dueTime);
   let overdue = false;
   let dueSoon = false;
-  if (!finished && /^\d{4}-\d{2}-\d{2}$/.test(date) && clock) {
+  if (active && /^\d{4}-\d{2}-\d{2}$/.test(date) && clock) {
     const flags = classifyDelivery({
       status: 'pending',
-      due_time: `${date} ${clock[1]}:${clock[2]}:00`,
+      due_time: `${date} ${clock}:00`,
     }, new Date(), rules);
     overdue = Boolean(flags.overdue);
     dueSoon = Boolean(flags.due_soon);
   }
+  const wall = clock ? `${date} ${clock}` : date;
   return {
     timezone: rules.timezone,
-    timezone_label: timezoneLabel(rules.timezone),
+    timezone_label: timezoneLabel(rules.timezone, wall),
     overdue,
     due_soon: dueSoon,
   };
@@ -301,9 +354,8 @@ async function buildSheet(workOrderId, viewer) {
     barcodeError = 'barcode unavailable';
   }
   const specialInstructions = textOrEmpty(row.notes).trim() || textOrEmpty(row.order_notes).trim();
-  const dueDate = row.order_due_date || (row.due_date ? String(row.due_date).slice(0, 10) : null);
-  const dueTime = row.order_due_time || null;
-  const timing = sheetTiming(dueDate, dueTime, row.status);
+  const due = splitDue(row.order_due_date, row.order_due_time, row.due_date);
+  const timing = sheetTiming(due.date, due.time, row.status);
   const process = uniqueParts([row.service_name, row.stage_name, row.department]).join(' · ');
   const methodName = row.delivery_method || (delivery && delivery.carrier) || '';
   const willCallFlag = delivery ? delivery.will_call : false;
@@ -319,8 +371,8 @@ async function buildSheet(workOrderId, viewer) {
     order_number: row.order_number || null,
     description: row.description || null,
     submitted_at: row.order_created_at || row.created_at || null,
-    due_date: dueDate,
-    due_time: dueTime,
+    due_date: due.date,
+    due_time: due.time,
     priority: row.priority || 'Normal',
     timezone: timing.timezone,
     timezone_label: timing.timezone_label,

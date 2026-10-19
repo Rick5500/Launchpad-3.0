@@ -13,27 +13,86 @@ export const brand = {
   danger: '#C62828',
 };
 
-const EASTERN_ZONES = new Set([
-  'America/New_York',
-  'America/Detroit',
-  'America/Indiana/Indianapolis',
-  'America/Kentucky/Louisville',
-  'America/Toronto',
-  'US/Eastern',
-  'EST5EDT',
-]);
+function wallClockToUtc(timeZone, wall) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/.exec(String(wall || '').trim());
+  if (!match) return null;
+  const desiredUtc = Date.UTC(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    match[4] != null ? Number(match[4]) : 12,
+    match[5] != null ? Number(match[5]) : 0,
+    match[6] != null ? Number(match[6]) : 0
+  );
+  const format = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  });
+  let guess = desiredUtc;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const parts = Object.fromEntries(format.formatToParts(new Date(guess)).map((part) => [part.type, part.value]));
+    const asUtc = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour) % 24,
+      Number(parts.minute),
+      Number(parts.second)
+    );
+    const delta = asUtc - desiredUtc;
+    if (delta === 0) return new Date(guess);
+    guess -= delta;
+  }
+  return new Date(guess);
+}
 
-export function timezoneLabel(timeZone) {
+export function timezoneLabel(timeZone, wallClock) {
   const zone = String(timeZone || '').trim();
   if (!zone) return '';
-  if (EASTERN_ZONES.has(zone)) return 'Eastern';
+  let instant = wallClock ? wallClockToUtc(zone, wallClock) : new Date();
+  if (!instant || Number.isNaN(instant.valueOf())) instant = new Date();
   try {
     const part = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'short' })
-      .formatToParts(new Date())
+      .formatToParts(instant)
       .find((item) => item.type === 'timeZoneName');
-    return part ? part.value : zone;
+    return part && part.value ? part.value : zone;
   } catch (err) {
     return zone;
+  }
+}
+
+export function formatShopStamp(value, timeZone) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/.exec(String(value || '').trim());
+  if (!match) return '';
+  const utc = new Date(Date.UTC(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    Number(match[4]),
+    Number(match[5]),
+    Number(match[6] || 0)
+  ));
+  if (Number.isNaN(utc.valueOf())) return '';
+  const zone = timeZone || 'UTC';
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: zone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+      timeZoneName: 'short',
+    }).format(utc);
+  } catch (err) {
+    return '';
   }
 }
 

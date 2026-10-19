@@ -79,8 +79,8 @@
   align-items: center;
   background: #0a2f6e;
   color: #fff;
-  padding: 12px 14px;
-  border-bottom: 4px solid #f58220;
+  padding: 8px 10px;
+  border-bottom: 3px solid #f58220;
 }
 
 .wo-band-main {
@@ -122,7 +122,7 @@
   background: #fff;
   color: #000;
   border: 1px solid #111;
-  padding: 0.18in 0.2in 6px;
+  padding: 0.16in 0.18in 3px;
   text-align: center;
   max-width: 100%;
 }
@@ -157,8 +157,8 @@
 
 .wo-scan-note {
   margin-top: 4px;
-  font-size: 9px;
-  line-height: 1.3;
+  font-size: 8px;
+  line-height: 1.2;
   color: #333;
   max-width: 3.15in;
 }
@@ -166,10 +166,10 @@
 .wo-facts {
   display: grid;
   grid-template-columns: 1.1fr 1.4fr 1.3fr auto;
-  gap: 8px 14px;
+  gap: 4px 12px;
   align-items: start;
-  margin: 10px 0 12px;
-  padding-bottom: 8px;
+  margin: 6px 0;
+  padding-bottom: 4px;
   border-bottom: 1px solid #c5d0dc;
 }
 
@@ -226,13 +226,13 @@
 .wo-columns {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: 4px;
+  margin-bottom: 2px;
 }
 
 .wo-section {
   border: 1px solid #8ea0b3;
-  margin-bottom: 8px;
+  margin-bottom: 2px;
   min-width: 0;
   overflow-wrap: break-word;
 }
@@ -244,22 +244,22 @@
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.7px;
-  padding: 4px 8px;
+  padding: 1px 6px;
   border-bottom: 2px solid #0a2f6e;
   border-left: 4px solid #f58220;
 }
 
 .wo-panel-body {
-  padding: 6px 8px 8px;
-  font-size: 12px;
+  padding: 2px 6px;
+  font-size: 11px;
 }
 
 .wo-field {
   display: grid;
   grid-template-columns: 92px minmax(0, 1fr);
-  gap: 6px;
-  padding: 1px 0;
-  line-height: 1.35;
+  gap: 4px;
+  padding: 0;
+  line-height: 1.25;
 }
 
 .wo-label {
@@ -280,13 +280,13 @@
 .wo-meta-line {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 16px;
-  padding: 6px 8px 0;
-  font-size: 12px;
+  gap: 4px 12px;
+  padding: 3px 6px 0;
+  font-size: 11px;
 }
 
 .wo-line {
-  padding: 6px 8px 8px;
+  padding: 2px 6px;
   min-width: 0;
 }
 
@@ -323,29 +323,37 @@
 
 .wo-spec-table {
   width: 100%;
-  margin-top: 4px;
+  margin-top: 2px;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 9px;
+  table-layout: fixed;
 }
 
 .wo-spec-table th,
 .wo-spec-table td {
   border: 1px solid #c5d0dc;
-  padding: 2px 6px;
+  padding: 0 3px;
   text-align: left;
   vertical-align: top;
+  line-height: 1.2;
 }
 
 .wo-spec-table th {
-  width: 34%;
+  width: 14%;
   font-weight: 700;
   background: #f4f7fb;
   color: #0a2f6e;
 }
 
 .wo-spec-table td {
+  width: 19%;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.wo-spec-pad {
+  border: 0 !important;
+  background: transparent;
 }
 
 .wo-table {
@@ -357,7 +365,7 @@
 .wo-table th,
 .wo-table td {
   border: 1px solid #8ea0b3;
-  padding: 3px 6px;
+  padding: 2px 4px;
   text-align: left;
   vertical-align: top;
   overflow-wrap: anywhere;
@@ -372,21 +380,21 @@
 
 .wo-empty {
   color: #444;
-  font-size: 12px;
-  padding: 8px;
+  font-size: 11px;
+  padding: 4px 6px;
 }
 
 .wo-sign-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 6px;
-  padding: 8px;
+  gap: 3px;
+  padding: 3px;
 }
 
 .wo-sign-cell {
   border: 1px solid #222;
-  padding: 6px 6px 8px;
-  min-height: 78px;
+  padding: 3px 3px 1px;
+  min-height: 42px;
   min-width: 0;
 }
 
@@ -394,9 +402,9 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
 }
 
 .wo-check {
@@ -409,17 +417,17 @@
 }
 
 .wo-sign-line {
-  margin-top: 8px;
+  margin-top: 2px;
   border-bottom: 1px solid #111;
-  font-size: 9px;
+  font-size: 8px;
   letter-spacing: 0.2px;
   color: #333;
-  padding-bottom: 8px;
+  padding-bottom: 2px;
 }
 
 .wo-footer {
-  margin-top: 12px;
-  padding-top: 6px;
+  margin-top: 4px;
+  padding-top: 3px;
   border-top: 2px solid #0a2f6e;
   display: flex;
   justify-content: space-between;
@@ -490,6 +498,41 @@
   }
 }
 
+.wo-flow {
+  width: 100%;
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+.wo-flow th,
+.wo-flow td {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-weight: inherit;
+  text-align: left;
+  vertical-align: top;
+}
+
+.wo-flow > thead {
+  display: none;
+}
+
+.wo-continue {
+  box-sizing: border-box;
+  height: 16px;
+  margin: 0;
+  padding: 0 2px 1px;
+  border-bottom: 2px solid #f58220;
+  color: #0a2f6e;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 13px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 @media print {
   .no-print {
     display: none !important;
@@ -522,16 +565,44 @@
     break-after: auto;
   }
 
+  .wo-flow {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .wo-flow > thead {
+    display: table-header-group;
+  }
+
+  .wo-flow > tbody > tr,
+  .wo-section {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
   .wo-band,
   .wo-facts,
-  .wo-section,
   .wo-line,
+  .wo-keep,
   .wo-sign-cell,
   .wo-footer,
+  .wo-section-title,
+  .wo-continue,
   .wo-table tr,
   .wo-spec-table tr {
     break-inside: avoid;
     page-break-inside: avoid;
+  }
+
+  .wo-section-title {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .wo-band {
+    margin-top: -16px;
+    position: relative;
+    z-index: 1;
   }
 
   .wo-band,
@@ -539,7 +610,8 @@
   .wo-flag,
   .wo-flag-rush,
   .wo-barcode img,
-  .wo-barcode-block {
+  .wo-barcode-block,
+  .wo-continue {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }

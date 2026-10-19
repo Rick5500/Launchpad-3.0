@@ -28,7 +28,7 @@ export default function MoveWorkOrderDialog({ open, workOrder, onClose, onMoved 
   const [error, setError] = useState('');
 
   const current = workOrder?.department || '';
-  const label = workOrder?.order_number || workOrder?.external_id || (workOrder ? `#${workOrder.id}` : 'work order');
+  const label = workOrder?.external_id || workOrder?.order_number || (workOrder ? `#${workOrder.id}` : 'work order');
 
   useEffect(() => {
     if (!open) return undefined;

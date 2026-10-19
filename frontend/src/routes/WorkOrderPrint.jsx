@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { authFetch } from '../api';
-import { formatClockLabel, formatFileSize } from '../brand';
+import { formatClockLabel, formatFileSize, formatShopStamp, timezoneLabel } from '../brand';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
 import './workOrderPrint.css';
@@ -21,42 +21,31 @@ function formatStamp(value) {
   return `${date} ${hour12}:${match[5]} ${suffix}`;
 }
 
-function formatGenerated(value, timeZone) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/.exec(String(value || '').trim());
-  if (!match) return formatStamp(value);
-  const utc = new Date(Date.UTC(
-    Number(match[1]),
-    Number(match[2]) - 1,
-    Number(match[3]),
-    Number(match[4]),
-    Number(match[5]),
-    Number(match[6] || 0)
-  ));
-  if (Number.isNaN(utc.valueOf())) return formatStamp(value);
-  const zone = timeZone || 'UTC';
-  try {
-    return new Intl.DateTimeFormat('en-US', {
-      timeZone: zone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-      timeZoneName: 'short',
-    }).format(utc);
-  } catch (err) {
-    return `${formatStamp(value)} UTC`;
-  }
+function shopStamp(value, timeZone) {
+  return formatShopStamp(value, timeZone) || formatStamp(value);
 }
 
 function dueLabel(sheet) {
   const date = formatStamp(sheet.due_date);
   const time = formatClockLabel(sheet.due_time);
-  const zone = String(sheet.timezone_label || '').trim();
+  const wall = [sheet.due_date, sheet.due_time].filter(Boolean).join(' ');
+  const zone = timezoneLabel(sheet.timezone, wall);
   const main = [date, time].filter(Boolean).join(' ');
   if (!main) return '';
   return zone ? `${main} ${zone}` : main;
+}
+
+function isActiveStatus(status) {
+  const value = String(status || '').trim().toLowerCase();
+  return value === 'open' || value === 'in-progress';
+}
+
+function specGroups(rows, width = 3) {
+  const groups = [];
+  for (let index = 0; index < rows.length; index += width) {
+    groups.push(rows.slice(index, index + width));
+  }
+  return groups;
 }
 
 function display(value, fallback = '—') {
@@ -151,9 +140,9 @@ function proofRows(items) {
   return rows;
 }
 
-function Section({ title, children }) {
+function Section({ title, children, keep = false }) {
   return (
-    <section className="wo-section">
+    <section className={keep ? 'wo-section wo-keep' : 'wo-section'}>
       <h2 className="wo-section-title">{title}</h2>
       {children}
     </section>
@@ -183,10 +172,15 @@ function LineBlock({ item }) {
       {rows.length ? (
         <table className="wo-spec-table">
           <tbody>
-            {rows.map(([label, value]) => (
-              <tr key={label}>
-                <th scope="row">{label}</th>
-                <td>{display(value)}</td>
+            {specGroups(rows).map((group, groupIndex) => (
+              <tr key={group.map(([label]) => label).join('|') || groupIndex}>
+                {group.map(([label, value]) => (
+                  <React.Fragment key={label}>
+                    <th scope="row">{label}</th>
+                    <td>{display(value)}</td>
+                  </React.Fragment>
+                ))}
+                {group.length < 3 ? <td className="wo-spec-pad" colSpan={(3 - group.length) * 2} /> : null}
               </tr>
             ))}
           </tbody>
@@ -198,7 +192,7 @@ function LineBlock({ item }) {
 
 function SignOff() {
   return (
-    <Section title="PRODUCTION SIGN-OFF">
+    <Section title="PRODUCTION SIGN-OFF" keep>
       <div className="wo-sign-grid">
         {SIGN_OFF.map((stage) => (
           <div className="wo-sign-cell" key={stage}>
@@ -222,7 +216,10 @@ function WorkOrderSheet({ payload, sheet }) {
   const proofs = proofRows(items);
   const due = dueLabel(sheet);
   const rush = String(sheet.priority || '').trim().toLowerCase() === 'rush';
-  const overdue = Boolean(sheet.overdue) && !/complete/i.test(String(sheet.routing?.current_status_label || sheet.routing?.current_status || ''));
+  const overdue = Boolean(sheet.overdue) && isActiveStatus(sheet.routing?.current_status);
+  const customerName = sheet.contact?.company || sheet.contact?.contact_name || '';
+  const continuation = [sheet.barcode_value, customerName].filter((part) => String(part || '').trim()).join(' · ');
+  const zone = sheet.timezone;
   const instructions = (payload.scan_instructions || []).join(' ');
   const shopLines = [
     payload.shop?.name,
@@ -234,6 +231,17 @@ function WorkOrderSheet({ payload, sheet }) {
 
   return (
     <article className="work-order-sheet">
+      <table className="wo-flow">
+        <thead>
+          <tr>
+            <th>
+              <div className="wo-continue">{continuation}</div>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
       <header className="wo-band">
         <div className="wo-band-main">
           <img className="wo-logo" src="/logo.png" alt="Accent Imaging" />
@@ -252,7 +260,7 @@ function WorkOrderSheet({ payload, sheet }) {
       <div className="wo-facts">
         <div>
           <div className="wo-fact-label">Order date</div>
-          <div className="wo-fact-value">{display(formatStamp(sheet.submitted_at))}</div>
+          <div className="wo-fact-value">{display(shopStamp(sheet.submitted_at, zone))}</div>
           {sheet.order_number ? <div className="wo-fact-sub">Order {sheet.order_number}</div> : null}
         </div>
         <div className="wo-fact-due">
@@ -346,7 +354,7 @@ function WorkOrderSheet({ payload, sheet }) {
               {sheet.files.map((file) => (
                 <tr key={file.id}>
                   <td>{file.original_name}</td>
-                  <td>{display(formatStamp(file.uploaded_at))}</td>
+                  <td>{display(shopStamp(file.uploaded_at, zone))}</td>
                   <td>{formatFileSize(file.size_bytes)}</td>
                 </tr>
               ))}
@@ -402,7 +410,7 @@ function WorkOrderSheet({ payload, sheet }) {
                 <tr key={row.id}>
                   <td>{display(row.department)}</td>
                   <td>{display(row.status_label || row.status)}</td>
-                  <td>{display(formatStamp(row.event_time))}</td>
+                  <td>{display(shopStamp(row.event_time, zone))}</td>
                   {showStaff ? <td>{display(row.scanned_by)}</td> : null}
                   {showStaff ? <td>{display(row.notes)}</td> : null}
                 </tr>
@@ -417,9 +425,13 @@ function WorkOrderSheet({ payload, sheet }) {
           {shopLines.map((line) => <div key={line}>{line}</div>)}
         </div>
         <div className="wo-footer-meta">
-          <div>Printed {display(formatGenerated(payload.generated_at, sheet.timezone))}</div>
+          <div>Printed {display(shopStamp(payload.generated_at, zone))}</div>
         </div>
       </footer>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </article>
   );
 }

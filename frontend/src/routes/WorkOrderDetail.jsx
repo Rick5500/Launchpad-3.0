@@ -26,14 +26,21 @@ import MoveWorkOrderDialog from '../components/MoveWorkOrderDialog';
 import { authFetch, downloadAuthorized } from '../api';
 import { requestBoardRefresh } from '../boardEvents';
 import { useAuth } from '../context/AuthContext';
-import { canonicalWorkOrderStatus, isFinishedWorkOrderStatus } from '../workOrderStatus';
-import { brand, formatFileSize, timezoneLabel } from '../brand';
+import { canonicalWorkOrderStatus, isActiveWorkOrderStatus } from '../workOrderStatus';
+import { brand, formatFileSize, formatShopStamp, timezoneLabel } from '../brand';
 
 const tabs = ['Overview', 'Specifications', 'Attachments', 'Scan History', 'Routing', 'Notes'];
 
-function formatStamp(value) {
+function formatStamp(value, timeZone) {
   if (!value) return '—';
+  if (timeZone) return formatShopStamp(value, timeZone) || '—';
   return String(value).replace('T', ' ').slice(0, 19);
+}
+
+function instructionText(workOrder) {
+  const own = String(workOrder?.notes || '').trim();
+  const fromOrder = String(workOrder?.order_notes || '').trim();
+  return own || fromOrder;
 }
 
 function formatDue(value, zoneLabel) {
@@ -168,7 +175,7 @@ function cityLine(source) {
 const headCellSx = { color: brand.navy, fontWeight: 700 };
 const cellSx = { overflowWrap: 'anywhere', whiteSpace: 'pre-wrap', verticalAlign: 'top' };
 
-function ScanHistory({ events, loading, error }) {
+function ScanHistory({ events, loading, error, timeZone }) {
   if (loading) return <Typography color="text.secondary">Loading scans...</Typography>;
   if (error) return <Typography color="error">{error}</Typography>;
   if (!events.length) {
@@ -188,7 +195,7 @@ function ScanHistory({ events, loading, error }) {
         <TableBody>
           {events.map((event) => (
             <TableRow key={event.id}>
-              <TableCell sx={cellSx}>{formatStamp(event.event_time)}</TableCell>
+              <TableCell sx={cellSx}>{formatStamp(event.event_time, timeZone)}</TableCell>
               <TableCell sx={cellSx}>{event.scanned_value}</TableCell>
               <TableCell sx={cellSx}>{event.operator_name || event.operator_username || '—'}</TableCell>
               <TableCell sx={cellSx}>{event.location || '—'}</TableCell>
@@ -229,7 +236,7 @@ function SpecificationBlocks({ workOrder }) {
   );
 }
 
-function AttachmentList({ files, legacy }) {
+function AttachmentList({ files, legacy, timeZone }) {
   if (!files?.length) {
     return <Typography sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{legacy || 'No files are attached to this work order.'}</Typography>;
   }
@@ -248,7 +255,7 @@ function AttachmentList({ files, legacy }) {
           {files.map((file) => (
             <TableRow key={file.id}>
               <TableCell sx={cellSx}>{file.original_name}</TableCell>
-              <TableCell sx={cellSx}>{formatStamp(file.uploaded_at)}</TableCell>
+              <TableCell sx={cellSx}>{formatStamp(file.uploaded_at, timeZone)}</TableCell>
               <TableCell sx={cellSx}>{formatFileSize(file.size_bytes)}</TableCell>
               <TableCell>
                 <Button size="small" onClick={() => downloadAuthorized(`/api/uploads/${file.id}/download`, file.original_name)}>
@@ -263,7 +270,7 @@ function AttachmentList({ files, legacy }) {
   );
 }
 
-function RoutingPanel({ workOrder, hideInternal }) {
+function RoutingPanel({ workOrder, hideInternal, timeZone }) {
   const routing = workOrder.routing || {};
   const history = workOrder.production_history || [];
   return (
@@ -302,7 +309,7 @@ function RoutingPanel({ workOrder, hideInternal }) {
                 <TableRow key={row.id}>
                   <TableCell sx={cellSx}>{row.department || '—'}</TableCell>
                   <TableCell sx={cellSx}>{row.status || '—'}</TableCell>
-                  <TableCell sx={cellSx}>{formatStamp(row.event_time)}</TableCell>
+                  <TableCell sx={cellSx}>{formatStamp(row.event_time, timeZone)}</TableCell>
                   {!hideInternal && <TableCell sx={cellSx}>{row.scanned_by || '—'}</TableCell>}
                   {!hideInternal && (
                     <TableCell sx={cellSx}>
@@ -328,7 +335,7 @@ function RoutingPanel({ workOrder, hideInternal }) {
                 {item.summary}
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                {item.actor_name || 'System'} · {formatStamp(item.created_at)}
+                {item.actor_name || 'System'} · {formatStamp(item.created_at, timeZone)}
               </Typography>
             </Box>
           ))}
@@ -396,7 +403,7 @@ function proofEntries(workOrder) {
   return rows;
 }
 
-function Overview({ workOrder }) {
+function Overview({ workOrder, timeZone }) {
   const bill = workOrder.bill_to;
   const proofs = proofEntries(workOrder);
   return (
@@ -461,7 +468,7 @@ function Overview({ workOrder }) {
             </Typography>
           ) : null}
           <Box sx={{ mt: 1.5 }}>
-            <AttachmentList files={workOrder.files} legacy={workOrder.attachments} />
+            <AttachmentList files={workOrder.files} legacy={workOrder.attachments} timeZone={timeZone} />
           </Box>
         </BrandCard>
       </Grid>
@@ -469,7 +476,7 @@ function Overview({ workOrder }) {
         <Box sx={{ display: 'grid', gap: 2 }}>
           <BrandCard title="SPECIAL INSTRUCTIONS">
             <Typography sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-              {workOrder.notes || 'No notes on this work order.'}
+              {instructionText(workOrder) || 'No notes on this work order.'}
             </Typography>
           </BrandCard>
           <BrandCard title="PROOF">
@@ -486,20 +493,20 @@ function Overview({ workOrder }) {
   );
 }
 
-function getTabContent(tab, workOrder, scanState, hideInternal) {
+function getTabContent(tab, workOrder, scanState, hideInternal, timeZone) {
   switch (tab) {
     case 'Overview':
-      return <Overview workOrder={workOrder} />;
+      return <Overview workOrder={workOrder} timeZone={timeZone} />;
     case 'Specifications':
       return <SpecificationBlocks workOrder={workOrder} />;
     case 'Attachments':
-      return <AttachmentList files={workOrder.files} legacy={workOrder.attachments} />;
+      return <AttachmentList files={workOrder.files} legacy={workOrder.attachments} timeZone={timeZone} />;
     case 'Scan History':
-      return <ScanHistory events={scanState.events} loading={scanState.loading} error={scanState.error} />;
+      return <ScanHistory events={scanState.events} loading={scanState.loading} error={scanState.error} timeZone={timeZone} />;
     case 'Routing':
-      return <RoutingPanel workOrder={workOrder} hideInternal={hideInternal} />;
+      return <RoutingPanel workOrder={workOrder} hideInternal={hideInternal} timeZone={timeZone} />;
     case 'Notes':
-      return <Typography sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{workOrder.notes || 'No notes on this work order.'}</Typography>;
+      return <Typography sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{instructionText(workOrder) || 'No notes on this work order.'}</Typography>;
     default:
       return null;
   }
@@ -605,10 +612,10 @@ export default function WorkOrderDetail() {
   if (!workOrder) return <ErrorState message="Work order record is missing." />;
 
   const statusLabel = workOrder.routing?.current_status_label || canonicalWorkOrderStatus(workOrder.status) || '—';
-  const zoneLabel = timezoneLabel(deliveryZone);
+  const zoneLabel = timezoneLabel(deliveryZone, workOrder.due_date);
   const rush = String(workOrder.priority || '').trim().toLowerCase() === 'rush';
   const overdue = Boolean(deliveryZone)
-    && !isFinishedWorkOrderStatus(workOrder.status)
+    && isActiveWorkOrderStatus(workOrder.status)
     && wallClockOverdue(workOrder.due_date, deliveryZone);
   const number = workOrder.external_id || `#${workOrder.id}`;
 
@@ -642,7 +649,7 @@ export default function WorkOrderDetail() {
                 Due {formatDue(workOrder.due_date, zoneLabel)}
               </Typography>
               <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                Created {formatStamp(workOrder.created_at)} · Updated {formatStamp(workOrder.updated_at)}
+                Created {formatStamp(workOrder.created_at, deliveryZone)} · Updated {formatStamp(workOrder.updated_at, deliveryZone)}
               </Typography>
             </Box>
             <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: { xs: 'flex-start', md: 'flex-end' } }}>
@@ -700,7 +707,7 @@ export default function WorkOrderDetail() {
             ))}
           </Tabs>
           <Divider sx={{ borderColor: brand.border, my: 2 }} />
-          {getTabContent(activeTab, workOrder, { events, loading: eventsLoading, error: eventsError }, user?.role === 'customer')}
+          {getTabContent(activeTab, workOrder, { events, loading: eventsLoading, error: eventsError }, user?.role === 'customer', deliveryZone)}
         </CardContent>
       </Card>
       <MoveWorkOrderDialog

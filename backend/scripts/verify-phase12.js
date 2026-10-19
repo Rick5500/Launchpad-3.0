@@ -1,6 +1,6 @@
 /**
  * Phase 12 checks: printable work order timing labels for the branded ticket.
- * Rush, overdue, the Eastern zone label, and the existing Code 128 value.
+ * Rush, overdue, the shop-zone label for the due date, and the existing Code 128 value.
  * Usage (from backend/): node scripts/verify-phase12.js
  */
 const { spawn } = require('child_process');
@@ -186,9 +186,10 @@ function decodePrinted(svg, expected) {
 }
 
 async function main() {
-  assert(timezoneLabel('America/New_York') === 'Eastern', 'New York should print as Eastern');
-  assert(timezoneLabel('America/Detroit') === 'Eastern', 'Detroit should print as Eastern');
-  assert(timezoneLabel('UTC') === 'UTC', 'a non-Eastern zone should keep its name');
+  assert(timezoneLabel('America/New_York', '2020-01-06 09:15') === 'EST', 'a January New York due time should print as EST');
+  assert(timezoneLabel('America/New_York', '2026-07-15 12:00') === 'EDT', 'a July New York due time should print as EDT');
+  assert(timezoneLabel('America/Detroit', '2020-01-06 09:15') === 'EST', 'Detroit should use the same January offset');
+  assert(timezoneLabel('UTC', '2020-01-06 09:15') === 'UTC', 'UTC should keep its short name');
   assert(timezoneLabel('') === '', 'a blank zone should stay blank');
   console.log('PASS timezone labels');
 
@@ -281,7 +282,7 @@ async function main() {
     const sheet = printed.json.work_orders[0];
     assert(sheet.priority === 'Rush', `priority should be Rush, got ${sheet.priority}`);
     assert(sheet.timezone === 'America/New_York', `timezone should follow the shop, got ${sheet.timezone}`);
-    assert(sheet.timezone_label === 'Eastern', `Eastern shops should say Eastern, got ${sheet.timezone_label}`);
+    assert(sheet.timezone_label === 'EST', `a January due time should say EST, got ${sheet.timezone_label}`);
     assert(sheet.overdue === true, 'a past due time should be overdue');
     assert(sheet.due_date === '2020-01-06' && sheet.due_time === '09:15', 'due date and time should stay the stored wall clock');
     assert(printed.json.shop && printed.json.shop.name && printed.json.shop.phone, 'letterhead should still be present for the footer');
@@ -296,7 +297,7 @@ async function main() {
     assert(orderPrint.status === 200, `order print failed: ${orderPrint.status} ${orderPrint.text}`);
     assert(orderPrint.json.work_orders.length === 2, 'an order print should include every work order');
     for (const row of orderPrint.json.work_orders) {
-      assert(row.timezone_label === 'Eastern', 'each sheet should carry the zone label');
+      assert(row.timezone_label === 'EST', 'each January sheet should say EST');
       assert(row.overdue === true, 'each open past-due sheet should be overdue');
       decodePrinted(row.barcode_svg, row.external_id);
     }
@@ -332,6 +333,53 @@ async function main() {
     assert(later.json.work_orders[0].overdue === false, 'a future due time should not be overdue');
     assert(later.json.work_orders[0].due_soon === false, 'a far future due time should not be due soon');
     decodePrinted(later.json.work_orders[0].barcode_svg, later.json.work_orders[0].external_id);
+
+    const staff = await request({
+      method: 'POST',
+      path: '/api/workorders',
+      token: admin.token,
+      json: {
+        customer_id: created.json.id,
+        description: 'Counter copy',
+        quantity: 1,
+        status: 'open',
+        department: 'Large Format',
+        due_date: '2026-10-01 10:00',
+      },
+    });
+    assert(staff.status === 201 && staff.json && staff.json.id, `staff work order create failed: ${staff.status} ${staff.text}`);
+    assert(!staff.json.order_id, 'this check needs a work order with no order due time');
+    const staffPrint = await request({
+      method: 'GET',
+      path: `/api/workorders/${staff.json.id}/print`,
+      token: admin.token,
+    });
+    assert(staffPrint.status === 200, `staff print failed: ${staffPrint.status} ${staffPrint.text}`);
+    const staffSheet = staffPrint.json.work_orders[0];
+    assert(staffSheet.due_date === '2026-10-01', `staff due date should come from the work order, got ${staffSheet.due_date}`);
+    assert(staffSheet.due_time === '10:00', `staff due time should come from the work order, got ${staffSheet.due_time}`);
+    assert(staffSheet.timezone_label === 'EDT', `October due time should say EDT, got ${staffSheet.timezone_label}`);
+    assert(staffSheet.overdue === true, 'a past work-order due time with no order due time should be overdue');
+    assert(staffSheet.due_soon === false, 'an overdue work order should not also be due soon');
+
+    await db.run(`UPDATE work_orders SET status = 'cancelled' WHERE id = ?`, [staff.json.id]);
+    const cancelled = await request({
+      method: 'GET',
+      path: `/api/workorders/${staff.json.id}/print`,
+      token: admin.token,
+    });
+    assert(cancelled.status === 200, cancelled.text);
+    assert(cancelled.json.work_orders[0].due_time === '10:00', 'cancelling should leave the due time');
+    assert(cancelled.json.work_orders[0].overdue === false, 'a cancelled work order should not print overdue');
+
+    await db.run(`UPDATE work_orders SET status = 'on-hold' WHERE id = ?`, [staff.json.id]);
+    const held = await request({
+      method: 'GET',
+      path: `/api/workorders/${staff.json.id}/print`,
+      token: admin.token,
+    });
+    assert(held.status === 200, held.text);
+    assert(held.json.work_orders[0].overdue === false, 'an on-hold work order should not print overdue');
     console.log('PASS print timing, rush, overdue, and barcode');
   } finally {
     server.stop();
