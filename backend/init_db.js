@@ -146,30 +146,85 @@ async function seedCustomers() {
   }
 }
 
-async function seedDepartments() {
-  const departments = [
-    ['Large Format', 'Plans, drawings, and bid sets', '#1E88E5', 'description', 1, 1],
-    ['Small Format', 'Small format print production', '#43A047', 'print', 2, 1],
-    ['Signs & Graphics', 'Banners, signs, and graphics', '#8E24AA', 'branding_watermark', 3, 1],
-    ['Scanning', 'Scanning, OCR, and indexing', '#FB8C00', 'scanner', 4, 1],
-    ['Planroom', 'Project distribution and bids', '#00897B', 'groups', 5, 1],
-    ['Archive File', 'Archive retrieval', '#78909C', 'inventory_2', 6, 1],
-    ['Quality', 'Quality check before dispatch', '#F9A825', 'verified', 7, 1],
-    ['Dispatch', 'Ready for handoff and delivery', '#1565C0', 'outbound', 8, 1],
-    ['Delivery', 'Logistics and outbound delivery', '#ef5350', 'local_shipping', 9, 1],
-    ['Complete', 'Finished work orders', '#2E7D32', 'check_circle', 10, 1],
-    ['Reprographics', 'Reproduction and copy projects', '#7e57c2', 'copy_all', 11, 1],
-    ['Admin', 'Administrative and ops support', '#78909c', 'admin_panel_settings', 12, 1],
-  ];
+// Names already considered by seed. A renamed default stays in this list so a
+// later init does not insert the old name again. A name added to DEPARTMENT_SEEDS
+// after the flag exists is inserted once.
+const DEPARTMENT_SEED_SETTING = 'departments_seeded';
+const DEPARTMENT_SEEDS = [
+  ['Large Format', 'Plans, drawings, and bid sets', '#1E88E5', 'description', 1, 1],
+  ['Small Format', 'Small format print production', '#43A047', 'print', 2, 1],
+  ['Signs & Graphics', 'Banners, signs, and graphics', '#8E24AA', 'branding_watermark', 3, 1],
+  ['Scanning', 'Scanning, OCR, and indexing', '#FB8C00', 'scanner', 4, 1],
+  ['Planroom', 'Project distribution and bids', '#00897B', 'groups', 5, 1],
+  ['Archive File', 'Archive retrieval', '#78909C', 'inventory_2', 6, 1],
+  ['Quality', 'Quality check before dispatch', '#F9A825', 'verified', 7, 1],
+  ['Dispatch', 'Ready for handoff and delivery', '#1565C0', 'outbound', 8, 1],
+  ['Delivery', 'Logistics and outbound delivery', '#ef5350', 'local_shipping', 9, 1],
+  ['Complete', 'Finished work orders', '#2E7D32', 'check_circle', 10, 1],
+  ['Reprographics', 'Reproduction and copy projects', '#7e57c2', 'copy_all', 11, 1],
+  ['Admin', 'Administrative and ops support', '#78909c', 'admin_panel_settings', 12, 1],
+];
 
-  for (const department of departments) {
-    const existing = await get('SELECT id FROM departments WHERE name = ?', [department[0]]);
-    if (existing) continue;
-    await run(
-      'INSERT INTO departments (name, description, color, icon, sort_order, is_active) VALUES (?,?,?,?,?,?)',
-      department
-    );
+async function readSeededDepartmentNames() {
+  const row = await get('SELECT value FROM system_settings WHERE key = ?', [DEPARTMENT_SEED_SETTING]);
+  if (!row || row.value == null) return null;
+  try {
+    const parsed = JSON.parse(row.value);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.map((name) => String(name));
+  } catch (err) {
+    return null;
   }
+}
+
+async function writeSeededDepartmentNames(names) {
+  const value = JSON.stringify(names);
+  const existing = await get('SELECT key FROM system_settings WHERE key = ?', [DEPARTMENT_SEED_SETTING]);
+  if (existing) {
+    await run(
+      `UPDATE system_settings SET value = ?, updated_at = datetime('now') WHERE key = ?`,
+      [value, DEPARTMENT_SEED_SETTING]
+    );
+    return;
+  }
+  await run(
+    `INSERT INTO system_settings (key, value, updated_at) VALUES (?,?,datetime('now'))`,
+    [DEPARTMENT_SEED_SETTING, value]
+  );
+}
+
+async function insertDepartmentSeed(department) {
+  await run(
+    'INSERT INTO departments (name, description, color, icon, sort_order, is_active) VALUES (?,?,?,?,?,?)',
+    department
+  );
+}
+
+async function seedDepartments() {
+  const tracked = await readSeededDepartmentNames();
+  const countRow = await get('SELECT COUNT(*) AS count FROM departments');
+  const count = countRow ? Number(countRow.count) : 0;
+  if (!tracked) {
+    // An older database already has departments. Record the current seeds as
+    // handled so a renamed Quality is not inserted beside its new name.
+    if (count === 0) {
+      for (const department of DEPARTMENT_SEEDS) await insertDepartmentSeed(department);
+    }
+    await writeSeededDepartmentNames(DEPARTMENT_SEEDS.map((row) => row[0]));
+    return;
+  }
+
+  const known = new Set(tracked);
+  let changed = false;
+  for (const department of DEPARTMENT_SEEDS) {
+    const name = department[0];
+    if (known.has(name)) continue;
+    const existing = await get('SELECT id FROM departments WHERE name = ?', [name]);
+    if (!existing) await insertDepartmentSeed(department);
+    known.add(name);
+    changed = true;
+  }
+  if (changed) await writeSeededDepartmentNames([...known]);
 }
 
 async function applyDepartmentRoutes() {

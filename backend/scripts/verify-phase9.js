@@ -3,6 +3,9 @@
  * transaction, leaves history and custom scan locations alone, keeps a
  * restricted operator's board and scan on the new name, rejects a case-only
  * name collision, and does not let a non-JSON activity detail break the board.
+ * Init records seeded department names so a renamed default is not recreated.
+ * Quality, Dispatch, and Complete cannot be renamed. Work orders follow a
+ * case-insensitive trimmed match and store the canonical department name.
  * Usage (from backend/): node scripts/verify-phase9.js
  */
 const { spawn } = require('child_process');
@@ -12,10 +15,27 @@ const os = require('os');
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 
+const { NOTICE_SEVERE_CAP, reduceNotice } = require('../../frontend/src/components/headerScanNotice');
+
 const backendDir = path.join(__dirname, '..');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-phase9-'));
 const freshDb = path.join(tmp, 'fresh.db');
 const collisionDb = path.join(tmp, 'collision.db');
+const seedDb = path.join(tmp, 'seed.db');
+const SEEDED_DEPARTMENTS = [
+  'Large Format',
+  'Small Format',
+  'Signs & Graphics',
+  'Scanning',
+  'Planroom',
+  'Archive File',
+  'Quality',
+  'Dispatch',
+  'Delivery',
+  'Complete',
+  'Reprographics',
+  'Admin',
+];
 const port = 3121;
 const adminPassword = 'AdminPass123';
 
@@ -229,7 +249,109 @@ async function checkCaseDuplicateInit() {
   assert(twins.length === 2, `both case variants should remain, found ${twins.map((row) => row.name).join(', ')}`);
 }
 
+function checkNoticeQueue() {
+  let current = null;
+  for (let i = 1; i <= 8; i += 1) {
+    current = reduceNotice(current, { id: i, severity: 'success', message: `ok ${i}` });
+  }
+  assert(current && current.message === 'ok 1', 'the first success stays on screen');
+  assert(
+    current.queue.length === 1 && current.queue[0].message === 'ok 8',
+    `pending successes should collapse to the latest, got ${JSON.stringify(current.queue)}`
+  );
+
+  current = null;
+  for (let i = 1; i <= 8; i += 1) {
+    current = reduceNotice(current, { id: i, severity: 'error', message: `e${i}` });
+  }
+  assert(current && current.message === 'e1', 'the first error stays on screen');
+  assert(current.queue.length === NOTICE_SEVERE_CAP, `pending errors should cap at ${NOTICE_SEVERE_CAP}`);
+  assert(
+    current.queue.map((item) => item.message).join(',') === 'e4,e5,e6,e7,e8',
+    `the oldest pending errors should drop, got ${current.queue.map((item) => item.message).join(',')}`
+  );
+
+  current = reduceNotice(null, { id: 1, severity: 'warning', message: 'warn' });
+  current = reduceNotice(current, { id: 2, severity: 'success', message: 'ok early' });
+  current = reduceNotice(current, { id: 3, severity: 'error', message: 'bad' });
+  assert(current.severity === 'error' && current.message === 'bad', 'a more severe result should take the screen');
+  assert(
+    current.queue.map((item) => item.message).join(',') === 'warn,ok early',
+    `the warning and success should stay queued, got ${JSON.stringify(current.queue)}`
+  );
+  current = reduceNotice(current, { id: 4, severity: 'success', message: 'ok later' });
+  assert(
+    current.queue.map((item) => item.message).join(',') === 'warn,ok later',
+    `a later success should replace the pending success, got ${JSON.stringify(current.queue)}`
+  );
+}
+
+async function departmentNames(db) {
+  const rows = await db.all('SELECT name FROM departments ORDER BY name');
+  return rows.map((row) => row.name);
+}
+
+async function checkDepartmentSeed() {
+  await initDatabase(seedDb);
+  const seeded = openDb(seedDb);
+  const planroom = await seeded.get(`SELECT id FROM departments WHERE name = 'Planroom'`);
+  assert(planroom, 'a fresh database should seed Planroom');
+  await seeded.run(
+    `UPDATE departments SET name = 'File Room', updated_at = datetime('now') WHERE id = ?`,
+    [planroom.id]
+  );
+  await seeded.close();
+
+  await initDatabase(seedDb);
+  await initDatabase(seedDb);
+  const renamed = openDb(seedDb);
+  let names = await departmentNames(renamed);
+  assert(names.includes('File Room'), 'the renamed department should stay after init');
+  assert(!names.includes('Planroom'), `init should not recreate Planroom: ${names.join(', ')}`);
+  assert(names.filter((name) => name === 'File Room').length === 1, 'a second init should not duplicate File Room');
+
+  await renamed.run(`DELETE FROM system_settings WHERE key = 'departments_seeded'`);
+  await renamed.close();
+  await initDatabase(seedDb);
+  await initDatabase(seedDb);
+  const upgraded = openDb(seedDb);
+  names = await departmentNames(upgraded);
+  assert(!names.includes('Planroom'), 'an older database should not recreate a renamed department');
+  assert(names.includes('File Room'), 'the renamed department should survive the upgrade');
+  const flag = await upgraded.get(`SELECT value FROM system_settings WHERE key = 'departments_seeded'`);
+  assert(flag && flag.value, 'upgrade should record departments_seeded');
+  const tracked = JSON.parse(flag.value);
+  for (const name of SEEDED_DEPARTMENTS) {
+    assert(tracked.includes(name), `departments_seeded should record ${name}`);
+  }
+
+  const withoutAdmin = tracked.filter((name) => name !== 'Admin');
+  await upgraded.run(
+    `UPDATE system_settings SET value = ? WHERE key = 'departments_seeded'`,
+    [JSON.stringify(withoutAdmin)]
+  );
+  await upgraded.run(`DELETE FROM departments WHERE name = 'Admin'`);
+  await upgraded.close();
+  await initDatabase(seedDb);
+  const added = openDb(seedDb);
+  const admin = await added.get(`SELECT name FROM departments WHERE name = 'Admin'`);
+  assert(admin, 'a default that was never recorded should be inserted once');
+  await added.run(`DELETE FROM departments WHERE name = 'Quality'`);
+  const beforeSecond = await added.get('SELECT COUNT(*) AS count FROM departments');
+  await added.close();
+  await initDatabase(seedDb);
+  await initDatabase(seedDb);
+  const kept = openDb(seedDb);
+  const quality = await kept.get(`SELECT id FROM departments WHERE name = 'Quality'`);
+  const afterSecond = await kept.get('SELECT COUNT(*) AS count FROM departments');
+  await kept.close();
+  assert(!quality, 'a recorded seed name that was removed should not be inserted again');
+  assert(afterSecond.count === beforeSecond.count, 'init should stay idempotent after the upgrade');
+}
+
 async function main() {
+  checkNoticeQueue();
+  await checkDepartmentSeed();
   await checkCaseDuplicateInit();
 
   await initDatabase(freshDb);
@@ -239,6 +361,19 @@ async function main() {
   assert(index && /NOCASE/i.test(index.sql || ''), `a fresh database should index department names without case: ${index && index.sql}`);
   const qualityRoute = await before.get(`SELECT next_department FROM departments WHERE name = 'Large Format'`);
   assert(qualityRoute && qualityRoute.next_department === 'Quality', 'Large Format should still route to Quality before a rename');
+  const seededNames = await departmentNames(before);
+  for (const name of SEEDED_DEPARTMENTS) {
+    assert(seededNames.includes(name), `a fresh database should seed ${name}`);
+  }
+  assert(
+    seededNames.length === SEEDED_DEPARTMENTS.length,
+    `a fresh database should seed each default once, found ${seededNames.join(', ')}`
+  );
+  const seedFlag = await before.get(`SELECT value FROM system_settings WHERE key = 'departments_seeded'`);
+  const seedTracked = JSON.parse(seedFlag.value);
+  for (const name of SEEDED_DEPARTMENTS) {
+    assert(seedTracked.includes(name), `a fresh database should record seeded ${name}`);
+  }
   await before.close();
 
   const server = startServer(freshDb);
@@ -307,6 +442,10 @@ async function main() {
     await db.run(
       `INSERT INTO work_orders (external_id, description, quantity, status, department, next_department)
        VALUES ('P9-CASE', 'other case', 1, 'open', 'p9 bindery', 'p9 bindery')`
+    );
+    await db.run(
+      `INSERT INTO work_orders (external_id, description, quantity, status, department, next_department)
+       VALUES ('P9-SPACE', 'padded name', 1, 'open', '  P9 Bindery  ', '  P9 Bindery  ')`
     );
     await db.run(
       `INSERT INTO work_orders (external_id, description, quantity, status, department, next_department)
@@ -401,13 +540,15 @@ async function main() {
     const both = await workOrder('P9-BOTH');
     const done = await workOrder('P9-DONE');
     const caseOrder = await workOrder('P9-CASE');
+    const spacedOrder = await workOrder('P9-SPACE');
     const moveBefore = await workOrder('P9-MOVE');
     const otherOrder = await workOrder('P9-OTHER');
     assert(kept.department === 'P9 Bindery West' && kept.next_department === 'Quality', 'the current department should move and the next route stay');
     assert(nextOnly.department === 'Dispatch' && nextOnly.next_department === 'P9 Bindery West', 'a work order routed here should follow');
     assert(both.department === 'P9 Bindery West' && both.next_department === 'P9 Bindery West', 'both current columns should follow');
     assert(done.department === 'P9 Bindery West' && done.next_department === 'Complete', 'a finished work order still has a current department');
-    assert(caseOrder.department === 'p9 bindery' && caseOrder.next_department === 'p9 bindery', 'a case-different work order should stay');
+    assert(caseOrder.department === 'P9 Bindery West' && caseOrder.next_department === 'P9 Bindery West', 'a case-different work order should follow');
+    assert(spacedOrder.department === 'P9 Bindery West' && spacedOrder.next_department === 'P9 Bindery West', 'a padded work order department should follow');
     assert(moveBefore.department === 'Large Format' && moveBefore.next_department === 'Quality', 'an unrelated work order should stay');
     assert(otherOrder.department === 'Quality' && otherOrder.next_department === 'Dispatch', 'Quality should stay Quality');
 
@@ -472,7 +613,7 @@ async function main() {
     const renameDetail = JSON.parse(renameRows[0].detail);
     assert(renameDetail.previous_name === 'P9 Bindery' && renameDetail.name === 'P9 Bindery West', 'the activity should name both departments');
     assert(renameDetail.users_updated === 1 && renameDetail.changes && renameDetail.changes.users === 1, `user count ${JSON.stringify(renameDetail.changes)}`);
-    assert(renameDetail.changes.work_orders === 4, `work order count ${renameDetail.changes.work_orders}`);
+    assert(renameDetail.changes.work_orders === 6, `work order count ${renameDetail.changes.work_orders}`);
     assert(renameDetail.changes.barcode_locations === 2, `location count ${renameDetail.changes.barcode_locations}`);
     assert(renameDetail.changes.services === 1, `service count ${renameDetail.changes.services}`);
     assert(renameDetail.changes.departments === 1, `route count ${renameDetail.changes.departments}`);
@@ -499,8 +640,11 @@ async function main() {
     assert(board.json.viewer && board.json.viewer.restricted === true, 'the operator should stay restricted');
     assert(board.json.viewer.department === 'P9 Bindery West', `the board should use the renamed department: ${JSON.stringify(board.json.viewer)}`);
     const boardIds = (board.json.work_orders || []).map((row) => row.external_id);
-    assert(boardIds.includes('P9-KEEP') && boardIds.includes('P9-BOTH'), `the operator should still see their orders: ${boardIds.join(',')}`);
-    assert(!boardIds.includes('P9-OTHER') && !boardIds.includes('P9-CASE') && !boardIds.includes('P9-MOVE'), `other queues should stay hidden: ${boardIds.join(',')}`);
+    assert(
+      boardIds.includes('P9-KEEP') && boardIds.includes('P9-BOTH') && boardIds.includes('P9-CASE') && boardIds.includes('P9-SPACE'),
+      `the operator should still see their orders: ${boardIds.join(',')}`
+    );
+    assert(!boardIds.includes('P9-OTHER') && !boardIds.includes('P9-MOVE'), `other queues should stay hidden: ${boardIds.join(',')}`);
     assert((board.json.work_orders || []).every((row) => row.department === 'P9 Bindery West'), 'every visible row should be the renamed department');
 
     const scanned = await request({
@@ -547,7 +691,7 @@ async function main() {
     const capsOrder = await workOrder('P9-CAPS');
     const capsOther = await workOrder('P9-CAPS-OTHER');
     assert(capsOrder.department === 'p9 caps', 'the exact old name should follow a case-only rename of the same department');
-    assert(capsOther.department === 'P9 CAPS', 'a third casing should stay put');
+    assert(capsOther.department === 'p9 caps', 'a stray-cased work order should follow a case-only rename');
 
     await db.run(
       `INSERT INTO users (username, password_hash, role, display_name, department, is_active)
@@ -621,6 +765,131 @@ async function main() {
     assert(/moved by hand/.test(restrictedActivity.text), 'the activity list should include the plain-text row');
     const summaries = (restrictedActivity.json.activity || []).map((row) => row.summary || '');
     assert(!summaries.some((summary) => summary === '{'), 'a malformed row for another department should stay out of the restricted list');
+
+    for (const systemName of ['Quality', 'Dispatch', 'Complete']) {
+      const systemRow = await db.get(`SELECT id, name FROM departments WHERE name = ?`, [systemName]);
+      const blockedName = systemName === 'Quality' ? 'QA Review' : `${systemName} Desk`;
+      const blockedRename = await renameDepartment(admin.token, systemRow.id, blockedName);
+      assert(blockedRename.status === 400, `${systemName} rename should be 400: ${blockedRename.status} ${blockedRename.text}`);
+      assert(/system department/i.test(blockedRename.text), blockedRename.text);
+      const stillNamed = await db.get(`SELECT name FROM departments WHERE id = ?`, [systemRow.id]);
+      assert(stillNamed && stillNamed.name === systemName, `${systemName} should keep its name`);
+    }
+    const qualityRow = await db.get(`SELECT id FROM departments WHERE name = 'Quality'`);
+    const qualityCase = await renameDepartment(admin.token, qualityRow.id, 'quality');
+    assert(qualityCase.status === 400, `a case-only Quality rename should be 400: ${qualityCase.status} ${qualityCase.text}`);
+    const qualityStill = await db.get(`SELECT name FROM departments WHERE id = ?`, [qualityRow.id]);
+    assert(qualityStill && qualityStill.name === 'Quality', 'Quality should stay Quality');
+
+    const spareFilled = await request({
+      method: 'PUT',
+      path: `/api/departments/${spare.id}`,
+      token: admin.token,
+      json: {
+        name: 'P9 Spare',
+        description: 'keep me',
+        color: '#abc123',
+        icon: 'print',
+        sort_order: 44,
+        is_active: 1,
+      },
+    });
+    assert(spareFilled.status === 200, spareFilled.text);
+    const spareNameOnly = await request({
+      method: 'PUT',
+      path: `/api/departments/${spare.id}`,
+      token: admin.token,
+      json: { name: 'P9 Spare' },
+    });
+    assert(spareNameOnly.status === 200, spareNameOnly.text);
+    assert(spareNameOnly.json.description === 'keep me', 'an omitted description should stay');
+    assert(spareNameOnly.json.color === '#abc123', 'an omitted color should stay');
+    assert(spareNameOnly.json.icon === 'print', 'an omitted icon should stay');
+    assert(Number(spareNameOnly.json.sort_order) === 44, 'an omitted sort order should stay');
+    assert(Number(spareNameOnly.json.is_active) === 1, 'an omitted active flag should stay');
+    const spareCleared = await request({
+      method: 'PUT',
+      path: `/api/departments/${spare.id}`,
+      token: admin.token,
+      json: { name: 'P9 Spare', description: '', color: '', icon: '' },
+    });
+    assert(spareCleared.status === 200, spareCleared.text);
+    assert(spareCleared.json.description === '' && spareCleared.json.color === '' && spareCleared.json.icon === '', 'an empty string should clear a text field');
+    assert(Number(spareCleared.json.sort_order) === 44, 'clearing text should leave sort order alone');
+
+    const customer = await db.get(`SELECT id FROM users WHERE role = 'customer' LIMIT 1`);
+    assert(customer && customer.id, 'a seeded customer should exist');
+    const canonicalCreate = await request({
+      method: 'POST',
+      path: '/api/workorders',
+      token: admin.token,
+      json: {
+        customer_id: customer.id,
+        description: 'canonical department',
+        quantity: 1,
+        status: 'open',
+        department: '  p9 bindery west  ',
+      },
+    });
+    assert(canonicalCreate.status === 201, canonicalCreate.text);
+    assert(canonicalCreate.json.department === 'P9 Bindery West', `create should store the canonical department: ${canonicalCreate.json.department}`);
+    const canonicalUpdate = await request({
+      method: 'PUT',
+      path: `/api/workorders/${canonicalCreate.json.id}`,
+      token: admin.token,
+      json: {
+        customer_id: customer.id,
+        description: 'canonical department',
+        quantity: 1,
+        status: 'open',
+        department: 'P9 BINDERY WEST',
+      },
+    });
+    assert(canonicalUpdate.status === 200 && canonicalUpdate.json.department === 'P9 Bindery West', `update should keep the canonical department: ${canonicalUpdate.text}`);
+    const unknownDepartment = await request({
+      method: 'POST',
+      path: '/api/workorders',
+      token: admin.token,
+      json: {
+        customer_id: customer.id,
+        description: 'unknown department',
+        quantity: 1,
+        status: 'open',
+        department: '  Manufacturing  ',
+      },
+    });
+    assert(unknownDepartment.status === 201 && unknownDepartment.json.department === 'Manufacturing', `an unknown department should stay trimmed: ${unknownDepartment.text}`);
+
+    const beforeBoard = await request({ method: 'GET', path: '/api/admin-board', token: admin.token });
+    assert(beforeBoard.status === 200, beforeBoard.text);
+    const beforeTabs = (beforeBoard.json.tabs || []).map((tab) => tab.key);
+    const planroomIndex = beforeTabs.indexOf('Planroom');
+    const scanningIndex = beforeTabs.indexOf('Scanning');
+    assert(planroomIndex > 0 && planroomIndex === scanningIndex + 1, `Planroom should follow Scanning: ${beforeTabs.join(', ')}`);
+    assert((beforeBoard.json.stats.departments || []).some((card) => card.name === 'Planroom'), 'Planroom should keep an entry-queue card');
+    const beforeEmpty = ((beforeBoard.json.alerts || []).find((alert) => alert.id === 'empty-queues') || {}).departments || [];
+    const planroom = await db.get(`SELECT id FROM departments WHERE name = 'Planroom'`);
+    const renamedPlanroom = await request({
+      method: 'PUT',
+      path: `/api/departments/${planroom.id}`,
+      token: admin.token,
+      json: { name: 'File Room' },
+    });
+    assert(renamedPlanroom.status === 200 && renamedPlanroom.json.name === 'File Room', renamedPlanroom.text);
+    assert(Number(renamedPlanroom.json.sort_order) === 5, 'a name-only rename should keep the tab position');
+    const afterBoard = await request({ method: 'GET', path: '/api/admin-board', token: admin.token });
+    const afterTabs = (afterBoard.json.tabs || []).map((tab) => tab.key);
+    assert(afterTabs.indexOf('File Room') === planroomIndex, `File Room should keep Planroom's tab: ${afterTabs.join(', ')}`);
+    assert(!afterTabs.includes('Planroom'), 'the old department name should leave the board');
+    assert((afterBoard.json.stats.departments || []).some((card) => card.name === 'File Room'), 'the entry-queue card should follow the rename');
+    assert(!(afterBoard.json.stats.departments || []).some((card) => card.name === 'Planroom'), 'the old stat card name should be gone');
+    const afterEmpty = ((afterBoard.json.alerts || []).find((alert) => alert.id === 'empty-queues') || {}).departments || [];
+    if (beforeEmpty.includes('Planroom')) {
+      assert(afterEmpty.includes('File Room'), `the empty-queue alert should follow the rename: ${afterEmpty.join(', ')}`);
+      assert(!afterEmpty.includes('Planroom'), 'the old name should leave the empty-queue alert');
+    }
+    const planroomService = await db.get(`SELECT department_name FROM services WHERE name = 'Planroom'`);
+    assert(planroomService && planroomService.department_name === 'File Room', 'the Planroom service should follow the rename');
   } finally {
     await db.close();
     await server.stop();

@@ -1,7 +1,12 @@
 // Live department names follow a rename inside the caller's transaction.
-// Match the stored text exactly. users.department is resolved case-insensitively
-// when a login is saved, so a lower() cascade would rewrite a different
-// department that differs only by case.
+// users, services, department routes, and scan locations match the stored text
+// exactly. A lower() update there would rewrite a different department that
+// differs only by case. Work orders match case-insensitively and trimmed, so a
+// stray-cased queue still follows the department it belongs to.
+//
+// Quality, Dispatch, and Complete cannot be renamed. The complete queue and the
+// Quality / Dispatch scan stages still look up those names. Rejecting the rename
+// keeps that logic from pointing at a name that no longer exists.
 //
 // Follow the rename:
 //   users.department
@@ -21,6 +26,16 @@
 //   production_board.lane (a lane, not a department)
 //   work_orders.routing_instructions and production_history.notes
 // work_orders.assigned_department_id is the department id, so it already follows.
+
+const SYSTEM_DEPARTMENTS = new Set(['quality', 'dispatch', 'complete']);
+
+function isSystemDepartment(name) {
+  return SYSTEM_DEPARTMENTS.has(String(name || '').trim().toLowerCase());
+}
+
+function systemDepartmentMessage(name) {
+  return `${name} is a system department and cannot be renamed. The Admin Board and barcode scans use that name.`;
+}
 
 async function countRows(tx, sql, params) {
   const row = await tx.get(sql, params);
@@ -43,19 +58,20 @@ async function cascadeDepartmentRename(tx, previousName, name) {
   const workOrders = await countRows(
     tx,
     `SELECT COUNT(*) AS count FROM work_orders
-     WHERE department = ? OR next_department = ?`,
+     WHERE lower(trim(coalesce(department, ''))) = lower(trim(?))
+        OR lower(trim(coalesce(next_department, ''))) = lower(trim(?))`,
     [previousName, previousName]
   );
   await tx.run(
     `UPDATE work_orders
      SET department = ?, updated_at = datetime('now')
-     WHERE department = ?`,
+     WHERE lower(trim(coalesce(department, ''))) = lower(trim(?))`,
     [name, previousName]
   );
   await tx.run(
     `UPDATE work_orders
      SET next_department = ?, updated_at = datetime('now')
-     WHERE next_department = ?`,
+     WHERE lower(trim(coalesce(next_department, ''))) = lower(trim(?))`,
     [name, previousName]
   );
 
@@ -115,4 +131,6 @@ async function cascadeDepartmentRename(tx, previousName, name) {
 
 module.exports = {
   cascadeDepartmentRename,
+  isSystemDepartment,
+  systemDepartmentMessage,
 };

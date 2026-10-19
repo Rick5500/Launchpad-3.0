@@ -4,7 +4,11 @@ const db = require('../db');
 const { withTransaction } = require('../dbAsync');
 const activityLog = require('../activityLog');
 const { httpError } = require('../httpError');
-const { cascadeDepartmentRename } = require('../departmentRename');
+const {
+  cascadeDepartmentRename,
+  isSystemDepartment,
+  systemDepartmentMessage,
+} = require('../departmentRename');
 const router = express.Router();
 
 function parseBoolean(value) {
@@ -16,6 +20,28 @@ function parseBoolean(value) {
 function parseSortOrder(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function fieldProvided(payload, key) {
+  return Object.prototype.hasOwnProperty.call(payload, key) && payload[key] != null;
+}
+
+function keepOrTrim(payload, key, existing) {
+  if (!fieldProvided(payload, key)) return existing == null ? '' : String(existing);
+  return String(payload[key]).trim();
+}
+
+function keepSortOrder(payload, existing) {
+  if (!fieldProvided(payload, 'sort_order')) {
+    const current = Number(existing);
+    return Number.isFinite(current) ? current : 0;
+  }
+  return parseSortOrder(payload.sort_order);
+}
+
+function keepActive(payload, existing) {
+  if (!fieldProvided(payload, 'is_active')) return existing ? 1 : 0;
+  return parseBoolean(payload.is_active);
 }
 
 function isUniqueConstraint(err) {
@@ -114,17 +140,19 @@ router.put('/:id', auth.requireAuth, auth.requireRole('admin'), async (req, res)
   const name = String(payload.name || '').trim();
   if (!name) return res.status(400).json({ error: 'name is required' });
 
-  const description = String(payload.description || '').trim();
-  const color = String(payload.color || '').trim();
-  const icon = String(payload.icon || '').trim();
-  const sortOrder = parseSortOrder(payload.sort_order);
-  const isActive = parseBoolean(payload.is_active ?? 1);
-
   try {
     const row = await withTransaction(async (tx) => {
       const existing = await tx.get('SELECT * FROM departments WHERE id = ?', [id]);
       if (!existing) return null;
       const previousName = String(existing.name || '');
+      if (isSystemDepartment(previousName) && previousName !== name) {
+        throw httpError(400, systemDepartmentMessage(previousName));
+      }
+      const description = keepOrTrim(payload, 'description', existing.description);
+      const color = keepOrTrim(payload, 'color', existing.color);
+      const icon = keepOrTrim(payload, 'icon', existing.icon);
+      const sortOrder = keepSortOrder(payload, existing.sort_order);
+      const isActive = keepActive(payload, existing.is_active);
       const collision = await tx.get(
         'SELECT id FROM departments WHERE id != ? AND lower(name) = lower(?)',
         [existing.id, name]
