@@ -9,28 +9,11 @@ const SCAN_PREVIEW = 10;
 const APPROVAL_PREVIEW = 5;
 const STORED_ALERT_LIMIT = 20;
 
-// Tabs follow the shop route. Other departments are added only when they have active work.
-const BOARD_DEPARTMENTS = Object.freeze([
-  'Large Format',
-  'Small Format',
-  'Signs & Graphics',
-  'Scanning',
-  'Planroom',
-  'Archive File',
-  'Quality',
-  'Dispatch',
-  'Delivery',
-  'Complete',
-]);
-
-// Stat cards are the entry queues, plus total active and completed this month.
-const STAT_DEPARTMENTS = Object.freeze([
-  'Large Format',
-  'Small Format',
-  'Signs & Graphics',
-  'Scanning',
-  'Planroom',
-]);
+// Entry-queue stat cards. Seeded departments use sort_order 1 through 5 for
+// Large Format, Small Format, Signs & Graphics, Scanning, and Planroom. A rename
+// keeps that sort_order, so the card stays with the department.
+const STAT_SORT_MIN = 1;
+const STAT_SORT_MAX = 5;
 
 const FINISHED_SQL = `lower(trim(coalesce(wo.status, ''))) IN ('completed', 'complete')`;
 const IN_COMPLETE_SQL = `lower(trim(coalesce(wo.department, ''))) = 'complete'`;
@@ -50,6 +33,10 @@ class BoardError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+function showsOnBoard(row) {
+  return Boolean(row) && row.show_on_board !== 0 && row.show_on_board !== false;
 }
 
 function assignedDepartment(user) {
@@ -94,15 +81,21 @@ function scanDepartmentSql(alias = 'e') {
   )`;
 }
 
+// json_extract throws on malformed JSON in this SQLite build. A plain-text
+// activity row must not take down the restricted board.
+function jsonDetailText(alias, path) {
+  return `CASE WHEN json_valid(${alias}.detail) THEN json_extract(${alias}.detail, '${path}') ELSE NULL END`;
+}
+
 // Work-order events only. A row matches when the work order is in the
 // department now, or the event names that department as current, from, or to.
 function activityDepartmentSql(alias = 'a') {
   return `(
     lower(coalesce(${alias}.entity_type, '')) = 'work_order'
     AND (
-      lower(trim(coalesce(json_extract(${alias}.detail, '$.department'), ''))) = lower(?)
-      OR lower(trim(coalesce(json_extract(${alias}.detail, '$.from_department'), ''))) = lower(?)
-      OR lower(trim(coalesce(json_extract(${alias}.detail, '$.to_department'), ''))) = lower(?)
+      lower(trim(coalesce(${jsonDetailText(alias, '$.department')}, ''))) = lower(?)
+      OR lower(trim(coalesce(${jsonDetailText(alias, '$.from_department')}, ''))) = lower(?)
+      OR lower(trim(coalesce(${jsonDetailText(alias, '$.to_department')}, ''))) = lower(?)
       OR EXISTS (
         SELECT 1 FROM work_orders wo
         WHERE wo.id = ${alias}.entity_id
@@ -625,7 +618,7 @@ async function listScans(limit, department) {
 async function loadAlerts(now = new Date(), scope = null) {
   const window = completionWindow();
   const [departments, activeRows, deliveries, backup, stored] = await Promise.all([
-    all(`SELECT name, color, is_active FROM departments`),
+    all(`SELECT name, color, sort_order, is_active, show_on_board FROM departments ORDER BY sort_order, name`),
     all(
       `SELECT trim(coalesce(wo.department, '')) AS name, COUNT(*) AS count
        FROM work_orders wo
@@ -659,13 +652,15 @@ async function loadAlerts(now = new Date(), scope = null) {
   const known = new Map(departments.map((row) => [String(row.name).trim().toLowerCase(), row]));
   const emptyNames = [];
   let tracked = 0;
-  const trackedNames = scope && scope.restricted ? [scope.department] : BOARD_DEPARTMENTS;
-  for (const name of trackedNames) {
-    if (name.toLowerCase() === 'complete') continue;
-    const row = known.get(name.toLowerCase());
-    if (!row || !row.is_active) continue;
+  const trackedRows = scope && scope.restricted
+    ? [known.get(String(scope.department || '').trim().toLowerCase())].filter(Boolean)
+    : departments.filter((row) => showsOnBoard(row));
+  for (const row of trackedRows) {
+    if (!row.is_active) continue;
+    if (String(row.name).trim().toLowerCase() === 'complete') continue;
     tracked += 1;
-    if ((activeByLower.get(name.toLowerCase()) || 0) === 0) emptyNames.push(row.name);
+    const key = String(row.name).trim().toLowerCase();
+    if ((activeByLower.get(key) || 0) === 0) emptyNames.push(row.name);
   }
 
   const alerts = [];
@@ -772,7 +767,7 @@ async function loadSummary(user, query) {
     scans,
     alerts,
   ] = await Promise.all([
-    all(`SELECT name, color, sort_order, is_active FROM departments ORDER BY sort_order, name`),
+    all(`SELECT name, color, sort_order, is_active, show_on_board FROM departments ORDER BY sort_order, name`),
     all(
       `SELECT trim(coalesce(wo.department, '')) AS name, COUNT(*) AS count
        FROM work_orders wo
@@ -808,14 +803,14 @@ async function loadSummary(user, query) {
 
   const tabs = [{ key: 'All', label: 'All', count: totalActiveRow ? totalActiveRow.count : 0, color: null }];
   const shown = new Set(['all']);
-  for (const name of BOARD_DEPARTMENTS) {
-    const row = known.get(name.toLowerCase());
-    if (!row) continue;
-    const activeCount = activeByLower.get(name.toLowerCase()) || 0;
+  for (const row of departments) {
+    if (!showsOnBoard(row)) continue;
+    const key = String(row.name).trim().toLowerCase();
+    const activeCount = activeByLower.get(key) || 0;
     if (!row.is_active && activeCount === 0) continue;
-    const count = name.toLowerCase() === 'complete' ? (completeRow ? completeRow.count : 0) : activeCount;
+    const count = key === 'complete' ? (completeRow ? completeRow.count : 0) : activeCount;
     tabs.push({ key: row.name, label: row.name, count, color: row.color || '#607D8B' });
-    shown.add(name.toLowerCase());
+    shown.add(key);
   }
   for (const [key, count] of activeByLower) {
     if (shown.has(key) || count <= 0) continue;
@@ -829,12 +824,14 @@ async function loadSummary(user, query) {
   }
 
   const statDepartments = [];
-  for (const name of STAT_DEPARTMENTS) {
-    const row = known.get(name.toLowerCase());
-    if (!row) continue;
+  for (const row of departments) {
+    if (!row.is_active) continue;
+    const order = Number(row.sort_order);
+    if (!Number.isFinite(order) || order < STAT_SORT_MIN || order > STAT_SORT_MAX) continue;
+    const key = String(row.name).trim().toLowerCase();
     statDepartments.push({
       name: row.name,
-      active: activeByLower.get(name.toLowerCase()) || 0,
+      active: activeByLower.get(key) || 0,
       color: row.color || '#607D8B',
     });
   }

@@ -74,6 +74,7 @@ async function ensureDepartmentsTable() {
     icon TEXT,
     sort_order INTEGER DEFAULT 0,
     is_active INTEGER DEFAULT 1,
+    show_on_board INTEGER NOT NULL DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME
   )`);
@@ -146,30 +147,121 @@ async function seedCustomers() {
   }
 }
 
-async function seedDepartments() {
-  const departments = [
-    ['Large Format', 'Plans, drawings, and bid sets', '#1E88E5', 'description', 1, 1],
-    ['Small Format', 'Small format print production', '#43A047', 'print', 2, 1],
-    ['Signs & Graphics', 'Banners, signs, and graphics', '#8E24AA', 'branding_watermark', 3, 1],
-    ['Scanning', 'Scanning, OCR, and indexing', '#FB8C00', 'scanner', 4, 1],
-    ['Planroom', 'Project distribution and bids', '#00897B', 'groups', 5, 1],
-    ['Archive File', 'Archive retrieval', '#78909C', 'inventory_2', 6, 1],
-    ['Quality', 'Quality check before dispatch', '#F9A825', 'verified', 7, 1],
-    ['Dispatch', 'Ready for handoff and delivery', '#1565C0', 'outbound', 8, 1],
-    ['Delivery', 'Logistics and outbound delivery', '#ef5350', 'local_shipping', 9, 1],
-    ['Complete', 'Finished work orders', '#2E7D32', 'check_circle', 10, 1],
-    ['Reprographics', 'Reproduction and copy projects', '#7e57c2', 'copy_all', 11, 1],
-    ['Admin', 'Administrative and ops support', '#78909c', 'admin_panel_settings', 12, 1],
-  ];
+// Names already considered by seed. A renamed default stays in this list so a
+// later init does not insert the old name again. A name added to DEPARTMENT_SEEDS
+// after the flag exists is inserted once.
+const DEPARTMENT_SEED_SETTING = 'departments_seeded';
+// The tabs the board listed before show_on_board existed. Reprographics and
+// Admin stay off that list so an upgraded database matches the old board.
+const BOARD_DEPARTMENT_NAMES = new Set([
+  'large format',
+  'small format',
+  'signs & graphics',
+  'scanning',
+  'planroom',
+  'archive file',
+  'quality',
+  'dispatch',
+  'delivery',
+  'complete',
+]);
 
-  for (const department of departments) {
-    const existing = await get('SELECT id FROM departments WHERE name = ?', [department[0]]);
-    if (existing) continue;
-    await run(
-      'INSERT INTO departments (name, description, color, icon, sort_order, is_active) VALUES (?,?,?,?,?,?)',
-      department
-    );
+function seedShowsOnBoard(name) {
+  return BOARD_DEPARTMENT_NAMES.has(String(name || '').trim().toLowerCase()) ? 1 : 0;
+}
+const DEPARTMENT_SEEDS = [
+  ['Large Format', 'Plans, drawings, and bid sets', '#1E88E5', 'description', 1, 1],
+  ['Small Format', 'Small format print production', '#43A047', 'print', 2, 1],
+  ['Signs & Graphics', 'Banners, signs, and graphics', '#8E24AA', 'branding_watermark', 3, 1],
+  ['Scanning', 'Scanning, OCR, and indexing', '#FB8C00', 'scanner', 4, 1],
+  ['Planroom', 'Project distribution and bids', '#00897B', 'groups', 5, 1],
+  ['Archive File', 'Archive retrieval', '#78909C', 'inventory_2', 6, 1],
+  ['Quality', 'Quality check before dispatch', '#F9A825', 'verified', 7, 1],
+  ['Dispatch', 'Ready for handoff and delivery', '#1565C0', 'outbound', 8, 1],
+  ['Delivery', 'Logistics and outbound delivery', '#ef5350', 'local_shipping', 9, 1],
+  ['Complete', 'Finished work orders', '#2E7D32', 'check_circle', 10, 1],
+  ['Reprographics', 'Reproduction and copy projects', '#7e57c2', 'copy_all', 11, 1],
+  ['Admin', 'Administrative and ops support', '#78909c', 'admin_panel_settings', 12, 1],
+];
+
+async function readSeededDepartmentNames() {
+  const row = await get('SELECT value FROM system_settings WHERE key = ?', [DEPARTMENT_SEED_SETTING]);
+  if (!row || row.value == null) return null;
+  try {
+    const parsed = JSON.parse(row.value);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.map((name) => String(name));
+  } catch (err) {
+    return null;
   }
+}
+
+async function writeSeededDepartmentNames(names) {
+  const value = JSON.stringify(names);
+  const existing = await get('SELECT key FROM system_settings WHERE key = ?', [DEPARTMENT_SEED_SETTING]);
+  if (existing) {
+    await run(
+      `UPDATE system_settings SET value = ?, updated_at = datetime('now') WHERE key = ?`,
+      [value, DEPARTMENT_SEED_SETTING]
+    );
+    return;
+  }
+  await run(
+    `INSERT INTO system_settings (key, value, updated_at) VALUES (?,?,datetime('now'))`,
+    [DEPARTMENT_SEED_SETTING, value]
+  );
+}
+
+async function insertDepartmentSeed(department) {
+  await run(
+    `INSERT INTO departments (name, description, color, icon, sort_order, is_active, show_on_board)
+     VALUES (?,?,?,?,?,?,?)`,
+    [...department, seedShowsOnBoard(department[0])]
+  );
+}
+
+// Backfill only when this init adds the column. A later init leaves an
+// administrator's toggle alone, and new departments default to shown.
+async function ensureShowOnBoard() {
+  const rows = await all('PRAGMA table_info(departments)');
+  if (rows.some((row) => row.name === 'show_on_board')) return;
+  await run('ALTER TABLE departments ADD COLUMN show_on_board INTEGER NOT NULL DEFAULT 1');
+  const names = [...BOARD_DEPARTMENT_NAMES];
+  await run(
+    `UPDATE departments
+     SET show_on_board = CASE
+       WHEN lower(trim(name)) IN (${names.map(() => '?').join(',')}) THEN 1
+       ELSE 0
+     END`,
+    names
+  );
+}
+
+async function seedDepartments() {
+  const tracked = await readSeededDepartmentNames();
+  const countRow = await get('SELECT COUNT(*) AS count FROM departments');
+  const count = countRow ? Number(countRow.count) : 0;
+  if (!tracked) {
+    // An older database already has departments. Record the current seeds as
+    // handled so a renamed Quality is not inserted beside its new name.
+    if (count === 0) {
+      for (const department of DEPARTMENT_SEEDS) await insertDepartmentSeed(department);
+    }
+    await writeSeededDepartmentNames(DEPARTMENT_SEEDS.map((row) => row[0]));
+    return;
+  }
+
+  const known = new Set(tracked);
+  let changed = false;
+  for (const department of DEPARTMENT_SEEDS) {
+    const name = department[0];
+    if (known.has(name)) continue;
+    const existing = await get('SELECT id FROM departments WHERE lower(name) = lower(?)', [name]);
+    if (!existing) await insertDepartmentSeed(department);
+    known.add(name);
+    changed = true;
+  }
+  if (changed) await writeSeededDepartmentNames([...known]);
 }
 
 async function applyDepartmentRoutes() {
@@ -705,6 +797,7 @@ async function main() {
   await ensureColumns('departments', [
     { name: 'next_department', definition: 'TEXT' },
   ]);
+  await ensureShowOnBoard();
   await ensureColumns('work_orders', [
     { name: 'order_id', definition: 'INTEGER' },
     { name: 'service_id', definition: 'INTEGER' },
@@ -760,8 +853,30 @@ async function main() {
   await seedProductionBoard();
   await seedDeliveries();
   await normalizeLegacyWorkOrderStatuses();
+  await ensureDepartmentNameIndex();
   await ensureExternalIdUniqueIndex();
   console.log('Database initialization complete.');
+}
+
+// Case-insensitive uniqueness. Skip when an older database already has
+// Quality and quality, and leave those rows in place.
+async function ensureDepartmentNameIndex() {
+  const duplicate = await get(
+    `SELECT lower(name) AS name
+     FROM departments
+     GROUP BY lower(name)
+     HAVING COUNT(*) > 1
+     LIMIT 1`
+  );
+  if (duplicate) {
+    console.warn(
+      `Skipping case-insensitive unique index on departments.name because duplicates exist (${duplicate.name})`
+    );
+    return;
+  }
+  await run(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_departments_name_nocase ON departments(name COLLATE NOCASE)'
+  );
 }
 
 async function ensureExternalIdUniqueIndex() {

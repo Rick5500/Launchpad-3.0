@@ -96,6 +96,22 @@ function parseOptionalNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function canonicalDepartment(name, cb) {
+  const text = String(name || '').trim();
+  if (!text) return cb(null, text);
+  db.get(
+    `SELECT name FROM departments
+     WHERE lower(trim(name)) = lower(?)
+     ORDER BY CASE WHEN name = ? THEN 0 ELSE 1 END, id
+     LIMIT 1`,
+    [text, text],
+    (err, row) => {
+      if (err) return cb(err);
+      cb(null, row ? row.name : text);
+    }
+  );
+}
+
 function validateWorkOrder(data) {
   const errors = [];
   const customerId = Number(data.customer_id);
@@ -241,13 +257,18 @@ router.post('/', auth.requireAuth, staffRoles, (req, res) => {
   const errors = validateWorkOrder(payload);
   if (errors.length) return res.status(400).json({ error: errors.join('; ') });
 
+  canonicalDepartment(payload.department, (canonErr, department) => {
+    if (canonErr) return res.status(500).json({ error: 'Failed to create work order' });
+    insertWorkOrder(department);
+  });
+
+  function insertWorkOrder(department) {
   const {
     external_id,
     customer_id,
     description,
     quantity,
     status,
-    department,
     stage_id,
     priority,
     assigned_department_id,
@@ -332,6 +353,7 @@ router.post('/', auth.requireAuth, staffRoles, (req, res) => {
       });
     }
   );
+  }
 });
 
 router.put('/:id', auth.requireAuth, staffRoles, (req, res) => {
@@ -341,13 +363,18 @@ router.put('/:id', auth.requireAuth, staffRoles, (req, res) => {
   const errors = validateWorkOrder(payload);
   if (errors.length) return res.status(400).json({ error: errors.join('; ') });
 
+  canonicalDepartment(payload.department, (canonErr, department) => {
+    if (canonErr) return res.status(500).json({ error: 'Failed to update work order' });
+    updateWorkOrder(department);
+  });
+
+  function updateWorkOrder(department) {
   const {
     external_id,
     customer_id,
     description,
     quantity,
     status,
-    department,
     stage_id,
     priority,
     assigned_department_id,
@@ -443,12 +470,12 @@ router.put('/:id', auth.requireAuth, staffRoles, (req, res) => {
             }
           );
 
-          const departmentChanged = String(previous.department || '').trim() !== String(department || '').trim();
+          const departmentChanged = String(previous.department || '').trim() !== department;
           if (!departmentChanged) return loadUpdated();
 
           db.get(
             `SELECT id, next_department FROM departments WHERE lower(name) = lower(?)`,
-            [String(department || '').trim()],
+            [department],
             (routeErr, route) => {
               if (routeErr) console.error('WORK ORDER ROUTE ERROR:', routeErr);
               if (routeErr || !route) return loadUpdated();
@@ -466,6 +493,7 @@ router.put('/:id', auth.requireAuth, staffRoles, (req, res) => {
       );
     }
   );
+  }
 });
 
 router.put('/:id/stage', auth.requireAuth, staffRoles, (req, res) => {

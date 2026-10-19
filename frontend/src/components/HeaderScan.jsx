@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Box, InputBase, Snackbar } from '@mui/material';
 import { authFetch } from '../api';
 import { requestBoardRefresh } from '../boardEvents';
+import { advanceNotice, noticeDelay, reduceNotice } from './headerScanNotice.mjs';
 
 function isTypingTarget(node) {
   if (!node || node === document.body || node === document.documentElement) return false;
@@ -49,6 +50,7 @@ export default function HeaderScan({ user, autoFocus }) {
   const submittingRef = useRef(false);
   const userRef = useRef(user);
   const noticeSeq = useRef(0);
+  const restoreScanFocus = useRef(false);
   const [value, setValue] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState(null);
@@ -60,6 +62,17 @@ export default function HeaderScan({ user, autoFocus }) {
     if (node && typeof node.focus === 'function') node.focus();
   }
 
+  function scanIsFocused() {
+    return document.activeElement === inputRef.current;
+  }
+
+  function closeNotice(id) {
+    const restore = restoreScanFocus.current || scanIsFocused();
+    restoreScanFocus.current = false;
+    advance(id);
+    if (restore) focusInput();
+  }
+
   function setBusy(next) {
     submittingRef.current = next;
     setSubmitting(next);
@@ -67,8 +80,24 @@ export default function HeaderScan({ user, autoFocus }) {
 
   function showNotice(next) {
     noticeSeq.current += 1;
-    setNotice({ ...next, id: noticeSeq.current });
+    const item = {
+      id: noticeSeq.current,
+      severity: next.severity || 'info',
+      message: next.message,
+    };
+    setNotice((current) => reduceNotice(current, item));
   }
+
+  function advance(id) {
+    setNotice((current) => advanceNotice(current, id));
+  }
+
+  useEffect(() => {
+    if (!notice) return undefined;
+    const id = notice.id;
+    const timer = setTimeout(() => closeNotice(id), noticeDelay(notice));
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -211,23 +240,30 @@ export default function HeaderScan({ user, autoFocus }) {
         />
         <BarcodeMark />
       </Box>
-      <Snackbar
-        key={notice ? notice.id : 'scan-notice'}
-        open={Boolean(notice)}
-        autoHideDuration={4000}
-        onClose={() => setNotice(null)}
-        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-        sx={{ mt: 7 }}
-      >
-        <Alert
-          severity={notice?.severity || 'info'}
-          variant="filled"
-          onClose={() => setNotice(null)}
-          sx={{ width: '100%' }}
+      {notice ? (
+        <Snackbar
+          key={notice.id}
+          open
+          onMouseDownCapture={() => {
+            restoreScanFocus.current = scanIsFocused();
+          }}
+          onClose={(_event, reason) => {
+            if (reason === 'clickaway') return;
+            closeNotice(notice.id);
+          }}
+          anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+          sx={{ mt: 7 }}
         >
-          {notice?.message}
-        </Alert>
-      </Snackbar>
+          <Alert
+            severity={notice.severity || 'info'}
+            variant="filled"
+            onClose={() => closeNotice(notice.id)}
+            sx={{ width: '100%' }}
+          >
+            {notice.message}
+          </Alert>
+        </Snackbar>
+      ) : null}
     </>
   );
 }

@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at DATETIME
 );
 
+-- name is unique. init_db.js adds idx_departments_name_nocase so two names
+-- that differ only by case cannot both exist. That index is not created here:
+-- an older database that already has case-only duplicates must still initialize.
 CREATE TABLE IF NOT EXISTS departments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
@@ -34,6 +37,7 @@ CREATE TABLE IF NOT EXISTS departments (
   icon TEXT,
   sort_order INTEGER DEFAULT 0,
   is_active INTEGER DEFAULT 1,
+  show_on_board INTEGER NOT NULL DEFAULT 1, -- 0 keeps an empty department off the board tabs
   next_department TEXT, -- production route target; null at the end of the route
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME
