@@ -166,8 +166,11 @@ function login(username, password, cb) {
   db.get(
     `SELECT id, username, password_hash, role, display_name, company, contact_name, phone, email,
             address_line1, address_line2, city, state, zip, department, is_active
-     FROM users WHERE username = ?`,
-    [username],
+     FROM users
+     WHERE username = ? COLLATE NOCASE
+     ORDER BY CASE WHEN username = ? THEN 0 ELSE 1 END, id ASC
+     LIMIT 1`,
+    [username, username],
     (err, row) => {
       if (err) return cb(err);
       if (!row || !row.password_hash) return cb(null, null);

@@ -18,6 +18,19 @@ function createFixedWindowLimiter({ windowMs, max }) {
     return { allowed: true, remaining: max - entry.count };
   }
 
+  function peek(key) {
+    const now = Date.now();
+    const entry = buckets.get(key);
+    if (!entry || entry.resetAt <= now) return { allowed: true, remaining: max };
+    if (entry.count >= max) {
+      return {
+        allowed: false,
+        retryAfterSeconds: Math.max(1, Math.ceil((entry.resetAt - now) / 1000)),
+      };
+    }
+    return { allowed: true, remaining: max - entry.count };
+  }
+
   function cleanup() {
     const now = Date.now();
     for (const [key, entry] of buckets) {
@@ -32,7 +45,7 @@ function createFixedWindowLimiter({ windowMs, max }) {
     timer.unref();
   }
 
-  return { check };
+  return { check, peek };
 }
 
 module.exports = { createFixedWindowLimiter };
