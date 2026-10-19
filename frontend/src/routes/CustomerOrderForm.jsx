@@ -1,13 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
   Alert,
   Box,
   Button,
   Checkbox,
+  Chip,
+  Collapse,
   Dialog,
   DialogActions,
   DialogContent,
@@ -44,7 +43,58 @@ const SERVICE_ICONS = {
 };
 
 const SHIP_TO_SERVICE = 'Ship To (3rd Party)';
-const fieldSx = { '& .MuiInputBase-root': { bgcolor: '#fff' } };
+const fieldSx = {
+  '& .MuiInputBase-root': { bgcolor: '#fff' },
+  '& .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline': {
+    borderColor: brand.navy,
+    borderWidth: 2,
+  },
+};
+const visuallyHidden = {
+  position: 'absolute',
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: 'hidden',
+  clip: 'rect(0, 0, 0, 0)',
+  whiteSpace: 'nowrap',
+  border: 0,
+};
+const focusRing = {
+  '&:focus-visible, &.Mui-focusVisible': {
+    outline: `3px solid ${brand.orange}`,
+    outlineOffset: 2,
+  },
+};
+const STEP_IDS = {
+  contact: 'step-contact',
+  delivery: 'step-delivery',
+  job: 'step-job',
+  files: 'step-files',
+  review: 'step-review',
+};
+const openAllSteps = {
+  [STEP_IDS.contact]: true,
+  [STEP_IDS.delivery]: true,
+  [STEP_IDS.job]: true,
+  [STEP_IDS.files]: true,
+  [STEP_IDS.review]: true,
+};
+
+function countLabel(count, singular, plural) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function prefersReducedMotion() {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function filledAddress(line1, line2, city, state, zip) {
+  const street = [line1, line2].map((value) => String(value || '').trim()).filter(Boolean).join(', ');
+  const region = [String(city || '').trim(), [state, zip].map((value) => String(value || '').trim()).filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  return [street, region].filter(Boolean).join(' · ');
+}
 
 const ORIGINALS_SOURCES = [
   'Files attached below',
@@ -153,45 +203,180 @@ function billLabel(entry) {
   return [who || 'Bill To', where].filter(Boolean).join(', ');
 }
 
-function LabelField({ label, required, children }) {
+function LabelField({ id, label, required, span, children }) {
   return (
-    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '140px 1fr' }, gap: 1, alignItems: 'center' }}>
-      <Typography sx={{ fontSize: 14, color: brand.text }}>
+    <Box sx={{
+      gridColumn: span ? '1 / -1' : undefined,
+      display: 'grid',
+      gridTemplateColumns: { xs: '1fr', md: 'minmax(112px, 148px) minmax(0, 1fr)' },
+      gap: { xs: 0.4, md: 1.25 },
+      alignItems: { xs: 'stretch', md: 'center' },
+      minWidth: 0,
+    }}
+    >
+      <Typography component="label" htmlFor={id} sx={{ fontSize: 14, fontWeight: 700, color: brand.text, lineHeight: 1.3 }}>
         {label}
-        {required ? <Box component="span" sx={{ color: brand.danger }}> *</Box> : null}
+        {required ? <Box component="span" aria-hidden="true" sx={{ color: brand.danger }}> *</Box> : null}
+        {required ? <Box component="span" sx={visuallyHidden}> required</Box> : null}
       </Typography>
       {children}
     </Box>
   );
 }
 
-function FormAccordion({ title, children, defaultExpanded = true }) {
+function FieldGrid({ children }) {
   return (
-    <Accordion defaultExpanded={defaultExpanded} disableGutters sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: '8px !important', '&:before': { display: 'none' } }}>
-      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-        <Typography sx={{ color: brand.navy, fontWeight: 700 }}>{title}</Typography>
-      </AccordionSummary>
-      <AccordionDetails>
-        <Box sx={{ display: 'grid', gap: 1.25 }}>{children}</Box>
-      </AccordionDetails>
-    </Accordion>
+    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, columnGap: 2.5, rowGap: 1.25 }}>
+      {children}
+    </Box>
   );
 }
 
-function FieldInput({ field, value, disabled, onChange }) {
+function TextControl({
+  id,
+  label,
+  required,
+  value,
+  onChange,
+  disabled,
+  type = 'text',
+  select,
+  children,
+  multiline,
+  minRows,
+  helperText,
+  placeholder,
+  inputProps,
+  SelectProps,
+  span,
+  autoComplete,
+}) {
+  return (
+    <LabelField id={id} label={label} required={required} span={span}>
+      <TextField
+        id={id}
+        size="small"
+        fullWidth
+        required={Boolean(required)}
+        type={type}
+        select={Boolean(select)}
+        value={value}
+        disabled={disabled}
+        onChange={onChange}
+        multiline={multiline}
+        minRows={minRows}
+        helperText={helperText}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+        inputProps={{ 'aria-required': required ? true : undefined, ...(inputProps || {}) }}
+        SelectProps={SelectProps}
+        InputLabelProps={type === 'date' ? { shrink: true } : undefined}
+        sx={fieldSx}
+      >
+        {children}
+      </TextField>
+    </LabelField>
+  );
+}
+
+function Subhead({ children }) {
+  return (
+    <Typography component="h3" sx={{ fontWeight: 800, color: brand.navy, fontSize: 13, letterSpacing: '0.06em', textTransform: 'uppercase', borderLeft: `4px solid ${brand.orange}`, pl: 1, m: 0 }}>
+      {children}
+    </Typography>
+  );
+}
+
+function EmptyNote({ children }) {
+  return (
+    <Box sx={{ border: `1px dashed ${brand.border}`, borderRadius: 1, px: 1.5, py: 1.25, bgcolor: '#F8FAFC' }}>
+      <Typography sx={{ color: brand.muted, fontSize: 14 }}>{children}</Typography>
+    </Box>
+  );
+}
+
+function FlowSection({ id, step, title, subtitle, open, complete, onToggle, children }) {
+  return (
+    <Box
+      id={id}
+      component="section"
+      aria-labelledby={`${id}-heading`}
+      sx={{ scrollMarginTop: '88px', bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 2, overflow: 'hidden' }}
+    >
+      <Box
+        component="button"
+        type="button"
+        aria-expanded={open}
+        aria-controls={`${id}-panel`}
+        onClick={onToggle}
+        sx={{
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1.25,
+          textAlign: 'left',
+          border: 0,
+          cursor: 'pointer',
+          bgcolor: brand.navy,
+          color: '#fff',
+          px: { xs: 1.5, sm: 2 },
+          py: 1.25,
+          borderLeft: `4px solid ${brand.orange}`,
+          ...focusRing,
+        }}
+      >
+        <Box aria-hidden="true" sx={{ width: 28, height: 28, borderRadius: '50%', bgcolor: brand.orange, color: '#111', fontWeight: 800, display: 'grid', placeItems: 'center', flexShrink: 0, fontSize: 14 }}>
+          {step}
+        </Box>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography id={`${id}-heading`} sx={{ fontWeight: 800, letterSpacing: '0.03em', fontSize: { xs: 15, sm: 16 }, color: '#fff', lineHeight: 1.2 }}>
+            {title}
+          </Typography>
+          {subtitle ? <Typography sx={{ fontSize: 12, color: 'rgba(255,255,255,0.88)', mt: 0.25 }}>{subtitle}</Typography> : null}
+        </Box>
+        {complete ? <Chip label="Ready" size="small" sx={{ bgcolor: '#fff', color: brand.navy, fontWeight: 800 }} /> : null}
+        <ExpandMoreIcon aria-hidden="true" sx={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 150ms' }} />
+      </Box>
+      <Collapse in={open}>
+        <Box id={`${id}-panel`} sx={{ p: { xs: 1.5, sm: 2.5 }, display: 'grid', gap: 1.5 }}>
+          {children}
+        </Box>
+      </Collapse>
+    </Box>
+  );
+}
+
+function ReviewFact({ label, value }) {
+  const text = String(value || '').trim();
+  return (
+    <Box sx={{ minWidth: 0 }}>
+      <Typography sx={{ fontSize: 12, fontWeight: 700, color: brand.muted }}>{label}</Typography>
+      <Typography sx={{ fontSize: 14, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: text ? brand.text : brand.muted }}>
+        {text || 'Not entered yet'}
+      </Typography>
+    </Box>
+  );
+}
+
+function FieldInput({ id, field, value, disabled, onChange }) {
   const choices = optionValues(field);
   const helper = field.key === 'acct_number' ? 'Ship using this account no.' : '';
   if (field.type === 'checkbox') {
     return (
-      <LabelField label={field.label} required={field.required}>
-        <Checkbox checked={Boolean(value)} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
+      <LabelField id={id} label={field.label} required={field.required}>
+        <Checkbox
+          checked={Boolean(value)}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.checked)}
+          inputProps={{ id, 'aria-required': field.required || undefined }}
+        />
       </LabelField>
     );
   }
   if (field.type === 'select') {
     return (
-      <LabelField label={field.label} required={field.required}>
-        <TextField select size="small" required={field.required} value={value || ''} disabled={disabled} onChange={(event) => onChange(event.target.value)} sx={fieldSx}>
+      <LabelField id={id} label={field.label} required={field.required}>
+        <TextField id={id} select size="small" fullWidth required={field.required} value={value || ''} disabled={disabled} onChange={(event) => onChange(event.target.value)} sx={fieldSx} inputProps={{ 'aria-required': field.required || undefined }}>
           <MenuItem value="">Select</MenuItem>
           {choices.map((option) => <MenuItem key={option} value={option}>{option}</MenuItem>)}
         </TextField>
@@ -201,10 +386,12 @@ function FieldInput({ field, value, disabled, onChange }) {
   if (field.type === 'multiselect') {
     const selected = Array.isArray(value) ? value : [];
     return (
-      <LabelField label={field.label} required={field.required}>
+      <LabelField id={id} label={field.label} required={field.required}>
         <TextField
+          id={id}
           select
           size="small"
+          fullWidth
           required={field.required}
           value={selected}
           disabled={disabled}
@@ -216,6 +403,7 @@ function FieldInput({ field, value, disabled, onChange }) {
             multiple: true,
             renderValue: (selectedValues) => (selectedValues.length ? selectedValues.join(', ') : 'Select'),
           }}
+          inputProps={{ 'aria-required': field.required || undefined }}
           sx={fieldSx}
         >
           {choices.map((option) => (
@@ -230,16 +418,18 @@ function FieldInput({ field, value, disabled, onChange }) {
   }
   if (field.type === 'textarea') {
     return (
-      <LabelField label={field.label} required={field.required}>
-        <TextField size="small" multiline minRows={2} value={value || ''} disabled={disabled} onChange={(event) => onChange(event.target.value)} sx={fieldSx} />
+      <LabelField id={id} label={field.label} required={field.required}>
+        <TextField id={id} size="small" fullWidth multiline minRows={2} required={field.required} value={value || ''} disabled={disabled} onChange={(event) => onChange(event.target.value)} sx={fieldSx} inputProps={{ 'aria-required': field.required || undefined }} />
       </LabelField>
     );
   }
   const inputType = field.type === 'number' ? 'number' : (field.key === 'date' ? 'date' : 'text');
   return (
-    <LabelField label={field.label} required={field.required}>
+    <LabelField id={id} label={field.label} required={field.required}>
       <TextField
+        id={id}
         size="small"
+        fullWidth
         type={inputType}
         required={field.required}
         value={value || ''}
@@ -247,6 +437,7 @@ function FieldInput({ field, value, disabled, onChange }) {
         helperText={helper}
         onChange={(event) => onChange(field.type === 'number' && event.target.value !== '' ? Number(event.target.value) : event.target.value)}
         InputLabelProps={inputType === 'date' ? { shrink: true } : undefined}
+        inputProps={{ 'aria-required': field.required || undefined }}
         sx={fieldSx}
       />
     </LabelField>
@@ -295,6 +486,7 @@ export default function CustomerOrderForm() {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState(null);
   const [loadError, setLoadError] = useState('');
+  const [openSteps, setOpenSteps] = useState(openAllSteps);
 
   function applyProfile(source, includeCompanyFallback) {
     if (!source) return;
@@ -664,6 +856,12 @@ export default function CustomerOrderForm() {
         order_number: body.order_number,
         work_orders: body.work_orders || [],
       });
+      window.requestAnimationFrame(() => {
+        document.getElementById('order-success')?.scrollIntoView({
+          behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+          block: 'start',
+        });
+      });
     } catch (err) {
       setFormError(err.message || 'Unable to submit the order');
     } finally {
@@ -672,6 +870,57 @@ export default function CustomerOrderForm() {
   }
 
   const editorService = editor ? options.services.find((service) => service.id === editor.service_id) : null;
+  const uploadedCount = uploadedFiles.filter((file) => file.status === 'uploaded').length;
+  const contactComplete = Boolean(
+    (!isStaff || customerId)
+    && company.trim() && contactName.trim() && phone.trim() && email.trim()
+    && address1.trim() && city.trim() && stateName.trim() && zip.trim(),
+  );
+  const deliveryComplete = Boolean(dueDate && dueTime && returnTo && (seeShipLines || deliveryMethod));
+  const jobComplete = Boolean(
+    projectName.trim()
+    && paymentMethod
+    && selectedServices.length
+    && !selectedServiceRows.some((service) => emptyServiceMessage(service, lines, notes, shipTo)),
+  );
+  const filesComplete = Boolean(originalsSource && (!filesAttached || uploadedCount > 0) && !uploading);
+  const steps = [
+    { id: STEP_IDS.contact, short: 'Contact', label: 'Customer & contact', complete: contactComplete },
+    { id: STEP_IDS.delivery, short: 'Delivery', label: 'Bill To, Ship To & delivery', complete: deliveryComplete },
+    { id: STEP_IDS.job, short: 'Job', label: 'Job & services', complete: jobComplete },
+    { id: STEP_IDS.files, short: 'Files', label: 'Files & instructions', complete: filesComplete },
+    { id: STEP_IDS.review, short: 'Review', label: 'Review & submit', complete: Boolean(result) },
+  ];
+  const activeIndex = steps.findIndex((step) => !step.complete);
+  const currentIndex = activeIndex === -1 ? steps.length - 1 : activeIndex;
+  const billText = filledAddress(billTo.address_line1, billTo.address_line2, billTo.city, billTo.state, billTo.zip);
+  const billWho = [billTo.name, billTo.company].filter((value) => String(value || '').trim()).join(' — ');
+
+  useEffect(() => {
+    if (!formError) return undefined;
+    setOpenSteps(openAllSteps);
+    const frame = window.requestAnimationFrame(() => {
+      const node = document.getElementById('order-form-error');
+      node?.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'center' });
+      node?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [formError]);
+
+  function toggleStep(id) {
+    setOpenSteps((current) => ({ ...current, [id]: !current[id] }));
+  }
+
+  function jumpTo(id) {
+    setOpenSteps((current) => ({ ...current, [id]: true }));
+    window.requestAnimationFrame(() => {
+      document.getElementById(id)?.scrollIntoView({
+        behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+        block: 'start',
+      });
+    });
+  }
+
 
   return (
     <CustomerShell
@@ -681,17 +930,140 @@ export default function CustomerOrderForm() {
       extra={isStaff ? <Button color="inherit" onClick={() => navigate('/')}>Admin Board</Button> : null}
     >
       <GlobalStyles styles={{ '@media print': { '.no-print': { display: 'none !important' }, body: { background: '#fff' } } }} />
-      <Box component="form" id="order-form" onSubmit={handleSubmit} sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: result ? 'minmax(0, 1fr) 320px' : '1fr' }, gap: 2, alignItems: 'start' }}>
-        <Box className="no-print" sx={{ display: 'grid', gap: 1.5 }}>
-          {loadError ? <Alert severity="error">{loadError}</Alert> : null}
-          {formError ? <Alert severity="error">{formError}</Alert> : null}
+      <Box component="form" id="order-form" noValidate onSubmit={handleSubmit} sx={{ display: 'grid', gap: 2, pb: { xs: 18, sm: 14 } }}>
+        {result ? (
+          <Box id="order-success" data-testid="success-panel" sx={{ bgcolor: '#fff', border: `2px solid ${brand.green}`, borderTop: `4px solid ${brand.orange}`, borderRadius: 2, p: { xs: 2, sm: 3 } }}>
+            <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
+              <CheckCircleIcon sx={{ color: brand.green, fontSize: 42 }} />
+              <Box sx={{ minWidth: 0 }}>
+                <Typography sx={{ color: brand.green, fontWeight: 800, fontSize: { xs: 20, sm: 24 }, lineHeight: 1.2 }}>Order Submitted Successfully!</Typography>
+                <Typography data-testid="order-number" sx={{ mt: 0.5, fontWeight: 700, fontSize: 18 }}>Order #: {result.order_number}</Typography>
+              </Box>
+            </Box>
+            <Typography sx={{ color: brand.navy, fontWeight: 800, mt: 2 }}>Work Orders Created</Typography>
+            <Box sx={{ mt: 0.5 }}>
+              {(result.work_orders || []).map((workOrder) => (
+                <Typography key={workOrder.id} sx={{ fontSize: 14, mb: 0.5 }}>
+                  <Box component="span" sx={{ fontWeight: 700 }}>{workOrder.external_id}</Box>
+                  {' '}
+                  {workOrder.service_name}
+                </Typography>
+              ))}
+            </Box>
+            <Box className="no-print" sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 2 }}>
+              <Button variant="contained" onClick={() => navigate(`/orders/${result.order.id}`)} sx={{ bgcolor: brand.navy, fontWeight: 700, textTransform: 'none', ...focusRing }}>View Submitted Order</Button>
+              <Button variant="outlined" onClick={() => window.print()} sx={{ borderColor: brand.navy, color: brand.navy, fontWeight: 700, textTransform: 'none', ...focusRing }}>Print Confirmation</Button>
+              <Button variant="outlined" onClick={resetForm} sx={{ borderColor: brand.navy, color: brand.navy, fontWeight: 700, textTransform: 'none', ...focusRing }}>Create Another Order</Button>
+            </Box>
+          </Box>
+        ) : null}
+        <Box className="no-print" sx={{ display: 'grid', gap: 2 }}>
+          <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderTop: `4px solid ${brand.orange}`, borderRadius: 2, p: { xs: 2, sm: 2.5 } }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1 }}>
+              <Box component="img" src="/logo.png" alt="" sx={{ height: 36, width: 'auto', display: 'block' }} />
+              <Typography sx={{ color: brand.orange, fontWeight: 800, letterSpacing: '0.08em', fontSize: 12 }}>
+                {isStaff ? 'STAFF ORDER' : 'CUSTOMER ORDER'}
+              </Typography>
+            </Box>
+            <Typography variant="h4" component="h1" sx={{ color: brand.navy, fontWeight: 800, fontSize: { xs: 26, sm: 32 }, lineHeight: 1.15 }}>
+              {isStaff ? 'Create Order' : 'Place an order'}
+            </Typography>
+            <Typography sx={{ mt: 1, color: brand.muted, maxWidth: 760 }}>
+              {isStaff
+                ? 'Create an order for a customer. Each step stays open, so required fields are on this page. Review the work orders, then submit.'
+                : 'Place an order with Accent Imaging. Company, contact, phone, and email start from your account. Fill anything still blank, then review and submit.'}
+            </Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1.5 }}>
+              <Chip size="small" label={isStaff ? 'Staff' : 'Your account'} sx={{ bgcolor: brand.navy, color: '#fff', fontWeight: 700 }} />
+              <Chip size="small" variant="outlined" label="* Required" sx={{ borderColor: brand.navy, color: brand.navy, fontWeight: 700 }} />
+              {selectedServices.length ? (
+                <Chip size="small" label={countLabel(selectedServices.length, 'service', 'services')} sx={{ bgcolor: brand.orange, color: '#111', fontWeight: 800 }} />
+              ) : null}
+            </Box>
+          </Box>
 
-          {isStaff ? (
-            <FormAccordion title="Customer">
-              <LabelField label="Customer" required>
-                <TextField
+          <Box
+            role="navigation"
+            aria-label="Order steps"
+            sx={{
+              position: 'sticky',
+              top: 0,
+              zIndex: 15,
+              bgcolor: '#fff',
+              border: `1px solid ${brand.border}`,
+              borderBottom: `3px solid ${brand.orange}`,
+              borderRadius: 2,
+              p: 0.75,
+              display: 'grid',
+              gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+              gap: 0.5,
+            }}
+          >
+            {steps.map((step, index) => {
+              const current = index === currentIndex;
+              return (
+                <Box
+                  key={step.id}
+                  component="button"
+                  type="button"
+                  onClick={() => jumpTo(step.id)}
+                  aria-current={current ? 'step' : undefined}
+                  aria-label={`${index + 1}. ${step.label}${step.complete ? ', complete' : ''}`}
+                  sx={{
+                    border: 0,
+                    cursor: 'pointer',
+                    borderRadius: 1,
+                    px: 0.25,
+                    py: 0.75,
+                    minWidth: 0,
+                    bgcolor: current ? brand.navy : 'transparent',
+                    color: current ? '#fff' : brand.navy,
+                    ...focusRing,
+                  }}
+                >
+                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.4 }}>
+                    <Box aria-hidden="true" sx={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: '50%',
+                      display: 'grid',
+                      placeItems: 'center',
+                      fontSize: 12,
+                      fontWeight: 800,
+                      bgcolor: step.complete ? brand.orange : (current ? '#fff' : '#E7EEF8'),
+                      color: '#111',
+                    }}
+                    >
+                      {step.complete ? '✓' : index + 1}
+                    </Box>
+                    <Typography sx={{ fontSize: 11, fontWeight: 800, color: 'inherit', lineHeight: 1.15, textAlign: 'center' }}>{step.short}</Typography>
+                  </Box>
+                </Box>
+              );
+            })}
+          </Box>
+
+          {loadError ? <Alert severity="error">{loadError}</Alert> : null}
+          {formError ? (
+            <Alert id="order-form-error" tabIndex={-1} severity="error" sx={{ scrollMarginTop: '88px' }}>{formError}</Alert>
+          ) : null}
+
+          <FlowSection
+            id={STEP_IDS.contact}
+            step={1}
+            title="Customer & contact"
+            subtitle={isStaff ? 'Choose the customer, then confirm the contact on this order.' : 'These details print on the order. Update anything that changed.'}
+            open={openSteps[STEP_IDS.contact]}
+            complete={contactComplete}
+            onToggle={() => toggleStep(STEP_IDS.contact)}
+          >
+            {isStaff ? (
+              <>
+                <TextControl
+                  id="order-customer"
+                  span
                   select
-                  size="small"
+                  label="Customer"
                   required
                   value={customerId}
                   disabled={locked}
@@ -702,58 +1074,176 @@ export default function CustomerOrderForm() {
                     if (match) applyProfile(match, true);
                     setBillChoice('');
                   }}
-                  sx={fieldSx}
+                  SelectProps={{
+                    displayEmpty: true,
+                    renderValue: (selected) => {
+                      const match = customers.find((customer) => String(customer.id) === String(selected));
+                      return match ? (match.display_name || match.username) : 'Select a customer';
+                    },
+                  }}
                 >
+                  <MenuItem value="" disabled>Select a customer</MenuItem>
                   {customers.map((customer) => (
                     <MenuItem key={customer.id} value={customer.id}>{customer.display_name || customer.username}</MenuItem>
                   ))}
-                </TextField>
-              </LabelField>
-            </FormAccordion>
-          ) : null}
+                </TextControl>
+                {customers.length === 0 ? <EmptyNote>No customers are available to choose.</EmptyNote> : null}
+              </>
+            ) : null}
+            <FieldGrid>
+              <TextControl id="order-company" label="Company" required value={company} disabled={locked} onChange={(event) => setCompany(event.target.value)} autoComplete="organization" />
+              <TextControl id="order-contact" label="Contact" required value={contactName} disabled={locked} onChange={(event) => setContactName(event.target.value)} autoComplete="name" />
+              <TextControl id="order-phone" label="Phone" required value={phone} disabled={locked} onChange={(event) => setPhone(event.target.value)} autoComplete="tel" />
+              <TextControl id="order-email" label="Email" required type="email" value={email} disabled={locked} onChange={(event) => setEmail(event.target.value)} autoComplete="email" />
+              <TextControl id="order-address1" label="Addr 1" required value={address1} disabled={locked} onChange={(event) => setAddress1(event.target.value)} autoComplete="address-line1" />
+              <TextControl id="order-address2" label="Addr 2" value={address2} disabled={locked} onChange={(event) => setAddress2(event.target.value)} autoComplete="address-line2" />
+              <TextControl id="order-city" label="City" required value={city} disabled={locked} onChange={(event) => setCity(event.target.value)} autoComplete="address-level2" />
+              <TextControl id="order-state" label="State" required value={stateName} disabled={locked} onChange={(event) => setStateName(event.target.value)} autoComplete="address-level1" />
+              <TextControl id="order-zip" label="Zip" required value={zip} disabled={locked} onChange={(event) => setZip(event.target.value)} autoComplete="postal-code" />
+            </FieldGrid>
+          </FlowSection>
 
-          <FormAccordion title="Contact">
-            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 1.25 }}>
-              <LabelField label="Company" required><TextField size="small" required value={company} disabled={locked} onChange={(event) => setCompany(event.target.value)} sx={fieldSx} /></LabelField>
-              <LabelField label="Contact" required><TextField size="small" required value={contactName} disabled={locked} onChange={(event) => setContactName(event.target.value)} sx={fieldSx} /></LabelField>
-              <LabelField label="Phone" required><TextField size="small" required value={phone} disabled={locked} onChange={(event) => setPhone(event.target.value)} sx={fieldSx} /></LabelField>
-              <LabelField label="Email" required><TextField size="small" required type="email" value={email} disabled={locked} onChange={(event) => setEmail(event.target.value)} sx={fieldSx} /></LabelField>
-              <LabelField label="Addr 1" required><TextField size="small" required value={address1} disabled={locked} onChange={(event) => setAddress1(event.target.value)} sx={fieldSx} /></LabelField>
-              <LabelField label="Addr 2"><TextField size="small" value={address2} disabled={locked} onChange={(event) => setAddress2(event.target.value)} sx={fieldSx} /></LabelField>
-              <LabelField label="City" required><TextField size="small" required value={city} disabled={locked} onChange={(event) => setCity(event.target.value)} sx={fieldSx} /></LabelField>
-              <LabelField label="State" required><TextField size="small" required value={stateName} disabled={locked} onChange={(event) => setStateName(event.target.value)} sx={fieldSx} /></LabelField>
-              <LabelField label="Zip" required><TextField size="small" required value={zip} disabled={locked} onChange={(event) => setZip(event.target.value)} sx={fieldSx} /></LabelField>
-            </Box>
-          </FormAccordion>
+          <FlowSection
+            id={STEP_IDS.delivery}
+            step={2}
+            title="Bill To, Ship To & delivery"
+            subtitle="Bill To is optional. Due date and time follow the delivery method."
+            open={openSteps[STEP_IDS.delivery]}
+            complete={deliveryComplete}
+            onToggle={() => toggleStep(STEP_IDS.delivery)}
+          >
+            <Typography sx={{ color: brand.muted, fontSize: 13 }}>Optional. Leave Bill To blank when the contact above is the billing contact.</Typography>
+            <TextControl
+              id="order-bill-previous"
+              span
+              select
+              label="Previous"
+              value={billChoice}
+              disabled={locked}
+              onChange={(event) => applyBill(billHistory.find((entry) => String(entry.id) === event.target.value))}
+              helperText={billHistory.length ? 'Choose a previous bill-to contact, or leave this on None.' : 'No previous bill-to contacts yet.'}
+            >
+              <MenuItem value="">None</MenuItem>
+              {billHistory.map((entry) => <MenuItem key={entry.id} value={String(entry.id)}>{billLabel(entry)}</MenuItem>)}
+            </TextControl>
+            <Subhead>Person</Subhead>
+            <FieldGrid>
+              <TextControl id="order-bill-name" label="Name" value={billTo.name} disabled={locked} onChange={(event) => setBillTo({ ...billTo, name: event.target.value })} autoComplete="name" />
+              <TextControl id="order-bill-phone" label="Phone" value={billTo.phone} disabled={locked} onChange={(event) => setBillTo({ ...billTo, phone: event.target.value })} autoComplete="tel" />
+              <TextControl id="order-bill-email" label="Email" value={billTo.email} disabled={locked} onChange={(event) => setBillTo({ ...billTo, email: event.target.value })} autoComplete="email" />
+            </FieldGrid>
+            <Subhead>Company</Subhead>
+            <FieldGrid>
+              <TextControl id="order-bill-company" label="Name" value={billTo.company} disabled={locked} onChange={(event) => setBillTo({ ...billTo, company: event.target.value })} autoComplete="organization" />
+              <TextControl id="order-bill-address1" label="Addr 1" value={billTo.address_line1} disabled={locked} onChange={(event) => setBillTo({ ...billTo, address_line1: event.target.value })} autoComplete="address-line1" />
+              <TextControl id="order-bill-address2" label="Addr 2" value={billTo.address_line2} disabled={locked} onChange={(event) => setBillTo({ ...billTo, address_line2: event.target.value })} autoComplete="address-line2" />
+              <TextControl id="order-bill-city" label="City" value={billTo.city} disabled={locked} onChange={(event) => setBillTo({ ...billTo, city: event.target.value })} autoComplete="address-level2" />
+              <TextControl id="order-bill-state" label="State" value={billTo.state} disabled={locked} onChange={(event) => setBillTo({ ...billTo, state: event.target.value })} autoComplete="address-level1" />
+              <TextControl id="order-bill-zip" label="Zip" value={billTo.zip} disabled={locked} onChange={(event) => setBillTo({ ...billTo, zip: event.target.value })} autoComplete="postal-code" />
+            </FieldGrid>
 
-          <FormAccordion title="Bill To">
-            <Typography sx={{ color: brand.muted, fontSize: 13 }}>Optional. Leave this blank when the contact above is the billing contact.</Typography>
-            <LabelField label="Previous">
-              <TextField select size="small" value={billChoice} disabled={locked} onChange={(event) => applyBill(billHistory.find((entry) => String(entry.id) === event.target.value))} sx={fieldSx}>
-                <MenuItem value="">None</MenuItem>
-                {billHistory.map((entry) => <MenuItem key={entry.id} value={String(entry.id)}>{billLabel(entry)}</MenuItem>)}
-              </TextField>
-            </LabelField>
-            <Typography sx={{ fontWeight: 700, color: brand.navy }}>Person</Typography>
-            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 1.25 }}>
-              <LabelField label="Name"><TextField size="small" value={billTo.name} disabled={locked} onChange={(event) => setBillTo({ ...billTo, name: event.target.value })} sx={fieldSx} /></LabelField>
-              <LabelField label="Phone"><TextField size="small" value={billTo.phone} disabled={locked} onChange={(event) => setBillTo({ ...billTo, phone: event.target.value })} sx={fieldSx} /></LabelField>
-              <LabelField label="Email"><TextField size="small" value={billTo.email} disabled={locked} onChange={(event) => setBillTo({ ...billTo, email: event.target.value })} sx={fieldSx} /></LabelField>
-            </Box>
-            <Typography sx={{ fontWeight: 700, color: brand.navy }}>Company</Typography>
-            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 1.25 }}>
-              <LabelField label="Name"><TextField size="small" value={billTo.company} disabled={locked} onChange={(event) => setBillTo({ ...billTo, company: event.target.value })} sx={fieldSx} /></LabelField>
-              <LabelField label="Addr 1"><TextField size="small" value={billTo.address_line1} disabled={locked} onChange={(event) => setBillTo({ ...billTo, address_line1: event.target.value })} sx={fieldSx} /></LabelField>
-              <LabelField label="Addr 2"><TextField size="small" value={billTo.address_line2} disabled={locked} onChange={(event) => setBillTo({ ...billTo, address_line2: event.target.value })} sx={fieldSx} /></LabelField>
-              <LabelField label="City"><TextField size="small" value={billTo.city} disabled={locked} onChange={(event) => setBillTo({ ...billTo, city: event.target.value })} sx={fieldSx} /></LabelField>
-              <LabelField label="State"><TextField size="small" value={billTo.state} disabled={locked} onChange={(event) => setBillTo({ ...billTo, state: event.target.value })} sx={fieldSx} /></LabelField>
-              <LabelField label="Zip"><TextField size="small" value={billTo.zip} disabled={locked} onChange={(event) => setBillTo({ ...billTo, zip: event.target.value })} sx={fieldSx} /></LabelField>
-            </Box>
-          </FormAccordion>
+            <Subhead>Delivery</Subhead>
+            <FieldGrid>
+              <TextControl id="order-return" select label="Return" required value={returnTo} disabled={locked} onChange={(event) => setReturnTo(event.target.value)}>
+                <MenuItem value="To Me">To Me</MenuItem>
+                {shipSelected ? <MenuItem value="See ShipTo">See ShipTo</MenuItem> : null}
+              </TextControl>
+              {seeShipLines ? null : (
+                <TextControl
+                  id="order-delivery-method"
+                  select
+                  label="Delivery Method"
+                  required
+                  value={deliveryMethod}
+                  disabled={locked}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    setDeliveryMethod(next);
+                    if (String(next).trim().toLowerCase() !== 'ups') setUpsAccount('');
+                  }}
+                >
+                  {(options.delivery_methods || []).map((method) => <MenuItem key={method.id} value={method.name}>{method.name}</MenuItem>)}
+                </TextControl>
+              )}
+              {upsSelected ? (
+                <TextControl
+                  id="order-ups-account"
+                  label="UPS Account"
+                  value={upsAccount}
+                  disabled={locked}
+                  onChange={(event) => setUpsAccount(event.target.value)}
+                  placeholder="Optional"
+                  helperText="Optional. Letters, digits, spaces, and dashes."
+                  inputProps={{ maxLength: 30, 'aria-label': 'UPS account number' }}
+                />
+              ) : null}
+            </FieldGrid>
+            {seeShipLines ? (
+              <Typography sx={{ color: brand.muted, fontSize: 13 }}>
+                Delivery follows the Ship To lines. Pickup at Accent uses Will Call hours. Accent Truck, Ground, 1 day, and 2 day use delivery hours. The first line&apos;s Via sets the order method.
+              </Typography>
+            ) : null}
+            <TextControl id="order-ship-to" span label="Ship To" multiline minRows={3} value={shipTo} disabled={locked} onChange={(event) => setShipTo(event.target.value)} />
+            <TextControl id="order-attention" label="Attention" value={attention} disabled={locked} onChange={(event) => setAttention(event.target.value)} />
+            <FieldGrid>
+              <TextControl id="order-due-date" label="Due Date" required type="date" value={dueDate} disabled={locked} onChange={(event) => setDueDate(event.target.value)} helperText="Monday–Friday, not before today." />
+              <TextControl
+                id="order-due-time"
+                select
+                label="Due Time"
+                required
+                value={dueTime}
+                disabled={locked}
+                onChange={(event) => setDueTime(event.target.value)}
+                SelectProps={{
+                  displayEmpty: true,
+                  renderValue: (selected) => (selected ? formatClockLabel(selected) : 'Select a time'),
+                }}
+              >
+                <MenuItem value="" disabled>Select a time</MenuItem>
+                {(activeWindow?.slots || []).map((slot) => <MenuItem key={slot} value={slot}>{formatClockLabel(slot)}</MenuItem>)}
+              </TextControl>
+            </FieldGrid>
+            <Typography sx={{ color: brand.muted, fontSize: 13 }}>{activeWindow?.summary || 'Delivery orders 9:00 AM - 4:00 PM (15 minute increments).'}</Typography>
+          </FlowSection>
 
-          <FormAccordion title="Services">
+          <FlowSection
+            id={STEP_IDS.job}
+            step={3}
+            title="Job & services"
+            subtitle="Name the job, choose how it will be paid, then add a line for each service."
+            open={openSteps[STEP_IDS.job]}
+            complete={jobComplete}
+            onToggle={() => toggleStep(STEP_IDS.job)}
+          >
+            <FieldGrid>
+              <TextControl id="order-po" label="PO Number" value={poNumber} disabled={locked} onChange={(event) => setPoNumber(event.target.value)} />
+              <TextControl id="order-project-number" label="Project Number" value={projectNumber} disabled={locked} onChange={(event) => setProjectNumber(event.target.value)} />
+              <TextControl id="order-project-name" span label="Project Name" required value={projectName} disabled={locked} onChange={(event) => setProjectName(event.target.value)} />
+            </FieldGrid>
+            <TextControl
+              id="order-payment"
+              span
+              select
+              label="Payment Method"
+              required
+              value={paymentMethod}
+              disabled={locked}
+              onChange={(event) => setPaymentMethod(event.target.value)}
+              helperText="The method only. Card numbers are not collected."
+              SelectProps={{
+                displayEmpty: true,
+                renderValue: (selected) => selected || 'Select payment method',
+              }}
+            >
+              <MenuItem value="" disabled>Select payment method</MenuItem>
+              {paymentOptions.map((method) => <MenuItem key={method} value={method}>{method}</MenuItem>)}
+            </TextControl>
+
+            <Subhead>Services</Subhead>
             <Typography sx={{ color: brand.muted, fontSize: 13 }}>Choose every service this order needs. Each one opens its own line items.</Typography>
-            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 1.5 }}>
+            {options.services.length === 0 ? <EmptyNote>No services are available right now.</EmptyNote> : null}
+            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(148px, 1fr))', gap: 1.5 }}>
               {options.services.map((service) => {
                 const selected = selectedServices.includes(service.id);
                 const Icon = SERVICE_ICONS[service.name] || DescriptionOutlinedIcon;
@@ -763,6 +1253,7 @@ export default function CustomerOrderForm() {
                     data-testid={`service-${service.id}`}
                     role="checkbox"
                     aria-checked={selected}
+                    aria-label={service.name}
                     tabIndex={locked ? -1 : 0}
                     onClick={() => { if (!locked) toggleService(service); }}
                     onKeyDown={(event) => {
@@ -775,15 +1266,17 @@ export default function CustomerOrderForm() {
                     sx={{
                       position: 'relative',
                       border: selected ? `2px solid ${brand.navy}` : `1px solid ${brand.border}`,
+                      borderLeft: selected ? `4px solid ${brand.orange}` : undefined,
                       bgcolor: selected ? '#F4F8FF' : '#fff',
                       borderRadius: 1.5,
                       minHeight: 148,
                       p: 1.5,
                       textAlign: 'center',
                       cursor: locked ? 'default' : 'pointer',
+                      ...focusRing,
                     }}
                   >
-                    <Checkbox checked={selected} sx={{ position: 'absolute', top: 2, left: 2, p: 0.5, pointerEvents: 'none' }} />
+                    <Checkbox checked={selected} tabIndex={-1} sx={{ position: 'absolute', top: 2, left: 2, p: 0.5, pointerEvents: 'none' }} />
                     <Icon sx={{ fontSize: 42, color: brand.navy, mt: 2 }} />
                     <Typography sx={{ fontWeight: 700, fontSize: 14, mt: 1 }}>{service.name}</Typography>
                     <Typography sx={{ color: brand.muted, fontSize: 12, mt: 0.5 }}>{service.description}</Typography>
@@ -794,150 +1287,86 @@ export default function CustomerOrderForm() {
                 );
               })}
             </Box>
-          </FormAccordion>
 
-          {selectedServiceRows.map((service) => {
-            const serviceLines = lines.filter((line) => line.service_id === service.id);
-            return (
-              <FormAccordion key={service.id} title={service.name}>
-                {serviceLines.length === 0 ? <Typography sx={{ color: brand.muted }}>No lines yet.</Typography> : null}
-                {serviceLines.map((line, index) => (
-                  <Box key={line.key} sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', borderBottom: `1px solid ${brand.border}`, pb: 1 }}>
-                    <Typography sx={{ flex: 1, minWidth: 180 }}>{index + 1}. {lineSummary(service, line)}</Typography>
-                    {!locked ? (
-                      <>
-                        <Button size="small" onClick={() => setEditor({ ...line, values: { ...line.values }, error: '' })}>Edit</Button>
-                        <Button size="small" onClick={async () => {
-                          await removeStoredFile(line.file);
-                          setLines((rows) => rows.filter((row) => row.key !== line.key));
-                        }}
-                        >
-                          Remove
-                        </Button>
-                      </>
-                    ) : null}
+            {selectedServiceRows.map((service) => {
+              const serviceLines = lines.filter((line) => line.service_id === service.id);
+              let emptyCopy = 'No lines yet. Add a line with the sizes, quantities, and options for this service, or deselect it.';
+              if (service.name === 'Archive File Request') {
+                emptyCopy = 'No lines yet. Add a line, or describe the archived files in Special instructions.';
+              } else if (service.name === SHIP_TO_SERVICE) {
+                emptyCopy = 'No lines yet. Add a line, or fill in Ship To.';
+              }
+              return (
+                <Box key={service.id} sx={{ border: `1px solid ${brand.border}`, borderLeft: `4px solid ${brand.orange}`, borderRadius: 1, overflow: 'hidden' }}>
+                  <Box sx={{ px: 1.5, py: 1, bgcolor: '#F4F7FB', display: 'flex', justifyContent: 'space-between', gap: 1, alignItems: 'center' }}>
+                    <Typography sx={{ color: brand.navy, fontWeight: 800 }}>{service.name}</Typography>
+                    <Chip size="small" label={countLabel(serviceLines.length, 'line', 'lines')} sx={{ bgcolor: brand.navy, color: '#fff', fontWeight: 700 }} />
                   </Box>
-                ))}
-                <Button
-                  data-testid={`add-line-${service.id}`}
-                  startIcon={<AddIcon />}
-                  disabled={locked}
-                  onClick={() => setEditor({ ...newLine(service), error: '' })}
-                >
-                  Add line
-                </Button>
-              </FormAccordion>
-            );
-          })}
-
-          <FormAccordion title="Time Constraints">
-            <LabelField label="Due Date" required>
-              <TextField size="small" required type="date" value={dueDate} disabled={locked} onChange={(event) => setDueDate(event.target.value)} InputLabelProps={{ shrink: true }} sx={fieldSx} />
-            </LabelField>
-            <LabelField label="Due Time" required>
-              <TextField select size="small" required value={dueTime} disabled={locked} onChange={(event) => setDueTime(event.target.value)} sx={fieldSx}>
-                {(activeWindow?.slots || []).map((slot) => <MenuItem key={slot} value={slot}>{formatClockLabel(slot)}</MenuItem>)}
-              </TextField>
-            </LabelField>
-            <Typography sx={{ color: brand.muted, fontSize: 13 }}>{activeWindow?.summary || 'Delivery orders 9:00 AM - 4:00 PM (15 minute increments).'}</Typography>
-          </FormAccordion>
-
-          <FormAccordion title="Accounting">
-            <LabelField label="PO Number"><TextField size="small" value={poNumber} disabled={locked} onChange={(event) => setPoNumber(event.target.value)} sx={fieldSx} /></LabelField>
-            <LabelField label="Project Number"><TextField size="small" value={projectNumber} disabled={locked} onChange={(event) => setProjectNumber(event.target.value)} sx={fieldSx} /></LabelField>
-            <LabelField label="Project Name" required><TextField size="small" required value={projectName} disabled={locked} onChange={(event) => setProjectName(event.target.value)} sx={fieldSx} /></LabelField>
-          </FormAccordion>
-
-          <FormAccordion title="Payment">
-            <LabelField label="Payment Method" required>
-              <TextField
-                select
-                size="small"
-                required
-                value={paymentMethod}
-                disabled={locked}
-                onChange={(event) => setPaymentMethod(event.target.value)}
-                SelectProps={{
-                  displayEmpty: true,
-                  renderValue: (selected) => selected || 'Select payment method',
-                }}
-                sx={fieldSx}
-              >
-                <MenuItem value="" disabled>Select payment method</MenuItem>
-                {paymentOptions.map((method) => <MenuItem key={method} value={method}>{method}</MenuItem>)}
-              </TextField>
-            </LabelField>
-            <Typography sx={{ color: brand.muted, fontSize: 13 }}>The method only. Card numbers are not collected.</Typography>
-          </FormAccordion>
-
-          <FormAccordion title="Deliverables">
-            <LabelField label="Return" required>
-              <TextField
-                select
-                size="small"
-                required
-                value={returnTo}
-                disabled={locked}
-                onChange={(event) => setReturnTo(event.target.value)}
-                sx={fieldSx}
-              >
-                <MenuItem value="To Me">To Me</MenuItem>
-                {shipSelected ? <MenuItem value="See ShipTo">See ShipTo</MenuItem> : null}
-              </TextField>
-            </LabelField>
-            {seeShipLines ? (
-              <Typography sx={{ color: brand.muted, fontSize: 13 }}>
-                Delivery follows the Ship To lines. Pickup at Accent uses Will Call hours. Accent Truck, Ground, 1 day, and 2 day use delivery hours. The first line&apos;s Via sets the order method.
-              </Typography>
-            ) : (
-              <>
-                <LabelField label="Delivery Method" required>
-                  <TextField
-                    select
-                    size="small"
-                    required
-                    value={deliveryMethod}
-                    disabled={locked}
-                    onChange={(event) => {
-                      const next = event.target.value;
-                      setDeliveryMethod(next);
-                      if (String(next).trim().toLowerCase() !== 'ups') setUpsAccount('');
-                    }}
-                    sx={fieldSx}
-                  >
-                    {(options.delivery_methods || []).map((method) => <MenuItem key={method.id} value={method.name}>{method.name}</MenuItem>)}
-                  </TextField>
-                </LabelField>
-                {upsSelected ? (
-                  <LabelField label="UPS Account">
-                    <TextField
-                      size="small"
-                      value={upsAccount}
+                  <Box sx={{ p: 1.5, display: 'grid', gap: 1 }}>
+                    {serviceLines.length === 0 ? <EmptyNote>{emptyCopy}</EmptyNote> : null}
+                    {serviceLines.map((line, index) => (
+                      <Box key={line.key} sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', borderBottom: `1px solid ${brand.border}`, pb: 1 }}>
+                        <Typography sx={{ flex: 1, minWidth: 180 }}>{index + 1}. {lineSummary(service, line)}</Typography>
+                        {!locked ? (
+                          <>
+                            <Button type="button" size="small" sx={focusRing} onClick={() => setEditor({ ...line, values: { ...line.values }, error: '' })}>Edit</Button>
+                            <Button
+                              type="button"
+                              size="small"
+                              sx={focusRing}
+                              onClick={async () => {
+                                await removeStoredFile(line.file);
+                                setLines((rows) => rows.filter((row) => row.key !== line.key));
+                              }}
+                            >
+                              Remove
+                            </Button>
+                          </>
+                        ) : null}
+                      </Box>
+                    ))}
+                    <Button
+                      type="button"
+                      data-testid={`add-line-${service.id}`}
+                      startIcon={<AddIcon />}
                       disabled={locked}
-                      onChange={(event) => setUpsAccount(event.target.value)}
-                      placeholder="Optional"
-                      helperText="Optional. Letters, digits, spaces, and dashes."
-                      inputProps={{ maxLength: 30, 'aria-label': 'UPS account number' }}
-                      sx={fieldSx}
-                    />
-                  </LabelField>
-                ) : null}
-              </>
-            )}
-            <LabelField label="Ship To">
-              <TextField size="small" multiline minRows={3} value={shipTo} disabled={locked} onChange={(event) => setShipTo(event.target.value)} sx={fieldSx} />
-            </LabelField>
-            <LabelField label="Attention">
-              <TextField size="small" value={attention} disabled={locked} onChange={(event) => setAttention(event.target.value)} sx={fieldSx} />
-            </LabelField>
-          </FormAccordion>
+                      onClick={() => setEditor({ ...newLine(service), error: '' })}
+                      sx={{ justifySelf: 'start', color: brand.navy, fontWeight: 700, ...focusRing }}
+                    >
+                      Add line
+                    </Button>
+                  </Box>
+                </Box>
+              );
+            })}
+          </FlowSection>
 
-          <FormAccordion title="Originals">
-            <LabelField label="Originals Source" required>
-              <TextField select size="small" required value={originalsSource} disabled={locked} onChange={(event) => setOriginalsSource(event.target.value)} sx={fieldSx}>
-                {originalsOptions.map((option) => <MenuItem key={option} value={option}>{option}</MenuItem>)}
-              </TextField>
-            </LabelField>
+          <FlowSection
+            id={STEP_IDS.files}
+            step={4}
+            title="Files & instructions"
+            subtitle="Tell the shop where the originals are, and add any notes."
+            open={openSteps[STEP_IDS.files]}
+            complete={filesComplete}
+            onToggle={() => toggleStep(STEP_IDS.files)}
+          >
+            <TextControl
+              id="order-originals"
+              span
+              select
+              label="Originals Source"
+              required
+              value={originalsSource}
+              disabled={locked}
+              onChange={(event) => setOriginalsSource(event.target.value)}
+              SelectProps={{
+                displayEmpty: true,
+                renderValue: (selected) => selected || 'Select originals source',
+              }}
+            >
+              <MenuItem value="" disabled>Select originals source</MenuItem>
+              {originalsOptions.map((option) => <MenuItem key={option} value={option}>{option}</MenuItem>)}
+            </TextControl>
             {originalsSource === ORIGINALS_PICKUP ? (
               <Typography sx={{ color: brand.muted, fontSize: 13 }}>
                 This asks Accent Imaging to send a vehicle to pick up the originals. It is separate from the outbound delivery method.
@@ -946,12 +1375,12 @@ export default function CustomerOrderForm() {
             {filesAttached ? (
               <Box>
                 <Typography sx={{ color: brand.muted, fontSize: 13, mb: 1 }}>Attach at least one file below or on a line item.</Typography>
-                {uploadedFiles.length === 0 ? <Typography sx={{ color: brand.muted, fontSize: 14 }}>No files uploaded yet.</Typography> : null}
+                {uploadedFiles.length === 0 ? <EmptyNote>No files uploaded yet. Upload at least one file, or attach a file on a line.</EmptyNote> : null}
                 {uploadedFiles.map((file) => (
                   <Box key={file.id || file.key} sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
                     {file.status === 'uploaded' ? <CheckCircleIcon sx={{ color: brand.green, fontSize: 18 }} /> : null}
-                    <Box sx={{ flex: 1 }}>
-                      <Typography sx={{ fontSize: 14 }}>{file.original_name}</Typography>
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography sx={{ fontSize: 14, overflowWrap: 'anywhere' }}>{file.original_name}</Typography>
                       <Typography sx={{ fontSize: 12, color: file.status === 'error' ? brand.danger : brand.muted }}>
                         {file.status === 'uploading' && 'Uploading…'}
                         {file.status === 'uploaded' && formatFileSize(file.size_bytes)}
@@ -959,11 +1388,17 @@ export default function CustomerOrderForm() {
                       </Typography>
                     </Box>
                     {!locked ? (
-                      <Button size="small" color="inherit" aria-label={`Remove ${file.original_name}`} onClick={async () => {
-                        await removeStoredFile(file);
-                        setLines((rows) => rows.map((row) => (row.file && (row.file.id === file.id || row.file.key === file.key) ? { ...row, file: null } : row)));
-                        setLooseFiles((rows) => rows.filter((item) => item.id !== file.id && item.key !== file.key));
-                      }}
+                      <Button
+                        type="button"
+                        size="small"
+                        color="inherit"
+                        aria-label={`Remove ${file.original_name}`}
+                        sx={focusRing}
+                        onClick={async () => {
+                          await removeStoredFile(file);
+                          setLines((rows) => rows.map((row) => (row.file && (row.file.id === file.id || row.file.key === file.key) ? { ...row, file: null } : row)));
+                          setLooseFiles((rows) => rows.filter((item) => item.id !== file.id && item.key !== file.key));
+                        }}
                       >
                         <CloseIcon fontSize="small" />
                       </Button>
@@ -971,12 +1406,13 @@ export default function CustomerOrderForm() {
                   </Box>
                 ))}
                 {!locked ? (
-                  <Button size="small" component="label" sx={{ mt: 1 }}>
+                  <Button type="button" size="small" component="label" sx={{ mt: 1, color: brand.navy, fontWeight: 700, ...focusRing }}>
                     Upload Files
                     <input
                       hidden
                       type="file"
                       multiple
+                      aria-label="Upload files"
                       accept=".pdf,.png,.jpg,.jpeg,.gif,.tif,.tiff,.webp,.bmp,.dwg,.zip,.plt"
                       onChange={(event) => {
                         const chosen = Array.from(event.target.files || []);
@@ -998,15 +1434,38 @@ export default function CustomerOrderForm() {
                 ) : null}
               </Box>
             ) : null}
-          </FormAccordion>
+            <TextControl id="order-notes" span label="Special instructions" multiline minRows={3} value={notes} disabled={locked} onChange={(event) => setNotes(event.target.value)} placeholder="Notes for the shop" />
+          </FlowSection>
 
-          <FormAccordion title="Special Instructions">
-            <TextField size="small" multiline minRows={3} value={notes} disabled={locked} onChange={(event) => setNotes(event.target.value)} placeholder="Notes for the shop" sx={fieldSx} />
-          </FormAccordion>
-
-          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1.2fr auto' }, gap: 2, alignItems: 'stretch' }}>
-            <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2 }}>
-              <Typography sx={{ color: brand.navy, fontWeight: 700 }}>Create Work Orders</Typography>
+          <FlowSection
+            id={STEP_IDS.review}
+            step={5}
+            title="Review & submit"
+            subtitle="Check the order, then use Submit Order. The button stays on screen."
+            open={openSteps[STEP_IDS.review]}
+            complete={Boolean(result)}
+            onToggle={() => toggleStep(STEP_IDS.review)}
+          >
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 1.5 }}>
+              <ReviewFact label="Customer" value={isStaff ? (customers.find((customer) => String(customer.id) === String(customerId))?.display_name || '') : (user?.display_name || user?.username || '')} />
+              <ReviewFact label="Company" value={company} />
+              <ReviewFact label="Contact" value={[contactName, phone, email].filter((value) => String(value || '').trim()).join(' · ')} />
+              <ReviewFact label="Address" value={filledAddress(address1, address2, city, stateName, zip)} />
+              <ReviewFact label="Bill To" value={[billWho, billTo.phone, billTo.email, billText].filter((value) => String(value || '').trim()).join(' · ')} />
+              <ReviewFact label="Return" value={returnTo} />
+              <ReviewFact label="Delivery" value={seeShipLines ? 'From Ship To lines' : deliveryMethod} />
+              {upsSelected ? <ReviewFact label="UPS Account" value={upsAccount} /> : null}
+              <ReviewFact label="Due" value={[dueDate, dueTime ? formatClockLabel(dueTime) : ''].filter(Boolean).join(' at ')} />
+              <ReviewFact label="Ship To" value={shipTo} />
+              <ReviewFact label="Attention" value={attention} />
+              <ReviewFact label="Project" value={[projectName, poNumber && `PO ${poNumber}`, projectNumber && `#${projectNumber}`].filter(Boolean).join(' · ')} />
+              <ReviewFact label="Payment" value={paymentMethod} />
+              <ReviewFact label="Originals" value={originalsSource} />
+              <ReviewFact label="Files" value={filesAttached ? countLabel(uploadedCount, 'file uploaded', 'files uploaded') : ''} />
+              <ReviewFact label="Special instructions" value={notes} />
+            </Box>
+            <Box sx={{ border: `1px solid ${brand.border}`, borderLeft: `4px solid ${brand.orange}`, borderRadius: 1, p: 1.5 }}>
+              <Typography sx={{ color: brand.navy, fontWeight: 800 }}>Work orders</Typography>
               <Typography sx={{ color: brand.muted, fontSize: 13, mb: 1 }}>Based on the services selected, the following work orders will be created.</Typography>
               {(preview?.work_orders || []).map((workOrder) => (
                 <Typography key={workOrder.external_id} sx={{ fontSize: 14, mb: 0.5 }}>
@@ -1015,49 +1474,84 @@ export default function CustomerOrderForm() {
                   {workOrder.service_name}
                 </Typography>
               ))}
-              {!selectedServices.length ? <Typography sx={{ color: brand.muted, fontSize: 14 }}>Select one or more services.</Typography> : null}
+              {!selectedServices.length ? <EmptyNote>Select one or more services to see the work orders this order will create.</EmptyNote> : null}
+              {selectedServiceRows.map((service) => {
+                const serviceLines = lines.filter((line) => line.service_id === service.id);
+                return (
+                  <Box key={service.id} sx={{ mt: 1 }}>
+                    <Typography sx={{ fontWeight: 800, color: brand.navy, fontSize: 14 }}>{service.name}</Typography>
+                    {serviceLines.length === 0 ? <Typography sx={{ color: brand.muted, fontSize: 14 }}>No lines yet.</Typography> : serviceLines.map((line, index) => (
+                      <Typography key={line.key} sx={{ fontSize: 14 }}>{index + 1}. {lineSummary(service, line)}</Typography>
+                    ))}
+                  </Box>
+                );
+              })}
               {preview?.provisional ? <Typography sx={{ color: brand.muted, fontSize: 12, mt: 1 }}>Numbers are reserved when you submit.</Typography> : null}
             </Box>
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Button data-testid="submit-order" type="submit" variant="contained" disabled={locked || submitting || uploading} sx={{ bgcolor: brand.green, px: 4, py: 1.5, fontWeight: 700, '&:hover': { bgcolor: brand.greenDark } }}>
-                {submitting ? 'Submitting…' : 'Submit Order'}
-              </Button>
-            </Box>
-          </Box>
+          </FlowSection>
         </Box>
 
-        {result ? (
-          <Box data-testid="success-panel" sx={{ bgcolor: '#fff', border: `2px solid ${brand.green}`, borderRadius: 1.5, p: 3, textAlign: 'center' }}>
-            <CheckCircleIcon sx={{ color: brand.green, fontSize: 72 }} />
-            <Typography sx={{ color: brand.green, fontWeight: 800, fontSize: 26, lineHeight: 1.2, mt: 1 }}>Order Submitted Successfully!</Typography>
-            <Typography data-testid="order-number" sx={{ mt: 2, fontWeight: 700, fontSize: 18 }}>Order #: {result.order_number}</Typography>
-            <Typography sx={{ color: brand.navy, fontWeight: 700, mt: 2, textAlign: 'left' }}>Work Orders Created</Typography>
-            <Box sx={{ textAlign: 'left', mt: 1 }}>
-              {(result.work_orders || []).map((workOrder) => (
-                <Typography key={workOrder.id} sx={{ fontSize: 14, mb: 0.5 }}>
-                  <Box component="span" sx={{ fontWeight: 700 }}>{workOrder.external_id}</Box>
-                  {' '}
-                  {workOrder.service_name}
-                </Typography>
-              ))}
+        <Box className="no-print" component="footer" sx={{
+          position: 'fixed',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 20,
+          bgcolor: '#fff',
+          borderTop: `3px solid ${brand.orange}`,
+          boxShadow: '0 -6px 20px rgba(10, 47, 110, 0.14)',
+          px: { xs: 1.5, sm: 3 },
+          py: 1.25,
+        }}
+        >
+          <Box sx={{ maxWidth: 1440, mx: 'auto', display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 1.25, alignItems: { xs: 'stretch', sm: 'center' }, justifyContent: 'space-between' }}>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography aria-live="polite" sx={{ fontWeight: 800, color: brand.navy, fontSize: 15 }}>
+                {countLabel(selectedServices.length, 'service', 'services')}
+                {' · '}
+                {countLabel(lines.length, 'line', 'lines')}
+                {filesAttached ? ` · ${countLabel(uploadedCount, 'file', 'files')}` : ''}
+              </Typography>
+              <Typography sx={{ fontSize: 12, color: brand.muted }}>
+                {uploading ? 'Uploading files…' : result ? `Order ${result.order_number} submitted.` : 'Submit stays here while you fill the order.'}
+              </Typography>
             </Box>
-            <Box className="no-print" sx={{ display: 'grid', gap: 1, mt: 3 }}>
-              <Button variant="contained" onClick={() => navigate(`/orders/${result.order.id}`)} sx={{ bgcolor: brand.navy }}>View Submitted Order</Button>
-              <Button variant="outlined" onClick={() => window.print()}>Print Confirmation</Button>
-              <Button variant="outlined" onClick={resetForm}>Create Another Order</Button>
-            </Box>
+            <Button
+              className="order-submit"
+              data-testid="submit-order"
+              type="submit"
+              variant="contained"
+              disabled={locked || submitting || uploading}
+              sx={{
+                bgcolor: brand.orange,
+                color: '#111',
+                fontWeight: 800,
+                textTransform: 'none',
+                px: 3,
+                py: 1.15,
+                boxShadow: 'none',
+                '&:hover': { bgcolor: '#E07010', color: '#111' },
+                '&.Mui-disabled': { bgcolor: '#E7D3BE', color: '#5E4A38' },
+                '&:focus-visible, &.Mui-focusVisible': { outline: `3px solid ${brand.navy}`, outlineOffset: 2 },
+              }}
+            >
+              {submitting ? 'Submitting…' : result ? 'Submitted' : 'Submit Order'}
+            </Button>
           </Box>
-        ) : null}
+        </Box>
       </Box>
 
       <Dialog open={Boolean(editor)} onClose={() => setEditor(null)} fullWidth maxWidth="sm">
-        <DialogTitle>{editorService ? editorService.name : 'Line'}</DialogTitle>
+        <DialogTitle sx={{ bgcolor: brand.navy, color: '#fff', borderLeft: `4px solid ${brand.orange}`, fontWeight: 800 }}>
+          {editorService ? editorService.name : 'Line'}
+        </DialogTitle>
         <DialogContent>
           {editor?.error ? <Alert severity="error" sx={{ mb: 1 }}>{editor.error}</Alert> : null}
           <Box sx={{ display: 'grid', gap: 1.25, mt: 1 }}>
             {(editorService?.fields || []).filter((field) => field.is_active !== false).map((field) => (
               <FieldInput
                 key={field.key}
+                id={`line-field-${field.key}`}
                 field={field}
                 value={editor?.values?.[field.key]}
                 disabled={locked}
@@ -1066,24 +1560,30 @@ export default function CustomerOrderForm() {
             ))}
             {filesAttached && editor ? (
               <Box>
-                <Typography sx={{ fontSize: 14, mb: 0.5 }}>File</Typography>
+                <Typography component="label" htmlFor="line-field-file" sx={{ fontSize: 14, fontWeight: 700, mb: 0.5, display: 'block' }}>File</Typography>
                 {editor.file ? (
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Typography sx={{ fontSize: 14 }}>{editor.file.original_name}</Typography>
-                    <Button size="small" onClick={async () => {
-                      await removeStoredFile(editor.file);
-                      setEditor({ ...editor, file: null });
-                    }}
+                    <Button
+                      type="button"
+                      size="small"
+                      sx={focusRing}
+                      onClick={async () => {
+                        await removeStoredFile(editor.file);
+                        setEditor({ ...editor, file: null });
+                      }}
                     >
                       Remove
                     </Button>
                   </Box>
                 ) : (
-                  <Button size="small" component="label">
+                  <Button type="button" size="small" component="label" sx={{ color: brand.navy, fontWeight: 700, ...focusRing }}>
                     Upload
                     <input
+                      id="line-field-file"
                       hidden
                       type="file"
+                      aria-label="Upload line file"
                       accept=".pdf,.png,.jpg,.jpeg,.gif,.tif,.tiff,.webp,.bmp,.dwg,.zip,.plt"
                       onChange={(event) => {
                         const file = event.target.files?.[0];
@@ -1099,14 +1599,23 @@ export default function CustomerOrderForm() {
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setEditor(null)}>Cancel</Button>
-          <Button variant="contained" onClick={saveEditor}>Save line</Button>
+          <Button type="button" onClick={() => setEditor(null)} sx={focusRing}>Cancel</Button>
+          <Button
+            type="button"
+            variant="contained"
+            onClick={saveEditor}
+            sx={{ bgcolor: brand.orange, color: '#111', fontWeight: 800, textTransform: 'none', '&:hover': { bgcolor: '#E07010' }, ...focusRing }}
+          >
+            Save line
+          </Button>
         </DialogActions>
       </Dialog>
 
-      <Box sx={{ mt: 2, bgcolor: '#E7F0FA', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2 }}>
-        <Typography sx={{ color: brand.navy, fontWeight: 700, mb: 0.5 }}>Important Information</Typography>
-        <Box component="ul" sx={{ m: 0, pl: 2.5, color: brand.text, fontSize: 14 }}>
+      <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderLeft: `4px solid ${brand.orange}`, borderRadius: 2, overflow: 'hidden' }}>
+        <Box sx={{ bgcolor: brand.navy, px: 2, py: 1 }}>
+          <Typography sx={{ color: '#fff', fontWeight: 800 }}>Important Information</Typography>
+        </Box>
+        <Box component="ul" sx={{ m: 0, px: 2, py: 1.5, pl: 4.5, color: brand.text, fontSize: 14 }}>
           <li>Order status is available in LaunchPad. Email updates are not enabled yet.</li>
           <li>If you have any questions, please contact us at 919-782-3332.</li>
           <li>Thank you for your business!</li>
