@@ -8,6 +8,8 @@ import {
   TableCell,
   TableRow,
   TextField,
+  FormControlLabel,
+  Switch,
   Typography,
 } from '@mui/material';
 import SectionCard from '../components/SectionCard';
@@ -22,6 +24,7 @@ export default function SystemSettingsPage() {
     company_phone: '',
     due_soon_hours: '',
     last_backup_at: '',
+    customer_self_signup_enabled: true,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -36,6 +39,7 @@ export default function SystemSettingsPage() {
       company_phone: body.letterhead?.company_phone || '',
       due_soon_hours: body.due_soon_hours?.value == null ? '' : String(body.due_soon_hours.value),
       last_backup_at: body.last_backup_at || '',
+      customer_self_signup_enabled: body.customer_self_signup_enabled !== false,
     });
   }
 
@@ -64,6 +68,7 @@ export default function SystemSettingsPage() {
           company_phone: form.company_phone,
           due_soon_hours: form.due_soon_hours === '' ? null : Number(form.due_soon_hours),
           last_backup_at: form.last_backup_at.trim() === '' ? null : form.last_backup_at.trim(),
+          customer_self_signup_enabled: form.customer_self_signup_enabled,
         }),
       });
       const body = await response.json().catch(() => ({}));
@@ -122,6 +127,18 @@ export default function SystemSettingsPage() {
             placeholder="YYYY-MM-DD HH:MM:SS"
             helperText="Leave blank if no backup has been recorded. The Admin Board shows this timestamp."
           />
+          <FormControlLabel
+            control={(
+              <Switch
+                checked={form.customer_self_signup_enabled}
+                onChange={(event) => setForm({ ...form, customer_self_signup_enabled: event.target.checked })}
+              />
+            )}
+            label="Allow customers to create an account"
+          />
+          <Typography variant="body2" color="text.secondary">
+            When this is off, Create an account is hidden on the sign-in page. Existing customers can still sign in.
+          </Typography>
           <Box>
             <Button type="submit" variant="contained" disabled={saving || loading}>{saving ? 'Saving...' : 'Save settings'}</Button>
           </Box>

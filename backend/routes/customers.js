@@ -73,14 +73,32 @@ function optionalProfile(value, field, max) {
   return text;
 }
 
-function isUsernameConstraint(err) {
-  return Boolean(err) && (err.code === 'SQLITE_CONSTRAINT' || /UNIQUE constraint failed/i.test(String(err.message || '')));
+function isUniqueConstraint(err) {
+  return Boolean(err) && /UNIQUE constraint failed/i.test(String(err.message || ''));
 }
 
-async function reserveUsername(tx, nameBase) {
+function isUsernameConstraint(err) {
+  return isUniqueConstraint(err) && /users\.username/i.test(String(err.message || ''));
+}
+
+async function reserveUsername(tx, nameBase, explicit) {
+  const taken = (name) => tx.get(
+    'SELECT id FROM users WHERE lower(trim(username)) = lower(trim(?))',
+    [name]
+  );
+  if (explicit) {
+    const existing = await taken(nameBase);
+    if (existing) {
+      const error = new Error('Username is already in use');
+      error.status = 409;
+      error.publicMessage = 'Username is already in use';
+      throw error;
+    }
+    return nameBase;
+  }
   for (let counter = 0; counter < 1000; counter += 1) {
     const tryName = counter > 0 ? `${nameBase}-${counter}` : nameBase;
-    const existing = await tx.get('SELECT id FROM users WHERE username = ?', [tryName]);
+    const existing = await taken(tryName);
     if (!existing) return tryName;
   }
   const error = new Error('Could not assign a username');
@@ -134,7 +152,7 @@ router.post('/', auth.requireAuth, auth.requireRole('admin'), async (req, res) =
     for (let attempt = 0; attempt < 5 && !created; attempt += 1) {
       try {
         created = await withTransaction(async (tx) => {
-          const uniqueUsername = await reserveUsername(tx, baseName);
+          const uniqueUsername = await reserveUsername(tx, baseName, Boolean(suppliedName));
           const inserted = await tx.run(
             `INSERT INTO users (
                username, password_hash, role, display_name, company, contact_name, phone, email,
@@ -176,6 +194,12 @@ router.post('/', auth.requireAuth, auth.requireRole('admin'), async (req, res) =
   } catch (err) {
     if (err && err.status && err.publicMessage) {
       return res.status(err.status).json({ error: err.publicMessage });
+    }
+    if (isUsernameConstraint(err)) {
+      return res.status(409).json({ error: 'Username is already in use' });
+    }
+    if (isUniqueConstraint(err)) {
+      return res.status(409).json({ error: 'That value is already in use' });
     }
     console.error('CUSTOMER CREATE ERROR:', err);
     return res.status(500).json({ error: 'Failed to create customer' });

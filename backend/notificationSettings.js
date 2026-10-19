@@ -8,6 +8,7 @@ const IN_APP_EVENTS = [
   { event_key: 'work_order_on_hold', label: 'Work order on hold', description: 'A work order was put on hold.' },
   { event_key: 'work_order_completed', label: 'Work order completed', description: 'A work order was completed.' },
   { event_key: 'work_order_rush', label: 'Rush work order', description: 'A rush-priority work order was created.' },
+  { event_key: 'customer_registered', label: 'New customer account', description: 'A customer created their own account from the sign-in page.' },
 ];
 
 const EMAIL_EVENTS = [

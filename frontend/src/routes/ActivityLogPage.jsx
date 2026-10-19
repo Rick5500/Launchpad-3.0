@@ -33,6 +33,7 @@ const TYPES = [
   'service.reactivated',
   'service.fields_updated',
   'user.created',
+  'customer.self_registered',
   'user.updated',
   'user.deactivated',
   'user.reactivated',
