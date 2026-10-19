@@ -323,10 +323,26 @@ function eventParams({ scannedValue, workOrder, operatorId, location, storedTime
   ];
 }
 
-// Event, department, history, and activity commit together. A failure rolls all four back.
-async function writeDepartmentMove(tx, move) {
-  const inserted = await tx.run(EVENT_INSERT_SQL, eventParams(move));
-  const { matchedDepartment, nextStatus, workOrder, operator, operatorId, fromDepartment } = move;
+function historyNote({ fromDepartment, toName, manual, note }) {
+  if (!manual) return `Moved from ${fromDepartment || 'unassigned'} to ${toName}`;
+  const base = `Manual move from ${fromDepartment || 'unassigned'} to ${toName}`;
+  return note ? `${base}. ${note}` : base;
+}
+
+// Department, history, and activity commit together. A scan also writes the barcode event.
+// A manual move passes stage so the stage change commits with the department.
+async function applyDepartmentChange(tx, move) {
+  const {
+    matchedDepartment,
+    nextStatus,
+    workOrder,
+    operator,
+    operatorId,
+    fromDepartment,
+    manual,
+    note,
+    stage,
+  } = move;
 
   await tx.run(
     `UPDATE work_orders
@@ -345,6 +361,13 @@ async function writeDepartmentMove(tx, move) {
     ]
   );
 
+  if (stage) {
+    await tx.run(
+      `UPDATE work_orders SET stage_id = ?, updated_at = datetime('now') WHERE id = ?`,
+      [stage.id, workOrder.id]
+    );
+  }
+
   const scannedBy = operator?.display_name || operator?.username || 'Staff';
   await tx.run(
     `INSERT INTO production_history (work_order_id, department, status, scanned_by, user_id, notes)
@@ -355,7 +378,12 @@ async function writeDepartmentMove(tx, move) {
       nextStatus,
       scannedBy,
       operatorId || null,
-      `Moved from ${fromDepartment || 'unassigned'} to ${matchedDepartment.name}`,
+      historyNote({
+        fromDepartment,
+        toName: matchedDepartment.name,
+        manual: Boolean(manual),
+        note: note || null,
+      }),
     ]
   );
 
@@ -368,10 +396,18 @@ async function writeDepartmentMove(tx, move) {
       department: matchedDepartment.name,
       status: nextStatus,
     },
+    manual: Boolean(manual),
+    note: note || null,
   });
   for (const entry of entries) {
     await tx.run(activityLog.INSERT_SQL, activityLog.bindParams(entry));
   }
+}
+
+// Event, department, history, and activity commit together. A failure rolls all four back.
+async function writeDepartmentMove(tx, move) {
+  const inserted = await tx.run(EVENT_INSERT_SQL, eventParams(move));
+  await applyDepartmentChange(tx, move);
   return inserted;
 }
 
@@ -457,6 +493,112 @@ async function applyScan({ scannedValue, location, eventTime, operatorId, workOr
   }
 
   return payload;
+}
+
+const MAX_MOVE_DEPARTMENT_LENGTH = 80;
+const MAX_MOVE_NOTE_LENGTH = 500;
+
+function parseManualMove(body) {
+  const source = body || {};
+  if (!Object.prototype.hasOwnProperty.call(source, 'department') || source.department == null || source.department === '') {
+    return { error: 'department is required' };
+  }
+  if (typeof source.department !== 'string') return { error: 'department must be a string' };
+  const department = source.department.trim();
+  if (!department) return { error: 'department is required' };
+  if (department.length > MAX_MOVE_DEPARTMENT_LENGTH) return { error: 'department is too long' };
+  if (/[\u0000-\u001F]/.test(department)) return { error: 'department contains invalid characters' };
+
+  let note = null;
+  if (source.note != null && source.note !== '') {
+    if (typeof source.note !== 'string') return { error: 'note must be a string' };
+    note = source.note.trim();
+    if (!note) note = null;
+    else if (note.length > MAX_MOVE_NOTE_LENGTH) return { error: 'note is too long' };
+    else if (/[\u0000-\u001F]/.test(note)) return { error: 'note contains invalid characters' };
+  }
+  return { department, note };
+}
+
+function sameDepartmentName(left, right) {
+  return String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
+}
+
+// Manual move shares the scan's department update. It does not write a barcode event.
+// departmentLock, when set, allows the move only from that department.
+async function moveWorkOrder({ workOrderId, department, note, actorId, departmentLock }) {
+  const lookup = String(department || '').trim();
+  return withTransaction(async (tx) => {
+    const workOrder = await tx.get(
+      `SELECT id, external_id, description, department, status, stage_id
+       FROM work_orders
+       WHERE id = ?`,
+      [workOrderId]
+    );
+    if (!workOrder) throw httpError(404, 'Work order not found');
+    if (departmentLock && !sameDepartmentName(workOrder.department, departmentLock)) {
+      throw httpError(403, 'You can only move work orders currently in your department');
+    }
+
+    const matched = lookup
+      ? await tx.get(
+        `SELECT id, name, next_department FROM departments
+         WHERE is_active = 1 AND lower(name) = lower(?)`,
+        [lookup]
+      )
+      : null;
+    if (!matched) throw httpError(400, 'department must be an active department');
+    if (sameDepartmentName(workOrder.department, matched.name)) {
+      throw httpError(409, `Work order is already in ${matched.name}`);
+    }
+
+    const operator = actorId
+      ? await tx.get('SELECT id, display_name, username FROM users WHERE id = ?', [actorId])
+      : null;
+    const stageName = stageNameForLocation(matched.name);
+    const stage = stageName
+      ? await tx.get(
+        'SELECT id, name FROM production_stages WHERE lower(name) = lower(?)',
+        [stageName]
+      )
+      : null;
+    let status = workOrder.status || 'open';
+    if (isCompleteDepartment(matched.name) && !activityLog.isFinishedStatus(status)) {
+      status = 'completed';
+    }
+
+    await applyDepartmentChange(tx, {
+      matchedDepartment: matched,
+      nextStatus: status,
+      workOrder,
+      operator,
+      operatorId: actorId || null,
+      fromDepartment: workOrder.department || null,
+      manual: true,
+      note: note || null,
+      stage,
+    });
+
+    const updated = await tx.get(
+      `SELECT id, external_id, department, next_department, status, stage_id
+       FROM work_orders
+       WHERE id = ?`,
+      [workOrder.id]
+    );
+    return {
+      id: updated.id,
+      external_id: updated.external_id,
+      from_department: workOrder.department || null,
+      department: updated.department,
+      next_department: updated.next_department || null,
+      status: updated.status,
+      stage_id: updated.stage_id || null,
+      stage_name: stage ? stage.name : null,
+      stage_advanced: Boolean(stage),
+      manual: true,
+      note: note || null,
+    };
+  });
 }
 
 function recordScan({ scannedValue, location, eventTime, operatorId }, cb) {
@@ -642,4 +784,6 @@ module.exports = {
   recordScan,
   previewScan,
   listEvents,
+  parseManualMove,
+  moveWorkOrder,
 };

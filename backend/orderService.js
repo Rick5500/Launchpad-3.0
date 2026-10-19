@@ -876,7 +876,7 @@ async function createOrder(user, body, now = new Date()) {
       if (files.length !== fileIds.length) throw new OrderError('One or more files could not be found', 404);
       for (const file of files) {
         if (file.order_id) throw new OrderError('A file is already attached to an order');
-        const staff = user.role === 'admin' || user.role === 'operator';
+        const staff = user.role === 'admin' || user.role === 'manager' || user.role === 'operator';
         const ownsAsCustomer = Number(file.customer_id) === customerId;
         const uploadedByStaff = staff && Number(file.uploaded_by) === Number(user.userId || user.id);
         if (user.role === 'customer' && !ownsAsCustomer) {
@@ -1313,6 +1313,36 @@ function customerHistory(entry) {
   };
 }
 
+function staffHistory(entry) {
+  const notes = entry.notes || null;
+  return {
+    ...entry,
+    notes,
+    manual: typeof notes === 'string' && notes.startsWith('Manual move'),
+  };
+}
+
+function presentWorkOrderActivity(row) {
+  let detail = {};
+  if (row.detail) {
+    try {
+      const parsed = JSON.parse(row.detail);
+      detail = parsed && typeof parsed === 'object' ? parsed : { message: String(row.detail) };
+    } catch (err) {
+      detail = { message: String(row.detail) };
+    }
+  }
+  return {
+    id: row.id,
+    action: row.action,
+    summary: detail.message || row.action,
+    manual: Boolean(detail.manual),
+    note: detail.note || null,
+    actor_name: row.actor_name || 'System',
+    created_at: row.created_at,
+  };
+}
+
 async function loadWorkOrderContext(row, viewer) {
   const lineItems = await allOn(
     db,
@@ -1358,7 +1388,18 @@ async function loadWorkOrderContext(row, viewer) {
     bill_to: billToPresent(row),
     line_items: publicItems,
     files: files.map(publicFile),
-    production_history: viewer && viewer.role === 'customer' ? history.map(customerHistory) : history,
+    production_history: viewer && viewer.role === 'customer' ? history.map(customerHistory) : history.map(staffHistory),
+    activity: viewer && viewer.role === 'customer' ? [] : (await allOn(
+      db,
+      `SELECT a.id, a.action, a.detail, a.created_at,
+              COALESCE(NULLIF(trim(u.display_name), ''), NULLIF(trim(u.username), ''), 'System') AS actor_name
+       FROM activity_log a
+       LEFT JOIN users u ON u.id = a.actor_id
+       WHERE a.entity_type = 'work_order' AND a.entity_id = ?
+       ORDER BY a.id DESC
+       LIMIT 20`,
+      [row.id]
+    )).map(presentWorkOrderActivity),
     routing: {
       department: row.department || null,
       current_status: row.status || null,

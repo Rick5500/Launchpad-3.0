@@ -29,7 +29,7 @@ function parsePositiveInteger(value) {
 }
 
 // Read-only directory for staff who create work orders. No role, timestamps, or secrets.
-router.get('/lookup', auth.requireAuth, auth.requireRole('admin', 'operator'), (req, res) => {
+router.get('/lookup', auth.requireAuth, auth.requireRole('admin', 'manager', 'operator'), (req, res) => {
   db.all(
     `SELECT id, username, display_name, company, contact_name, phone, email,
             address_line1, address_line2, city, state, zip

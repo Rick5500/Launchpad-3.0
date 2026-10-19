@@ -25,7 +25,7 @@ import { canonicalWorkOrderStatus } from '../workOrderStatus';
 
 export default function WorkOrdersList() {
   const { user } = useAuth();
-  const canManageOrders = user?.role === 'admin' || user?.role === 'operator';
+  const canManageOrders = user?.role === 'admin' || user?.role === 'manager' || user?.role === 'operator';
   const [workOrders, setWorkOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);

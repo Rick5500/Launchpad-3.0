@@ -6,7 +6,7 @@ const users = require('../userAdmin');
 const { createFixedWindowLimiter } = require('../rateLimit');
 
 const router = express.Router();
-const staffRoles = auth.requireRole('admin', 'operator');
+const staffRoles = auth.requireRole('admin', 'manager', 'operator');
 
 function positiveIntEnv(name, fallback) {
   const parsed = Number(process.env[name]);
@@ -94,7 +94,7 @@ router.get('/events', auth.requireAuth, staffRoles, async (req, res) => {
   if (parsed.error) return res.status(400).json({ error: parsed.error });
   try {
     const access = await users.loadAccess(req.user.userId);
-    if (access.role === 'operator' && access.department) {
+    if ((access.role === 'operator' || access.role === 'manager') && access.department) {
       parsed.value.departmentLock = access.department;
     }
   } catch (err) {

@@ -3,6 +3,7 @@ import {
   Alert,
   Box,
   Button,
+  Chip,
   MenuItem,
   Table,
   TableBody,
@@ -155,7 +156,10 @@ export default function ActivityLogPage() {
                   <TableCell>{String(entry.created_at || '').replace('T', ' ').slice(0, 19)}</TableCell>
                   <TableCell>{entry.actor_name || entry.actor_username || '—'}</TableCell>
                   <TableCell>{entry.action}</TableCell>
-                  <TableCell>{entry.summary}</TableCell>
+                  <TableCell>
+                    {entry.detail && entry.detail.manual ? <Chip label="Manual" size="small" sx={{ mr: 0.75 }} /> : null}
+                    {entry.summary}
+                  </TableCell>
                 </TableRow>
               ))}
               {!loading && entries.length === 0 ? (

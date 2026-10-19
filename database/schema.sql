@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'customer', -- admin, customer, operator
+  role TEXT NOT NULL DEFAULT 'customer', -- admin, manager, operator, customer. No CHECK: init_db.js relaxes an older one.
   display_name TEXT,
   company TEXT,
   contact_name TEXT,

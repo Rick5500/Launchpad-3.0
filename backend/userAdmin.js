@@ -18,7 +18,7 @@ const {
 } = require('./fields');
 
 const MIN_PASSWORD_LENGTH = 8;
-const ROLES = new Set(['admin', 'operator', 'customer']);
+const ROLES = new Set(['admin', 'manager', 'operator', 'customer']);
 const SORTS = {
   username: 'username COLLATE NOCASE',
   display_name: 'display_name COLLATE NOCASE',
@@ -62,7 +62,7 @@ function parseRole(value, required) {
     return { value: null };
   }
   const role = String(value).trim().toLowerCase();
-  if (!ROLES.has(role)) return { error: 'role must be admin, operator, or customer' };
+  if (!ROLES.has(role)) return { error: 'role must be admin, manager, operator, or customer' };
   return { value: role };
 }
 

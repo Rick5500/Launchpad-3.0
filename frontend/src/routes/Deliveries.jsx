@@ -83,7 +83,7 @@ function rowTint(delivery) {
 export default function Deliveries() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const canWrite = user?.role === 'admin' || user?.role === 'operator';
+  const canWrite = user?.role === 'admin' || user?.role === 'manager' || user?.role === 'operator';
   const [deliveries, setDeliveries] = useState([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);

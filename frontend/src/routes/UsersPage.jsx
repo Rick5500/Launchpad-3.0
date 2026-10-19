@@ -195,10 +195,11 @@ export default function UsersPage() {
           <TextField label="Display name" value={form.display_name} onChange={(event) => update('display_name', event.target.value)} required />
           <TextField select label="Role" value={form.role} onChange={(event) => update('role', event.target.value)}>
             <MenuItem value="admin">Admin</MenuItem>
+            <MenuItem value="manager">Manager</MenuItem>
             <MenuItem value="operator">Operator</MenuItem>
             <MenuItem value="customer">Customer</MenuItem>
           </TextField>
-          {form.role === 'admin' || form.role === 'operator' ? (
+          {form.role === 'admin' || form.role === 'manager' || form.role === 'operator' ? (
             <TextField
               select
               label="Department"
@@ -238,6 +239,7 @@ export default function UsersPage() {
           <TextField select label="Role" value={role} onChange={(event) => setRole(event.target.value)} sx={{ minWidth: 160 }}>
             <MenuItem value="">All roles</MenuItem>
             <MenuItem value="admin">Admin</MenuItem>
+            <MenuItem value="manager">Manager</MenuItem>
             <MenuItem value="operator">Operator</MenuItem>
             <MenuItem value="customer">Customer</MenuItem>
           </TextField>

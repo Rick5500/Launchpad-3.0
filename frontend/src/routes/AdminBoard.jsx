@@ -8,6 +8,7 @@ import {
   Dialog,
   DialogContent,
   DialogTitle,
+  Snackbar,
   IconButton,
   MenuItem,
   Pagination,
@@ -39,7 +40,8 @@ import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import { authFetch } from '../api';
-import { BOARD_REFRESH_EVENT } from '../boardEvents';
+import { BOARD_REFRESH_EVENT, requestBoardRefresh } from '../boardEvents';
+import MoveWorkOrderDialog from '../components/MoveWorkOrderDialog';
 import { useAuth } from '../context/AuthContext';
 import { brand } from '../brand';
 import LoadingState from '../components/LoadingState';
@@ -110,6 +112,7 @@ export default function AdminBoard() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const canApprove = user?.role === 'admin';
+  const canMove = user?.role === 'admin' || user?.role === 'manager';
   const [summary, setSummary] = useState(null);
   const [summaryError, setSummaryError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -135,6 +138,8 @@ export default function AdminBoard() {
   const [allScans, setAllScans] = useState([]);
   const [dialogError, setDialogError] = useState('');
   const [showAllAlerts, setShowAllAlerts] = useState(false);
+  const [moveTarget, setMoveTarget] = useState(null);
+  const [moveNotice, setMoveNotice] = useState('');
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -580,6 +585,17 @@ export default function AdminBoard() {
                         <IconButton aria-label={`Print barcode for ${row.order_number}`} size="small" onClick={() => navigate(`/work-orders/${row.id}/print`)}>
                           <QrCode2Icon fontSize="small" />
                         </IconButton>
+                        {canMove && (
+                          <Button
+                            size="small"
+                            aria-label={`Move ${row.order_number}`}
+                            data-testid={`move-${row.external_id || row.id}`}
+                            onClick={() => setMoveTarget(row)}
+                            sx={{ textTransform: 'none', ml: 0.5 }}
+                          >
+                            Move to…
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   )) : (
@@ -689,8 +705,14 @@ export default function AdminBoard() {
                     <Typography sx={{ fontSize: 12, color: brand.muted, whiteSpace: 'nowrap' }}>{item.created_display || ''}</Typography>
                   </Box>
                   {item.external_id && (
-                    <Typography sx={{ fontSize: 13 }}>{item.summary}</Typography>
+                    <Typography sx={{ fontSize: 13 }}>
+                      {item.manual ? <Chip label="Manual" size="small" sx={{ mr: 0.75, height: 18 }} /> : null}
+                      {item.summary}
+                    </Typography>
                   )}
+                  {!item.external_id && item.manual ? (
+                    <Chip label="Manual" size="small" sx={{ mr: 0.75, height: 18 }} />
+                  ) : null}
                   <Typography sx={{ fontSize: 12, color: brand.muted }}>by {item.actor_name}</Typography>
                 </Box>
               )) : (
@@ -841,6 +863,26 @@ export default function AdminBoard() {
           </Table>
         </DialogContent>
       </Dialog>
+
+      <MoveWorkOrderDialog
+        open={Boolean(moveTarget)}
+        workOrder={moveTarget}
+        onClose={() => setMoveTarget(null)}
+        onMoved={(message) => {
+          setMoveNotice(message);
+          requestBoardRefresh();
+        }}
+      />
+      <Snackbar
+        open={Boolean(moveNotice)}
+        autoHideDuration={4000}
+        onClose={() => setMoveNotice('')}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert severity="success" onClose={() => setMoveNotice('')} data-testid="move-snackbar" sx={{ width: '100%' }}>
+          {moveNotice}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

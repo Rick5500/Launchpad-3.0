@@ -5,7 +5,7 @@ const { sendError } = require('../httpError');
 
 const router = express.Router();
 
-router.get('/orders', auth.requireAuth, auth.requireRole('admin', 'operator'), async (req, res) => {
+router.get('/orders', auth.requireAuth, auth.requireRole('admin', 'manager', 'operator'), async (req, res) => {
   try {
     res.json(await search.searchOrders(req.query));
   } catch (err) {

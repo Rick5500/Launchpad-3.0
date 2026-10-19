@@ -7,7 +7,7 @@ const DEFAULT_DUE_SOON_MINUTES = 60;
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
-const STAFF_ROLES = new Set(['admin', 'operator']);
+const STAFF_ROLES = new Set(['admin', 'manager', 'operator']);
 
 function dueSoonMinutes() {
   const raw = process.env.DELIVERY_DUE_SOON_MINUTES;

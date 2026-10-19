@@ -11,7 +11,7 @@ const {
 } = require('../deliveryRules');
 
 const router = express.Router();
-const staffRoles = auth.requireRole('admin', 'operator');
+const staffRoles = auth.requireRole('admin', 'manager', 'operator');
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 const MAX_CARRIER_LENGTH = 120;

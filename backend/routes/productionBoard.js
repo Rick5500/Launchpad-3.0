@@ -4,7 +4,7 @@ const db = require('../db');
 const { FINISHED_WORK_ORDER_STATUSES, sqlStringList } = require('../statuses');
 const router = express.Router();
 
-router.use(auth.requireAuth, auth.requireRole('admin', 'operator'));
+router.use(auth.requireAuth, auth.requireRole('admin', 'manager', 'operator'));
 
 function serializeBoardResponse(res, stages, workOrders, metrics) {
   res.json({ stages, workOrders, metrics });

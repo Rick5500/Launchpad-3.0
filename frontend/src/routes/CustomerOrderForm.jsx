@@ -256,7 +256,7 @@ function FieldInput({ field, value, disabled, onChange }) {
 export default function CustomerOrderForm() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
-  const isStaff = user?.role === 'admin' || user?.role === 'operator';
+  const isStaff = user?.role === 'admin' || user?.role === 'manager' || user?.role === 'operator';
 
   const [options, setOptions] = useState({ services: [], delivery_methods: [], due_window: null, payment_methods: PAYMENT_METHODS });
   const [customers, setCustomers] = useState([]);

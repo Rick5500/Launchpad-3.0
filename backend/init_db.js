@@ -743,6 +743,142 @@ async function migrateLegacyBarcodeLocations() {
   }
 }
 
+function quoteIdent(name) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+    throw new Error(`Unexpected SQL name: ${name}`);
+  }
+  return `"${name}"`;
+}
+
+function sqlLiteral(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+// Nested parentheses, so a role check such as CHECK (role IN (...)) is kept whole.
+function checkClauses(sql) {
+  const clauses = [];
+  const pattern = /\bCHECK\s*\(/gi;
+  let match = pattern.exec(sql);
+  while (match) {
+    let depth = 1;
+    let index = match.index + match[0].length;
+    for (; index < sql.length && depth > 0; index += 1) {
+      if (sql[index] === '(') depth += 1;
+      else if (sql[index] === ')') depth -= 1;
+    }
+    clauses.push(sql.slice(match.index + match[0].length, index - 1));
+    match = pattern.exec(sql);
+  }
+  return clauses;
+}
+
+function usersRoleCheckBlocksManager(sql) {
+  if (!sql || !/\bCHECK\b/i.test(sql) || !/\brole\b/i.test(sql)) return false;
+  const roleClauses = checkClauses(sql).filter((clause) => /\brole\b/i.test(clause));
+  if (!roleClauses.length) return false;
+  return roleClauses.some((clause) => !/\bmanager\b/i.test(clause));
+}
+
+const FOREIGN_KEY_ACTIONS = new Set(['RESTRICT', 'SET NULL', 'SET DEFAULT', 'CASCADE']);
+
+function foreignKeyClauses(rows) {
+  const groups = new Map();
+  for (const row of rows) {
+    if (!groups.has(row.id)) groups.set(row.id, []);
+    groups.get(row.id).push(row);
+  }
+  const clauses = [];
+  for (const group of groups.values()) {
+    group.sort((left, right) => left.seq - right.seq);
+    const from = group.map((row) => quoteIdent(row.from)).join(', ');
+    const to = group.map((row) => quoteIdent(row.to)).join(', ');
+    let clause = `FOREIGN KEY (${from}) REFERENCES ${quoteIdent(group[0].table)} (${to})`;
+    const onUpdate = String(group[0].on_update || '').toUpperCase();
+    const onDelete = String(group[0].on_delete || '').toUpperCase();
+    if (FOREIGN_KEY_ACTIONS.has(onUpdate)) clause += ` ON UPDATE ${onUpdate}`;
+    if (FOREIGN_KEY_ACTIONS.has(onDelete)) clause += ` ON DELETE ${onDelete}`;
+    clauses.push(clause);
+  }
+  return clauses;
+}
+
+// The current schema does not CHECK users.role. An older database might.
+// Rebuilding drops that check and keeps every column, index, foreign key, trigger, and row.
+async function ensureUsersRoleAllowsManager() {
+  const table = await get(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'`);
+  if (!table || !usersRoleCheckBlocksManager(table.sql)) return;
+
+  const columns = await all('PRAGMA table_info(users)');
+  const indexList = await all('PRAGMA index_list(users)');
+  const explicitIndexes = await all(
+    `SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'users' AND sql IS NOT NULL`
+  );
+  const triggers = await all(
+    `SELECT sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'users' AND sql IS NOT NULL`
+  );
+  const foreignKeys = await all('PRAGMA foreign_key_list(users)');
+
+  const uniqueColumns = new Set();
+  const tableUniques = [];
+  for (const index of indexList) {
+    if (index.origin !== 'u') continue;
+    const info = await all(`PRAGMA index_info(${sqlLiteral(index.name)})`);
+    if (info.length === 1) uniqueColumns.add(info[0].name);
+    else if (info.length > 1) {
+      tableUniques.push(info.map((column) => quoteIdent(column.name)).join(', '));
+    }
+  }
+
+  const primaryKeys = columns.filter((column) => column.pk > 0);
+  const autoincrement = primaryKeys.length === 1 && /\bAUTOINCREMENT\b/i.test(table.sql);
+  const defs = columns.map((column) => {
+    let definition = `${quoteIdent(column.name)} ${column.type || ''}`.trim();
+    if (primaryKeys.length === 1 && column.pk === 1) {
+      definition += ' PRIMARY KEY';
+      if (autoincrement) definition += ' AUTOINCREMENT';
+    } else if (column.notnull) {
+      definition += ' NOT NULL';
+    }
+    if (column.dflt_value != null) definition += ` DEFAULT ${column.dflt_value}`;
+    if (uniqueColumns.has(column.name)) definition += ' UNIQUE';
+    return definition;
+  });
+  if (primaryKeys.length > 1) {
+    const ordered = primaryKeys.sort((left, right) => left.pk - right.pk);
+    defs.push(`PRIMARY KEY (${ordered.map((column) => quoteIdent(column.name)).join(', ')})`);
+  }
+  for (const unique of tableUniques) defs.push(`UNIQUE (${unique})`);
+  defs.push(...foreignKeyClauses(foreignKeys));
+
+  const names = columns.map((column) => quoteIdent(column.name)).join(', ');
+  await exec('PRAGMA foreign_keys = OFF');
+  try {
+    await exec('BEGIN IMMEDIATE');
+    await run('DROP TABLE IF EXISTS users__role_rebuild');
+    await run(`CREATE TABLE users__role_rebuild (${defs.join(', ')})`);
+    await run(`INSERT INTO users__role_rebuild (${names}) SELECT ${names} FROM users`);
+    await run('DROP TABLE users');
+    await run('ALTER TABLE users__role_rebuild RENAME TO users');
+    for (const index of explicitIndexes) {
+      if (index.sql) await run(index.sql);
+    }
+    for (const trigger of triggers) {
+      if (trigger.sql) await run(trigger.sql);
+    }
+    await exec('COMMIT');
+  } catch (err) {
+    try {
+      await exec('ROLLBACK');
+    } catch (rollbackErr) {
+      console.error('USERS ROLE REBUILD ROLLBACK ERROR:', rollbackErr);
+    }
+    throw err;
+  } finally {
+    await exec('PRAGMA foreign_keys = ON');
+  }
+  console.log('Relaxed users.role so a manager account can be stored');
+}
+
 async function main() {
   await exec(schema);
   await ensureColumns('work_orders', [
@@ -788,6 +924,7 @@ async function main() {
     { name: 'updated_at', definition: 'DATETIME' },
   ]);
   await run('UPDATE users SET is_active = 1 WHERE is_active IS NULL');
+  await ensureUsersRoleAllowsManager();
   await ensureColumns('services', [
     { name: 'code', definition: 'TEXT' },
     { name: 'suffix_mode', definition: "TEXT DEFAULT 'sequence'" },

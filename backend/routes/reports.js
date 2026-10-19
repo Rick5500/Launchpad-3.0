@@ -3,7 +3,7 @@ const auth = require('../auth');
 const reports = require('../reports');
 
 const router = express.Router();
-const staffRoles = auth.requireRole('admin', 'operator');
+const staffRoles = auth.requireRole('admin', 'manager', 'operator');
 
 function sendReport(res, report, format, filename, columns) {
   if (format === 'csv') {

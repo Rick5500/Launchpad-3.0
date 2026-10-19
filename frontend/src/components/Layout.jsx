@@ -44,15 +44,15 @@ import { REPORT_NAV } from '../reportCatalog';
 const drawerWidth = 280;
 
 const staffNav = [
-  { title: 'Admin Board', route: '/', icon: <DashboardIcon />, roles: ['admin', 'operator'] },
-  { title: 'Create Order', route: '/order', icon: <NoteAddIcon />, roles: ['admin', 'operator'] },
-  { title: 'Scan', route: '/scan', icon: <QrCodeScannerIcon />, roles: ['admin', 'operator'] },
-  { title: 'Search Orders', route: '/search', icon: <SearchIcon />, roles: ['admin', 'operator'] },
+  { title: 'Admin Board', route: '/', icon: <DashboardIcon />, roles: ['admin', 'operator', 'manager'] },
+  { title: 'Create Order', route: '/order', icon: <NoteAddIcon />, roles: ['admin', 'operator', 'manager'] },
+  { title: 'Scan', route: '/scan', icon: <QrCodeScannerIcon />, roles: ['admin', 'operator', 'manager'] },
+  { title: 'Search Orders', route: '/search', icon: <SearchIcon />, roles: ['admin', 'operator', 'manager'] },
   {
     title: 'Reports',
     route: '/reports',
     icon: <BarChartIcon />,
-    roles: ['admin', 'operator'],
+    roles: ['admin', 'operator', 'manager'],
     children: REPORT_NAV,
   },
   { title: 'Customers', route: '/customers', icon: <PeopleIcon />, roles: ['admin'] },
@@ -60,7 +60,7 @@ const staffNav = [
   { title: 'Services', route: '/services', icon: <DesignServicesIcon />, roles: ['admin'] },
   { title: 'Users', route: '/users', icon: <ManageAccountsIcon />, roles: ['admin'] },
   { title: 'System Settings', route: '/settings', icon: <SettingsIcon />, roles: ['admin'] },
-  { title: 'Notifications', route: '/notifications', icon: <NotificationsIcon />, roles: ['admin', 'operator'] },
+  { title: 'Notifications', route: '/notifications', icon: <NotificationsIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Activity Log', route: '/activity-log', icon: <HistoryIcon />, roles: ['admin'] },
   { title: 'Barcode Settings', route: '/barcode-settings', icon: <QrCode2Icon />, roles: ['admin'] },
 ];
@@ -117,7 +117,7 @@ export default function Layout({ user, onLogout }) {
   const welcomeName = user?.display_name || user?.username || 'User';
   const items = (user?.role === 'customer' ? customerNav : staffNav)
     .filter((item) => !item.roles || item.roles.includes(user?.role));
-  const showHeaderScan = user?.role === 'admin' || user?.role === 'operator';
+  const showHeaderScan = user?.role === 'admin' || user?.role === 'manager' || user?.role === 'operator';
 
   function go(route) {
     navigate(route);

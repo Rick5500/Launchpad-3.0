@@ -132,7 +132,7 @@ export default function Reports() {
         Reports
       </Typography>
       <Typography color="text.secondary" sx={{ mb: 2 }}>
-        Admin and operator reports. Leave the dates empty to include all stored rows.
+        Admin, manager, and operator reports. Leave the dates empty to include all stored rows.
       </Typography>
 
       <SectionCard title="Filters">
