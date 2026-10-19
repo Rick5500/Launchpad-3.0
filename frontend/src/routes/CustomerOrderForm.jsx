@@ -52,12 +52,13 @@ const fieldSx = {
 };
 const visuallyHidden = {
   position: 'absolute',
-  width: 1,
-  height: 1,
+  width: '1px',
+  height: '1px',
   padding: 0,
-  margin: -1,
+  margin: '-1px',
   overflow: 'hidden',
   clip: 'rect(0, 0, 0, 0)',
+  clipPath: 'inset(50%)',
   whiteSpace: 'nowrap',
   border: 0,
 };
@@ -214,7 +215,7 @@ function LabelField({ id, label, required, span, children }) {
       minWidth: 0,
     }}
     >
-      <Typography component="label" htmlFor={id} sx={{ fontSize: 14, fontWeight: 700, color: brand.text, lineHeight: 1.3 }}>
+      <Typography component="label" id={`${id}-label`} htmlFor={id} sx={{ fontSize: 14, fontWeight: 700, color: brand.text, lineHeight: 1.3 }}>
         {label}
         {required ? <Box component="span" aria-hidden="true" sx={{ color: brand.danger }}> *</Box> : null}
         {required ? <Box component="span" sx={visuallyHidden}> required</Box> : null}
@@ -269,7 +270,7 @@ function TextControl({
         placeholder={placeholder}
         autoComplete={autoComplete}
         inputProps={{ 'aria-required': required ? true : undefined, ...(inputProps || {}) }}
-        SelectProps={SelectProps}
+        SelectProps={select ? { labelId: `${id}-label`, ...(SelectProps || {}) } : SelectProps}
         InputLabelProps={type === 'date' ? { shrink: true } : undefined}
         sx={fieldSx}
       >
@@ -376,7 +377,7 @@ function FieldInput({ id, field, value, disabled, onChange }) {
   if (field.type === 'select') {
     return (
       <LabelField id={id} label={field.label} required={field.required}>
-        <TextField id={id} select size="small" fullWidth required={field.required} value={value || ''} disabled={disabled} onChange={(event) => onChange(event.target.value)} sx={fieldSx} inputProps={{ 'aria-required': field.required || undefined }}>
+        <TextField id={id} select size="small" fullWidth required={field.required} value={value || ''} disabled={disabled} onChange={(event) => onChange(event.target.value)} sx={fieldSx} inputProps={{ 'aria-required': field.required || undefined }} SelectProps={{ labelId: `${id}-label` }}>
           <MenuItem value="">Select</MenuItem>
           {choices.map((option) => <MenuItem key={option} value={option}>{option}</MenuItem>)}
         </TextField>
@@ -401,6 +402,7 @@ function FieldInput({ id, field, value, disabled, onChange }) {
           }}
           SelectProps={{
             multiple: true,
+            labelId: `${id}-label`,
             renderValue: (selectedValues) => (selectedValues.length ? selectedValues.join(', ') : 'Select'),
           }}
           inputProps={{ 'aria-required': field.required || undefined }}
@@ -930,7 +932,7 @@ export default function CustomerOrderForm() {
       extra={isStaff ? <Button color="inherit" onClick={() => navigate('/')}>Admin Board</Button> : null}
     >
       <GlobalStyles styles={{ '@media print': { '.no-print': { display: 'none !important' }, body: { background: '#fff' } } }} />
-      <Box component="form" id="order-form" noValidate onSubmit={handleSubmit} sx={{ display: 'grid', gap: 2, pb: { xs: 18, sm: 14 } }}>
+      <Box component="form" id="order-form" noValidate onSubmit={handleSubmit} sx={{ display: 'grid', gap: 2 }}>
         {result ? (
           <Box id="order-success" data-testid="success-panel" sx={{ bgcolor: '#fff', border: `2px solid ${brand.green}`, borderTop: `4px solid ${brand.orange}`, borderRadius: 2, p: { xs: 2, sm: 3 } }}>
             <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
@@ -1611,7 +1613,7 @@ export default function CustomerOrderForm() {
         </DialogActions>
       </Dialog>
 
-      <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderLeft: `4px solid ${brand.orange}`, borderRadius: 2, overflow: 'hidden' }}>
+      <Box className="no-print" sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderLeft: `4px solid ${brand.orange}`, borderRadius: 2, overflow: 'hidden', mb: { xs: 18, sm: 14 } }}>
         <Box sx={{ bgcolor: brand.navy, px: 2, py: 1 }}>
           <Typography sx={{ color: '#fff', fontWeight: 800 }}>Important Information</Typography>
         </Box>
