@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Alert,
@@ -68,6 +68,36 @@ const focusRing = {
     outlineOffset: 2,
   },
 };
+// Rail is ~66px. The submit bar is ~66px wide and ~116px on a phone. Padding clears that bar plus the label or error text.
+const SCROLL_TOP = 112;
+const SCROLL_BOTTOM = 184;
+const OrderFieldError = React.createContext(null);
+
+function visibleControl(target) {
+  if (!target?.classList?.contains('MuiSelect-nativeInput')) return target;
+  return target.closest('.MuiInputBase-root')?.querySelector('[role="combobox"]') || target;
+}
+
+function nudgeIntoClearance(node) {
+  if (!node || typeof node.getBoundingClientRect !== 'function') return;
+  const described = String(node.getAttribute?.('aria-describedby') || '').split(/\s+/).filter(Boolean);
+  const extras = described.map((id) => document.getElementById(id)).filter(Boolean);
+  const label = node.id ? document.querySelector(`label[for="${CSS.escape(node.id)}"]`) : null;
+  const helper = node.closest?.('.MuiFormControl-root')?.querySelector('.MuiFormHelperText-root.Mui-error');
+  const nodes = [label, node, helper, ...extras].filter(Boolean);
+  const top = Math.min(...nodes.map((el) => el.getBoundingClientRect().top));
+  const bottom = Math.max(...nodes.map((el) => el.getBoundingClientRect().bottom));
+  const rail = document.querySelector('[aria-label="Order steps"]');
+  const footer = document.querySelector('#order-form footer');
+  const limits = {
+    top: (rail ? rail.getBoundingClientRect().bottom : 0) + 12,
+    bottom: (footer ? footer.getBoundingClientRect().top : window.innerHeight) - 12,
+  };
+  let delta = 0;
+  if (top < limits.top) delta = top - limits.top;
+  else if (bottom > limits.bottom) delta = bottom - limits.bottom;
+  if (delta !== 0) window.scrollBy({ top: delta, behavior: 'auto' });
+}
 const STEP_IDS = {
   contact: 'step-contact',
   delivery: 'step-delivery',
@@ -252,6 +282,8 @@ function TextControl({
   span,
   autoComplete,
 }) {
+  const fieldError = useContext(OrderFieldError);
+  const ownError = fieldError?.id === id ? fieldError.message : '';
   return (
     <LabelField id={id} label={label} required={required} span={span}>
       <TextField
@@ -266,7 +298,9 @@ function TextControl({
         onChange={onChange}
         multiline={multiline}
         minRows={minRows}
-        helperText={helperText}
+        error={Boolean(ownError)}
+        helperText={ownError || helperText}
+        FormHelperTextProps={ownError ? { id: `${id}-error`, role: 'alert' } : undefined}
         placeholder={placeholder}
         autoComplete={autoComplete}
         inputProps={{ 'aria-required': required ? true : undefined, ...(inputProps || {}) }}
@@ -302,7 +336,7 @@ function FlowSection({ id, step, title, subtitle, open, complete, onToggle, chil
       id={id}
       component="section"
       aria-labelledby={`${id}-heading`}
-      sx={{ scrollMarginTop: '88px', bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 2, overflow: 'hidden' }}
+      sx={{ scrollMarginTop: `${SCROLL_TOP}px`, scrollMarginBottom: `${SCROLL_BOTTOM}px`, bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 2, overflow: 'hidden' }}
     >
       <Box
         component="button"
@@ -485,6 +519,8 @@ export default function CustomerOrderForm() {
   const [looseFiles, setLooseFiles] = useState([]);
   const [preview, setPreview] = useState(null);
   const [formError, setFormError] = useState('');
+  const [fieldError, setFieldError] = useState(null);
+  const revealDelay = useRef(40);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState(null);
   const [loadError, setLoadError] = useState('');
@@ -707,6 +743,7 @@ export default function CustomerOrderForm() {
   function resetForm() {
     setResult(null);
     setFormError('');
+    setFieldError(null);
     setPoNumber('');
     setProjectNumber('');
     setProjectName('');
@@ -747,55 +784,76 @@ export default function CustomerOrderForm() {
     setEditor(null);
   }
 
+  function showFieldError(id, message) {
+    const node = typeof document !== 'undefined' ? document.getElementById(id) : null;
+    const section = node?.closest('section[id]');
+    const collapsed = Boolean(section?.querySelector(':scope > button[aria-expanded="false"]'));
+    revealDelay.current = collapsed ? 400 : 40;
+    if (section?.id) {
+      setOpenSteps((current) => (current[section.id] ? current : { ...current, [section.id]: true }));
+    }
+    setFormError('');
+    setFieldError({ id, message });
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
     setFormError('');
     if (uploading) {
+      setFieldError(null);
       setFormError('Wait for file uploads to finish.');
       return;
     }
     if (!selectedServices.length) {
-      setFormError('Select at least one service.');
+      const firstService = options.services[0];
+      showFieldError(firstService ? `service-${firstService.id}` : 'order-services', 'Select at least one service.');
       return;
     }
     if (!projectName.trim()) {
-      setFormError('project_name is required');
+      showFieldError('order-project-name', 'Please fill out this field.');
       return;
     }
-    if (!address1.trim() || !city.trim() || !stateName.trim() || !zip.trim()) {
-      setFormError('Company address requires Addr 1, City, State, and Zip.');
+    const addressGap = [
+      ['order-address1', address1],
+      ['order-city', city],
+      ['order-state', stateName],
+      ['order-zip', zip],
+    ].find(([, value]) => !String(value || '').trim());
+    if (addressGap) {
+      showFieldError(addressGap[0], 'Please fill out this field.');
       return;
     }
     if (!paymentMethod) {
-      setFormError('payment_method is required');
+      showFieldError('order-payment', 'Please select an item in the list.');
       return;
     }
     if (!originalsSource) {
-      setFormError('originals_source is required');
+      showFieldError('order-originals', 'Please select an item in the list.');
       return;
     }
-    const emptyService = selectedServiceRows.map((service) => emptyServiceMessage(service, lines, notes, shipTo)).find(Boolean);
-    if (emptyService) {
-      setFormError(emptyService);
+    const emptyRow = selectedServiceRows.find((service) => emptyServiceMessage(service, lines, notes, shipTo));
+    if (emptyRow) {
+      showFieldError(`add-line-${emptyRow.id}`, emptyServiceMessage(emptyRow, lines, notes, shipTo));
       return;
     }
-    const invalidLine = selectedServiceRows.map((service) => {
-      const row = lines.find((line) => line.service_id === service.id && missingRequired(service, line));
-      return row ? missingRequired(service, row) : null;
-    }).find(Boolean);
-    if (invalidLine) {
-      setFormError(invalidLine);
+    const invalidService = selectedServiceRows.find((service) => (
+      lines.some((line) => line.service_id === service.id && missingRequired(service, line))
+    ));
+    if (invalidService) {
+      const row = lines.find((line) => line.service_id === invalidService.id && missingRequired(invalidService, line));
+      showFieldError(`add-line-${invalidService.id}`, missingRequired(invalidService, row));
       return;
     }
     const attachedCount = filesAttached
       ? [...lines.map((line) => line.file), ...looseFiles].filter((file) => file && file.id && file.status === 'uploaded').length
       : 0;
     if (filesAttached && attachedCount === 0) {
-      setFormError('Attach at least one file when originals source is Files attached below');
+      showFieldError('order-upload', 'Attach at least one file when originals source is Files attached below.');
       return;
     }
     const failed = [...lines.map((line) => line.file), ...looseFiles].find((file) => file && file.status === 'error');
     if (failed) {
+      setFieldError(null);
       setFormError('Remove files that failed to upload before submitting.');
       return;
     }
@@ -865,6 +923,7 @@ export default function CustomerOrderForm() {
         });
       });
     } catch (err) {
+      setFieldError(null);
       setFormError(err.message || 'Unable to submit the order');
     } finally {
       setSubmitting(false);
@@ -903,11 +962,84 @@ export default function CustomerOrderForm() {
     setOpenSteps(openAllSteps);
     const frame = window.requestAnimationFrame(() => {
       const node = document.getElementById('order-form-error');
-      node?.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'center' });
-      node?.focus();
+      if (!node) return;
+      node.scrollIntoView({ behavior: 'auto', block: 'nearest' });
+      node.focus();
+      nudgeIntoClearance(node);
     });
     return () => window.cancelAnimationFrame(frame);
   }, [formError]);
+
+  useEffect(() => {
+    if (!fieldError?.id) return undefined;
+    const timer = window.setTimeout(() => {
+      const node = document.getElementById(fieldError.id);
+      if (!node) return;
+      if (node.getAttribute('role') === 'combobox') node.setAttribute('aria-invalid', 'true');
+      node.focus();
+      node.scrollIntoView({ behavior: 'auto', block: 'nearest' });
+      nudgeIntoClearance(node);
+    }, revealDelay.current);
+    return () => window.clearTimeout(timer);
+  }, [fieldError]);
+
+  useEffect(() => {
+    const form = document.getElementById('order-form');
+    if (!form) return undefined;
+    let reporting = false;
+    let handling = false;
+    let resetTimer = 0;
+    let collapsedTimer = 0;
+
+    function onInvalid(event) {
+      if (reporting) return;
+      const target = event.target;
+      if (!target || target === form) return;
+      const section = target.closest?.('section[id]');
+      const collapsed = Boolean(section?.querySelector(':scope > button[aria-expanded="false"]'));
+      const hiddenSelect = Boolean(target.classList?.contains('MuiSelect-nativeInput'));
+      // Chrome can run a microtask between invalid events. A timeout stays set for the whole pass.
+      if (handling) {
+        if (hiddenSelect || collapsed) event.preventDefault();
+        return;
+      }
+      handling = true;
+      window.clearTimeout(resetTimer);
+      resetTimer = window.setTimeout(() => { handling = false; }, 0);
+
+      if (!hiddenSelect && !collapsed) {
+        setFieldError(null);
+        window.requestAnimationFrame(() => nudgeIntoClearance(target));
+        return;
+      }
+
+      event.preventDefault();
+      revealDelay.current = collapsed ? 400 : 40;
+      if (section?.id) {
+        setOpenSteps((current) => (current[section.id] ? current : { ...current, [section.id]: true }));
+      }
+      if (hiddenSelect) {
+        const visible = visibleControl(target);
+        const message = target.validationMessage || 'Please fill out this field.';
+        if (visible?.id) setFieldError({ id: visible.id, message });
+        return;
+      }
+      window.clearTimeout(collapsedTimer);
+      collapsedTimer = window.setTimeout(() => {
+        if (!form.contains(target)) return;
+        reporting = true;
+        try { target.reportValidity(); } finally { reporting = false; }
+        window.requestAnimationFrame(() => nudgeIntoClearance(target));
+      }, 400);
+    }
+
+    form.addEventListener('invalid', onInvalid, true);
+    return () => {
+      form.removeEventListener('invalid', onInvalid, true);
+      window.clearTimeout(collapsedTimer);
+      window.clearTimeout(resetTimer);
+    };
+  }, []);
 
   function toggleStep(id) {
     setOpenSteps((current) => ({ ...current, [id]: !current[id] }));
@@ -931,8 +1063,33 @@ export default function CustomerOrderForm() {
       onLogout={logout}
       extra={isStaff ? <Button color="inherit" onClick={() => navigate('/')}>Admin Board</Button> : null}
     >
-      <GlobalStyles styles={{ '@media print': { '.no-print': { display: 'none !important' }, body: { background: '#fff' } } }} />
-      <Box component="form" id="order-form" noValidate onSubmit={handleSubmit} sx={{ display: 'grid', gap: 2 }}>
+      <GlobalStyles styles={{
+        html: { scrollPaddingTop: `${SCROLL_TOP}px`, scrollPaddingBottom: `${SCROLL_BOTTOM}px` },
+        '#order-form :is(input, textarea, select, [role="combobox"], [role="checkbox"], .order-scroll-target)': {
+          scrollMarginTop: `${SCROLL_TOP}px`,
+          scrollMarginBottom: `${SCROLL_BOTTOM}px`,
+        },
+        '@media print': {
+          '.no-print': { display: 'none !important' },
+          body: { background: '#fff' },
+          html: { scrollPaddingTop: 0, scrollPaddingBottom: 0 },
+        },
+      }}
+      />
+      <OrderFieldError.Provider value={fieldError}>
+      <Box
+        component="form"
+        id="order-form"
+        onSubmit={handleSubmit}
+        onChange={(event) => {
+          if (!fieldError) return;
+          const target = event.target;
+          const combo = target?.closest?.('.MuiInputBase-root')?.querySelector('[role="combobox"]');
+          const changedId = combo?.id || target?.id;
+          if (changedId && changedId === fieldError.id) setFieldError(null);
+        }}
+        sx={{ display: 'grid', gap: 2 }}
+      >
         {result ? (
           <Box id="order-success" data-testid="success-panel" sx={{ bgcolor: '#fff', border: `2px solid ${brand.green}`, borderTop: `4px solid ${brand.orange}`, borderRadius: 2, p: { xs: 2, sm: 3 } }}>
             <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
@@ -1047,7 +1204,7 @@ export default function CustomerOrderForm() {
 
           {loadError ? <Alert severity="error">{loadError}</Alert> : null}
           {formError ? (
-            <Alert id="order-form-error" tabIndex={-1} severity="error" sx={{ scrollMarginTop: '88px' }}>{formError}</Alert>
+            <Alert id="order-form-error" tabIndex={-1} severity="error" sx={{ scrollMarginTop: `${SCROLL_TOP}px`, scrollMarginBottom: `${SCROLL_BOTTOM}px` }}>{formError}</Alert>
           ) : null}
 
           <FlowSection
@@ -1245,6 +1402,10 @@ export default function CustomerOrderForm() {
             <Subhead>Services</Subhead>
             <Typography sx={{ color: brand.muted, fontSize: 13 }}>Choose every service this order needs. Each one opens its own line items.</Typography>
             {options.services.length === 0 ? <EmptyNote>No services are available right now.</EmptyNote> : null}
+            <Box id="order-services" sx={{ display: 'grid', gap: 1.5 }}>
+            {(fieldError?.id === 'order-services' || String(fieldError?.id || '').startsWith('service-')) ? (
+              <Alert id="order-services-error" severity="error">{fieldError.message}</Alert>
+            ) : null}
             <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(148px, 1fr))', gap: 1.5 }}>
               {options.services.map((service) => {
                 const selected = selectedServices.includes(service.id);
@@ -1252,7 +1413,9 @@ export default function CustomerOrderForm() {
                 return (
                   <Box
                     key={service.id}
+                    id={`service-${service.id}`}
                     data-testid={`service-${service.id}`}
+                    aria-describedby={fieldError?.id === `service-${service.id}` ? 'order-services-error' : undefined}
                     role="checkbox"
                     aria-checked={selected}
                     aria-label={service.name}
@@ -1288,6 +1451,7 @@ export default function CustomerOrderForm() {
                   </Box>
                 );
               })}
+            </Box>
             </Box>
 
             {selectedServiceRows.map((service) => {
@@ -1327,13 +1491,22 @@ export default function CustomerOrderForm() {
                         ) : null}
                       </Box>
                     ))}
+                    {fieldError?.id === `add-line-${service.id}` ? (
+                      <Alert id={`add-line-${service.id}-error`} severity="error">{fieldError.message}</Alert>
+                    ) : null}
                     <Button
+                      id={`add-line-${service.id}`}
                       type="button"
                       data-testid={`add-line-${service.id}`}
+                      aria-describedby={fieldError?.id === `add-line-${service.id}` ? `add-line-${service.id}-error` : undefined}
                       startIcon={<AddIcon />}
                       disabled={locked}
-                      onClick={() => setEditor({ ...newLine(service), error: '' })}
-                      sx={{ justifySelf: 'start', color: brand.navy, fontWeight: 700, ...focusRing }}
+                      className="order-scroll-target"
+                      onClick={() => {
+                        if (fieldError?.id === `add-line-${service.id}`) setFieldError(null);
+                        setEditor({ ...newLine(service), error: '' });
+                      }}
+                      sx={{ justifySelf: 'start', color: brand.navy, fontWeight: 700, scrollMarginTop: `${SCROLL_TOP}px`, scrollMarginBottom: `${SCROLL_BOTTOM}px`, ...focusRing }}
                     >
                       Add line
                     </Button>
@@ -1407,8 +1580,11 @@ export default function CustomerOrderForm() {
                     ) : null}
                   </Box>
                 ))}
+                {fieldError?.id === 'order-upload' ? (
+                  <Alert id="order-upload-error" severity="error" sx={{ mb: 1 }}>{fieldError.message}</Alert>
+                ) : null}
                 {!locked ? (
-                  <Button type="button" size="small" component="label" sx={{ mt: 1, color: brand.navy, fontWeight: 700, ...focusRing }}>
+                  <Button id="order-upload" className="order-scroll-target" type="button" size="small" component="label" aria-describedby={fieldError?.id === 'order-upload' ? 'order-upload-error' : undefined} sx={{ mt: 1, color: brand.navy, fontWeight: 700, scrollMarginTop: `${SCROLL_TOP}px`, scrollMarginBottom: `${SCROLL_BOTTOM}px`, ...focusRing }}>
                     Upload Files
                     <input
                       hidden
@@ -1542,6 +1718,7 @@ export default function CustomerOrderForm() {
           </Box>
         </Box>
       </Box>
+      </OrderFieldError.Provider>
 
       <Dialog open={Boolean(editor)} onClose={() => setEditor(null)} fullWidth maxWidth="sm">
         <DialogTitle sx={{ bgcolor: brand.navy, color: '#fff', borderLeft: `4px solid ${brand.orange}`, fontWeight: 800 }}>
