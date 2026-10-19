@@ -22,12 +22,14 @@ const CHECKED_SCHEMA = `
 PRAGMA foreign_keys = OFF;
 CREATE TABLE users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  username TEXT NOT NULL UNIQUE,
+  username TEXT NOT NULL UNIQUE COLLATE NOCASE,
   password_hash TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'customer' CHECK (role IN ('admin', 'operator', 'customer')),
   display_name TEXT,
   badge TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  CHECK (badge IS NULL OR length(badge) <= 20),
+  UNIQUE (display_name, badge)
 );
 CREATE INDEX idx_users_badge ON users(badge);
 CREATE TABLE user_pins (
@@ -264,7 +266,10 @@ async function main() {
   const upgraded = openDb(checkedDb);
   await upgraded.exec('PRAGMA foreign_keys = ON');
   const tableSql = await upgraded.get(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'`);
-  assert(tableSql && !/\bCHECK\s*\(/i.test(tableSql.sql), `the rebuilt users table should not keep a role check: ${tableSql && tableSql.sql}`);
+  assert(tableSql && /COLLATE\s+NOCASE/i.test(tableSql.sql), `the rebuild should keep the username collation: ${tableSql && tableSql.sql}`);
+  assert(tableSql && /CHECK\s*\(\s*badge IS NULL OR length\s*\(\s*badge\s*\)\s*<=\s*20\s*\)/i.test(tableSql.sql), `the rebuild should keep the badge check: ${tableSql && tableSql.sql}`);
+  assert(tableSql && /UNIQUE\s*\(\s*display_name\s*,\s*badge\s*\)/i.test(tableSql.sql), `the rebuild should keep the composite unique: ${tableSql && tableSql.sql}`);
+  assert(tableSql && !/CHECK\s*\([^)]*\brole\b/i.test(tableSql.sql), `the rebuild should drop the role check: ${tableSql && tableSql.sql}`);
   const legacy = await upgraded.get(`SELECT username, role, badge, password_hash FROM users WHERE username = 'legacyop'`);
   assert(legacy && legacy.role === 'operator' && legacy.badge === 'gold' && legacy.password_hash === 'x', 'the rebuild should keep the operator row');
   const legacyCustomer = await upgraded.get(`SELECT role, badge FROM users WHERE username = 'legacycust'`);
@@ -289,6 +294,18 @@ async function main() {
     `INSERT INTO users (username, password_hash, role) VALUES ('legacyop', 'y', 'operator')`
   ).then(() => null).catch((err) => err);
   assert(duplicate && /UNIQUE constraint failed/i.test(duplicate.message), 'username should stay unique');
+  const caseDuplicate = await upgraded.run(
+    `INSERT INTO users (username, password_hash, role, display_name) VALUES ('LegacyOp', 'y', 'operator', 'Other')`
+  ).then(() => null).catch((err) => err);
+  assert(caseDuplicate && /UNIQUE constraint failed/i.test(caseDuplicate.message), `username collation should stay NOCASE: ${caseDuplicate && caseDuplicate.message}`);
+  const longBadge = await upgraded.run(
+    `INSERT INTO users (username, password_hash, role, display_name, badge) VALUES ('longbadge', 'x', 'operator', 'Long Badge', '123456789012345678901')`
+  ).then(() => null).catch((err) => err);
+  assert(longBadge && /CHECK constraint failed/i.test(longBadge.message), `the badge check should still reject a long badge: ${longBadge && longBadge.message}`);
+  const composite = await upgraded.run(
+    `INSERT INTO users (username, password_hash, role, display_name, badge) VALUES ('dupname', 'x', 'operator', 'Legacy Op', 'gold')`
+  ).then(() => null).catch((err) => err);
+  assert(composite && /UNIQUE constraint failed/i.test(composite.message), `the composite unique should still reject a repeated display name and badge: ${composite && composite.message}`);
   let orphanFailed = false;
   try {
     await upgraded.run(`INSERT INTO user_pins (id, user_id) VALUES (2, 999999)`);
@@ -652,6 +669,90 @@ async function main() {
       [done.id]
     );
     assert(completedActivity, 'moving into Complete should write work_order.completed');
+
+    const locationList = await request({ method: 'GET', path: '/api/barcode/locations', token: admin.token });
+    assert(locationList.status === 200 && Array.isArray(locationList.json.locations), locationList.text);
+    const deliveryLocation = locationList.json.locations.find((row) => row.location === 'Delivery');
+    const qualityLocation = locationList.json.locations.find((row) => row.location === 'Quality');
+    assert(deliveryLocation && qualityLocation, 'Quality and Delivery should have barcode locations');
+    const deliveryUpdate = await request({
+      method: 'PUT',
+      path: `/api/barcode/locations/${deliveryLocation.id}`,
+      token: admin.token,
+      json: {
+        location: 'Delivery',
+        department_name: 'Delivery',
+        stage_name: 'Shipping',
+        is_active: true,
+        sort_order: deliveryLocation.sort_order,
+      },
+    });
+    assert(deliveryUpdate.status === 200 && deliveryUpdate.json.stage_name === 'Shipping', deliveryUpdate.text);
+
+    await insertOrder('P10-SCAN', customer.json.id, 'Large Format');
+    const scan = await request({
+      method: 'POST',
+      path: '/api/barcode',
+      token: admin.token,
+      json: { scanned_value: 'P10-SCAN', location: 'Delivery' },
+    });
+    assert(scan.status === 201, scan.text);
+    assert(scan.json.to_department === 'Delivery' && scan.json.stage_name === 'Shipping' && scan.json.stage_advanced === true, scan.text);
+    const scanStored = await workOrderState(db, 'P10-SCAN');
+    assert(scanStored.department === 'Delivery' && scanStored.stage_name === 'Shipping', 'a Delivery scan should advance the location stage');
+
+    await insertOrder('P10-DELIV', customer.json.id, 'Large Format');
+    const deliv = await workOrderState(db, 'P10-DELIV');
+    const delivMove = await request({
+      method: 'POST',
+      path: `/api/workorders/${deliv.id}/move`,
+      token: admin.token,
+      json: { department: 'Delivery' },
+    });
+    assert(delivMove.status === 200 && delivMove.json.stage_name === 'Shipping' && delivMove.json.stage_advanced === true, delivMove.text);
+    const delivStored = await workOrderState(db, 'P10-DELIV');
+    assert(delivStored.department === 'Delivery' && delivStored.stage_name === 'Shipping', 'a manual move should use the Delivery location stage');
+
+    const blankQuality = await request({
+      method: 'PUT',
+      path: `/api/barcode/locations/${qualityLocation.id}`,
+      token: admin.token,
+      json: {
+        location: 'Quality',
+        department_name: 'Quality',
+        stage_name: '',
+        is_active: true,
+        sort_order: qualityLocation.sort_order,
+      },
+    });
+    assert(blankQuality.status === 200 && blankQuality.json.stage_name === '' && blankQuality.json.department_name === 'Quality', blankQuality.text);
+    await insertOrder('P10-BLANK', customer.json.id, 'Large Format');
+    const blank = await workOrderState(db, 'P10-BLANK');
+    const blankMove = await request({
+      method: 'POST',
+      path: `/api/workorders/${blank.id}/move`,
+      token: admin.token,
+      json: { department: 'Quality' },
+    });
+    assert(blankMove.status === 200 && blankMove.json.department === 'Quality', blankMove.text);
+    assert(blankMove.json.stage_advanced === false && !blankMove.json.stage_name, blankMove.text);
+    const blankStored = await workOrderState(db, 'P10-BLANK');
+    assert(blankStored.department === 'Quality' && blankStored.stage_name == null, 'a blank Quality stage should not fall back to Quality Control');
+
+    await db.run(
+      `DELETE FROM barcode_locations
+       WHERE lower(trim(COALESCE(department_name, ''))) = 'quality'
+          OR lower(trim(location)) = 'quality'`
+    );
+    await insertOrder('P10-FALLBACK', customer.json.id, 'Large Format');
+    const fallback = await workOrderState(db, 'P10-FALLBACK');
+    const fallbackMove = await request({
+      method: 'POST',
+      path: `/api/workorders/${fallback.id}/move`,
+      token: admin.token,
+      json: { department: 'Quality' },
+    });
+    assert(fallbackMove.status === 200 && fallbackMove.json.stage_name === 'Quality Control' && fallbackMove.json.stage_advanced === true, fallbackMove.text);
 
     const mgrOrder = await workOrderState(db, 'P10-MGR');
     const mgrMove = await request({

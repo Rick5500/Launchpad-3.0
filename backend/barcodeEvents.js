@@ -524,6 +524,37 @@ function sameDepartmentName(left, right) {
   return String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
 }
 
+// The stage follows the active barcode location for the target department, the same
+// row a scan of that department uses. A blank stage stays blank. The built-in map
+// applies only when that table is missing, empty, or has no active row for the department.
+async function stageNameForDepartment(tx, departmentName) {
+  const name = String(departmentName || '').trim();
+  if (!name) return null;
+
+  const table = await tx.get(
+    `SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = 'barcode_locations'`
+  );
+  if (!table) return stageNameForLocation(name);
+
+  const count = await tx.get('SELECT COUNT(*) AS count FROM barcode_locations');
+  if (!count || !count.count) return stageNameForLocation(name);
+
+  const row = await tx.get(
+    `SELECT stage_name
+     FROM barcode_locations
+     WHERE is_active = 1
+       AND lower(trim(COALESCE(department_name, ''))) = lower(?)
+     ORDER BY CASE WHEN lower(trim(location)) = lower(?) THEN 0 ELSE 1 END,
+              sort_order ASC,
+              id ASC
+     LIMIT 1`,
+    [name, name]
+  );
+  if (!row) return stageNameForLocation(name);
+  const stage = row.stage_name == null ? '' : String(row.stage_name).trim();
+  return stage || null;
+}
+
 // Manual move shares the scan's department update. It does not write a barcode event.
 // departmentLock, when set, allows the move only from that department.
 async function moveWorkOrder({ workOrderId, department, note, actorId, departmentLock }) {
@@ -555,7 +586,7 @@ async function moveWorkOrder({ workOrderId, department, note, actorId, departmen
     const operator = actorId
       ? await tx.get('SELECT id, display_name, username FROM users WHERE id = ?', [actorId])
       : null;
-    const stageName = stageNameForLocation(matched.name);
+    const stageName = await stageNameForDepartment(tx, matched.name);
     const stage = stageName
       ? await tx.get(
         'SELECT id, name FROM production_stages WHERE lower(name) = lower(?)',

@@ -750,112 +750,214 @@ function quoteIdent(name) {
   return `"${name}"`;
 }
 
-function sqlLiteral(value) {
-  return `'${String(value).replace(/'/g, "''")}'`;
+function endOfParens(sql, openIndex) {
+  let depth = 0;
+  let quote = null;
+  for (let index = openIndex; index < sql.length; index += 1) {
+    const ch = sql[index];
+    if (quote) {
+      if (ch === quote) {
+        if (sql[index + 1] === quote) {
+          index += 1;
+          continue;
+        }
+        quote = null;
+      }
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`' || ch === '[') {
+      quote = ch === '[' ? ']' : ch;
+      continue;
+    }
+    if (ch === '(') depth += 1;
+    else if (ch === ')') {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  throw new Error('Unbalanced parentheses in users CREATE TABLE');
 }
 
-// Nested parentheses, so a role check such as CHECK (role IN (...)) is kept whole.
-function checkClauses(sql) {
-  const clauses = [];
-  const pattern = /\bCHECK\s*\(/gi;
-  let match = pattern.exec(sql);
-  while (match) {
-    let depth = 1;
-    let index = match.index + match[0].length;
-    for (; index < sql.length && depth > 0; index += 1) {
-      if (sql[index] === '(') depth += 1;
-      else if (sql[index] === ')') depth -= 1;
+function checkBodies(sql) {
+  const bodies = [];
+  let quote = null;
+  let index = 0;
+  while (index < sql.length) {
+    const ch = sql[index];
+    if (quote) {
+      if (ch === quote) {
+        if (sql[index + 1] === quote) {
+          index += 2;
+          continue;
+        }
+        quote = null;
+      }
+      index += 1;
+      continue;
     }
-    clauses.push(sql.slice(match.index + match[0].length, index - 1));
-    match = pattern.exec(sql);
+    if (ch === "'" || ch === '"' || ch === '`' || ch === '[') {
+      quote = ch === '[' ? ']' : ch;
+      index += 1;
+      continue;
+    }
+    if (ch === '-' && sql[index + 1] === '-') {
+      const end = sql.indexOf('\n', index);
+      index = end === -1 ? sql.length : end + 1;
+      continue;
+    }
+    if (ch === '/' && sql[index + 1] === '*') {
+      const end = sql.indexOf('*/', index + 2);
+      index = end === -1 ? sql.length : end + 2;
+      continue;
+    }
+    if (/^CHECK\s*\(/i.test(sql.slice(index)) && (index === 0 || !/[A-Za-z0-9_]/.test(sql[index - 1]))) {
+      const open = sql.indexOf('(', index);
+      const close = endOfParens(sql, open);
+      bodies.push(sql.slice(open + 1, close));
+      index = close + 1;
+      continue;
+    }
+    index += 1;
   }
-  return clauses;
+  return bodies;
 }
 
 function usersRoleCheckBlocksManager(sql) {
-  if (!sql || !/\bCHECK\b/i.test(sql) || !/\brole\b/i.test(sql)) return false;
-  const roleClauses = checkClauses(sql).filter((clause) => /\brole\b/i.test(clause));
+  if (!sql) return false;
+  const roleClauses = checkBodies(sql).filter((clause) => /\brole\b/i.test(clause));
   if (!roleClauses.length) return false;
   return roleClauses.some((clause) => !/\bmanager\b/i.test(clause));
 }
 
-const FOREIGN_KEY_ACTIONS = new Set(['RESTRICT', 'SET NULL', 'SET DEFAULT', 'CASCADE']);
+const CONSTRAINT_TAIL = /(?:CONSTRAINT\s+(?:"[^"]+"|`[^`]+`|\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_]*)\s+)?$/i;
 
-function foreignKeyClauses(rows) {
-  const groups = new Map();
-  for (const row of rows) {
-    if (!groups.has(row.id)) groups.set(row.id, []);
-    groups.get(row.id).push(row);
+// Drop only a role CHECK that omits manager. Collation, other checks, and keys stay.
+function rewriteUsersCreateSql(sql) {
+  let result = '';
+  let quote = null;
+  let index = 0;
+  while (index < sql.length) {
+    const ch = sql[index];
+    if (quote) {
+      result += ch;
+      if (ch === quote) {
+        if (sql[index + 1] === quote) {
+          result += sql[index + 1];
+          index += 2;
+          continue;
+        }
+        quote = null;
+      }
+      index += 1;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`' || ch === '[') {
+      quote = ch === '[' ? ']' : ch;
+      result += ch;
+      index += 1;
+      continue;
+    }
+    if (ch === '-' && sql[index + 1] === '-') {
+      const end = sql.indexOf('\n', index);
+      const stop = end === -1 ? sql.length : end + 1;
+      result += sql.slice(index, stop);
+      index = stop;
+      continue;
+    }
+    if (ch === '/' && sql[index + 1] === '*') {
+      const end = sql.indexOf('*/', index + 2);
+      const stop = end === -1 ? sql.length : end + 2;
+      result += sql.slice(index, stop);
+      index = stop;
+      continue;
+    }
+    if (/^CHECK\s*\(/i.test(sql.slice(index)) && (index === 0 || !/[A-Za-z0-9_]/.test(sql[index - 1]))) {
+      const open = sql.indexOf('(', index);
+      const close = endOfParens(sql, open);
+      const body = sql.slice(open + 1, close);
+      const blocks = /\brole\b/i.test(body) && !/\bmanager\b/i.test(body);
+      if (!blocks) {
+        result += sql.slice(index, close + 1);
+        index = close + 1;
+        continue;
+      }
+      result = result.replace(CONSTRAINT_TAIL, '').replace(/,\s*$/, '');
+      index = close + 1;
+      continue;
+    }
+    result += ch;
+    index += 1;
   }
-  const clauses = [];
-  for (const group of groups.values()) {
-    group.sort((left, right) => left.seq - right.seq);
-    const from = group.map((row) => quoteIdent(row.from)).join(', ');
-    const to = group.map((row) => quoteIdent(row.to)).join(', ');
-    let clause = `FOREIGN KEY (${from}) REFERENCES ${quoteIdent(group[0].table)} (${to})`;
-    const onUpdate = String(group[0].on_update || '').toUpperCase();
-    const onDelete = String(group[0].on_delete || '').toUpperCase();
-    if (FOREIGN_KEY_ACTIONS.has(onUpdate)) clause += ` ON UPDATE ${onUpdate}`;
-    if (FOREIGN_KEY_ACTIONS.has(onDelete)) clause += ` ON DELETE ${onDelete}`;
-    clauses.push(clause);
+
+  let cleaned = '';
+  quote = null;
+  index = 0;
+  while (index < result.length) {
+    const ch = result[index];
+    if (quote) {
+      cleaned += ch;
+      if (ch === quote) {
+        if (result[index + 1] === quote) {
+          cleaned += result[index + 1];
+          index += 2;
+          continue;
+        }
+        quote = null;
+      }
+      index += 1;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`' || ch === '[') {
+      quote = ch === '[' ? ']' : ch;
+      cleaned += ch;
+      index += 1;
+      continue;
+    }
+    if (ch === ',') {
+      let next = index + 1;
+      while (next < result.length && /\s/.test(result[next])) next += 1;
+      if (result[next] === ',' || result[next] === ')') {
+        index += 1;
+        continue;
+      }
+    }
+    cleaned += ch;
+    index += 1;
   }
-  return clauses;
+  return cleaned;
+}
+
+function renameUsersCreateSql(sql) {
+  const match = /^(\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?)(?:"users"|`users`|\[users\]|users)(\s*\()/i.exec(sql);
+  if (!match) throw new Error('users CREATE TABLE statement was not recognized');
+  return `${match[1]}"users__role_rebuild"${match[2]}${sql.slice(match[0].length)}`;
 }
 
 // The current schema does not CHECK users.role. An older database might.
-// Rebuilding drops that check and keeps every column, index, foreign key, trigger, and row.
+// Rebuilding rewrites that role CHECK in the original CREATE TABLE statement.
 async function ensureUsersRoleAllowsManager() {
   const table = await get(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'`);
   if (!table || !usersRoleCheckBlocksManager(table.sql)) return;
 
+  const createSql = renameUsersCreateSql(rewriteUsersCreateSql(table.sql));
+  if (usersRoleCheckBlocksManager(createSql)) {
+    throw new Error('users role rebuild left a CHECK that omits manager');
+  }
+
   const columns = await all('PRAGMA table_info(users)');
-  const indexList = await all('PRAGMA index_list(users)');
   const explicitIndexes = await all(
     `SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'users' AND sql IS NOT NULL`
   );
   const triggers = await all(
     `SELECT sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'users' AND sql IS NOT NULL`
   );
-  const foreignKeys = await all('PRAGMA foreign_key_list(users)');
-
-  const uniqueColumns = new Set();
-  const tableUniques = [];
-  for (const index of indexList) {
-    if (index.origin !== 'u') continue;
-    const info = await all(`PRAGMA index_info(${sqlLiteral(index.name)})`);
-    if (info.length === 1) uniqueColumns.add(info[0].name);
-    else if (info.length > 1) {
-      tableUniques.push(info.map((column) => quoteIdent(column.name)).join(', '));
-    }
-  }
-
-  const primaryKeys = columns.filter((column) => column.pk > 0);
-  const autoincrement = primaryKeys.length === 1 && /\bAUTOINCREMENT\b/i.test(table.sql);
-  const defs = columns.map((column) => {
-    let definition = `${quoteIdent(column.name)} ${column.type || ''}`.trim();
-    if (primaryKeys.length === 1 && column.pk === 1) {
-      definition += ' PRIMARY KEY';
-      if (autoincrement) definition += ' AUTOINCREMENT';
-    } else if (column.notnull) {
-      definition += ' NOT NULL';
-    }
-    if (column.dflt_value != null) definition += ` DEFAULT ${column.dflt_value}`;
-    if (uniqueColumns.has(column.name)) definition += ' UNIQUE';
-    return definition;
-  });
-  if (primaryKeys.length > 1) {
-    const ordered = primaryKeys.sort((left, right) => left.pk - right.pk);
-    defs.push(`PRIMARY KEY (${ordered.map((column) => quoteIdent(column.name)).join(', ')})`);
-  }
-  for (const unique of tableUniques) defs.push(`UNIQUE (${unique})`);
-  defs.push(...foreignKeyClauses(foreignKeys));
-
   const names = columns.map((column) => quoteIdent(column.name)).join(', ');
+
   await exec('PRAGMA foreign_keys = OFF');
   try {
     await exec('BEGIN IMMEDIATE');
     await run('DROP TABLE IF EXISTS users__role_rebuild');
-    await run(`CREATE TABLE users__role_rebuild (${defs.join(', ')})`);
+    await run(createSql);
     await run(`INSERT INTO users__role_rebuild (${names}) SELECT ${names} FROM users`);
     await run('DROP TABLE users');
     await run('ALTER TABLE users__role_rebuild RENAME TO users');
