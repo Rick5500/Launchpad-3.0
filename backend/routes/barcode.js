@@ -94,7 +94,7 @@ router.get('/events', auth.requireAuth, staffRoles, async (req, res) => {
   if (parsed.error) return res.status(400).json({ error: parsed.error });
   try {
     const access = await users.loadAccess(req.user.userId);
-    if ((access.role === 'operator' || access.role === 'manager') && access.department) {
+    if (access.role === 'operator' && access.department) {
       parsed.value.departmentLock = access.department;
     }
   } catch (err) {
@@ -118,7 +118,7 @@ router.post('/', auth.requireAuth, staffRoles, limitBarcodeScans, async (req, re
   let scanLocation = location.value;
   try {
     const access = await users.loadAccess(req.user.userId);
-    if (access.department) scanLocation = access.department;
+    if (access.role !== 'manager' && access.department) scanLocation = access.department;
   } catch (err) {
     return sendServiceError(res, err, 'BARCODE CREATE ERROR:', 'Failed to record barcode event');
   }

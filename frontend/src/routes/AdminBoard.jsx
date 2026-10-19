@@ -108,22 +108,11 @@ function linkButton(label, onClick) {
   );
 }
 
-function sameDepartment(left, right) {
-  return String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
-}
-
-function canMoveWorkOrder(user, department) {
-  if (user?.role === 'admin') return true;
-  if (user?.role !== 'manager') return false;
-  const home = String(user.department || '').trim();
-  if (!home) return true;
-  return sameDepartment(home, department);
-}
-
 export default function AdminBoard() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const canApprove = user?.role === 'admin';
+  const canMove = user?.role === 'admin' || user?.role === 'manager';
   const [summary, setSummary] = useState(null);
   const [summaryError, setSummaryError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -596,7 +585,7 @@ export default function AdminBoard() {
                         <IconButton aria-label={`Print barcode for ${row.order_number}`} size="small" onClick={() => navigate(`/work-orders/${row.id}/print`)}>
                           <QrCode2Icon fontSize="small" />
                         </IconButton>
-                        {canMoveWorkOrder(user, row.department) && (
+                        {canMove && (
                           <Button
                             size="small"
                             aria-label={`Move ${row.order_number}`}

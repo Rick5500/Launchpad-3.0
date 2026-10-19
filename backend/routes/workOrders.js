@@ -508,13 +508,11 @@ router.post('/:id/move', auth.requireAuth, auth.requireRole('admin', 'manager'),
     if (access.role !== 'admin' && access.role !== 'manager') {
       return res.status(403).json({ error: 'Forbidden' });
     }
-    const departmentLock = access.role === 'manager' ? access.department : null;
     const result = await barcodeEvents.moveWorkOrder({
       workOrderId: id,
       department: parsed.department,
       note: parsed.note,
       actorId: req.user.userId,
-      departmentLock,
     });
     res.json(result);
   } catch (err) {

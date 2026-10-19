@@ -138,6 +138,8 @@ async function departmentForRole(tx, source, role, existingDepartment) {
     }
     return { value: null };
   }
+  // A manager sees every department, so a department on the request is discarded.
+  if (role === 'manager') return { value: null };
   if (!departmentProvided(source)) return { value: existingDepartment || null };
   return canonicalDepartment(tx, source.department);
 }

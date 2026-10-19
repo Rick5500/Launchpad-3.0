@@ -981,6 +981,19 @@ async function ensureUsersRoleAllowsManager() {
   console.log('Relaxed users.role so a manager account can be stored');
 }
 
+// Managers see every department. A department stored on an older manager row is cleared.
+async function clearManagerDepartments() {
+  const result = await run(
+    `UPDATE users
+     SET department = NULL, updated_at = datetime('now')
+     WHERE lower(role) = 'manager'
+       AND department IS NOT NULL`
+  );
+  if (result.changes > 0) {
+    console.log(`Cleared department on ${result.changes} manager account(s)`);
+  }
+}
+
 async function main() {
   await exec(schema);
   await ensureColumns('work_orders', [
@@ -1027,6 +1040,7 @@ async function main() {
   ]);
   await run('UPDATE users SET is_active = 1 WHERE is_active IS NULL');
   await ensureUsersRoleAllowsManager();
+  await clearManagerDepartments();
   await ensureColumns('services', [
     { name: 'code', definition: 'TEXT' },
     { name: 'suffix_mode', definition: "TEXT DEFAULT 'sequence'" },

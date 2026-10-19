@@ -556,8 +556,8 @@ async function stageNameForDepartment(tx, departmentName) {
 }
 
 // Manual move shares the scan's department update. It does not write a barcode event.
-// departmentLock, when set, allows the move only from that department.
-async function moveWorkOrder({ workOrderId, department, note, actorId, departmentLock }) {
+// Admin and manager can move a work order from any department.
+async function moveWorkOrder({ workOrderId, department, note, actorId }) {
   const lookup = String(department || '').trim();
   return withTransaction(async (tx) => {
     const workOrder = await tx.get(
@@ -567,9 +567,6 @@ async function moveWorkOrder({ workOrderId, department, note, actorId, departmen
       [workOrderId]
     );
     if (!workOrder) throw httpError(404, 'Work order not found');
-    if (departmentLock && !sameDepartmentName(workOrder.department, departmentLock)) {
-      throw httpError(403, 'You can only move work orders currently in your department');
-    }
 
     const matched = lookup
       ? await tx.get(

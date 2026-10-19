@@ -44,14 +44,15 @@ function assignedDepartment(user) {
   return value || null;
 }
 
-// Operators with a department cannot widen the board. An admin or a manager can pass scope=all.
+// Operators with a department cannot widen the board. An admin with a department can pass scope=all.
+// A manager is not assigned a department and sees every department.
 function canWidenBoard(role) {
-  return role === 'admin' || role === 'manager';
+  return role === 'admin';
 }
 
 function resolveBoardScope(user, query) {
-  const assigned = assignedDepartment(user);
   const role = user && user.role;
+  const assigned = role === 'manager' ? null : assignedDepartment(user);
   const canClear = canWidenBoard(role) && Boolean(assigned);
   const requested = String((query && query.scope) || '').trim().toLowerCase();
   if (!assigned || (canClear && requested === 'all')) {

@@ -261,23 +261,12 @@ function getTabContent(tab, workOrder, scanState, hideInternal) {
   }
 }
 
-function sameDepartment(left, right) {
-  return String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
-}
-
-function canMoveWorkOrder(user, department) {
-  if (user?.role === 'admin') return true;
-  if (user?.role !== 'manager') return false;
-  const home = String(user.department || '').trim();
-  if (!home) return true;
-  return sameDepartment(home, department);
-}
-
 export default function WorkOrderDetail() {
   const navigate = useNavigate();
   const { id } = useParams();
   const { user } = useAuth();
   const canManageOrders = user?.role === 'admin' || user?.role === 'manager' || user?.role === 'operator';
+  const canMove = user?.role === 'admin' || user?.role === 'manager';
 
   const [workOrder, setWorkOrder] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -336,8 +325,6 @@ export default function WorkOrderDetail() {
   if (error) return <ErrorState message={error} />;
   if (!workOrder) return <ErrorState message="Work order record is missing." />;
 
-  const showMove = canMoveWorkOrder(user, workOrder.department);
-
   return (
     <Box sx={{ p: 3 }}>
       <Box sx={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 2, mb: 2 }}>
@@ -353,7 +340,7 @@ export default function WorkOrderDetail() {
           <Button variant="outlined" onClick={() => navigate(`/work-orders/${id}/print`)}>
             Print Work Order
           </Button>
-          {showMove && (
+          {canMove && (
             <Button variant="outlined" data-testid="move-work-order" onClick={() => setMoveOpen(true)}>
               Move to…
             </Button>

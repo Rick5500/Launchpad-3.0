@@ -333,6 +333,25 @@ async function main() {
   assert(adminRows.count === 1, 'init should not create a second admin');
   await settled.close();
 
+  const clearing = openDb(checkedDb);
+  await clearing.run(
+    `INSERT INTO users (username, password_hash, role, display_name, department) VALUES ('deptmgr', 'x', 'manager', 'Dept Manager', 'Quality')`
+  );
+  await clearing.run(
+    `INSERT INTO users (username, password_hash, role, display_name, department) VALUES ('deptop', 'x', 'operator', 'Dept Operator', 'Dispatch')`
+  );
+  await clearing.close();
+  const clearInit = await initDatabase(checkedDb);
+  assert(/Cleared department on 1 manager/.test(clearInit.out), `init should clear a manager department:\n${clearInit.out}`);
+  const cleared = openDb(checkedDb);
+  const deptMgr = await cleared.get(`SELECT department FROM users WHERE username = 'deptmgr'`);
+  const deptOp = await cleared.get(`SELECT department FROM users WHERE username = 'deptop'`);
+  assert(deptMgr && deptMgr.department == null, 'init should clear a manager department');
+  assert(deptOp && deptOp.department === 'Dispatch', 'init should leave an operator department');
+  await cleared.close();
+  const clearAgain = await initDatabase(checkedDb);
+  assert(!/Cleared department/.test(clearAgain.out), 'a second init should not clear manager departments again');
+
   const allowed = openDb(allowedDb);
   await allowed.exec(ALREADY_ALLOWS_SCHEMA);
   await allowed.run(
@@ -384,7 +403,7 @@ async function main() {
         password: 'ManagerPass123',
       }),
     });
-    assert(created.status === 201 && created.json.role === 'manager' && created.json.department === 'Quality', created.text);
+    assert(created.status === 201 && created.json.role === 'manager' && created.json.department == null, created.text);
     const edited = await request({
       method: 'PUT',
       path: `/api/users/${created.json.id}`,
@@ -396,19 +415,7 @@ async function main() {
         department: 'Dispatch',
       }),
     });
-    assert(edited.status === 200 && edited.json.department === 'Dispatch', edited.text);
-    const restored = await request({
-      method: 'PUT',
-      path: `/api/users/${created.json.id}`,
-      token: admin.token,
-      json: staffBody({
-        username: 'qualitymgr',
-        display_name: 'Quality Manager',
-        role: 'manager',
-        department: 'Quality',
-      }),
-    });
-    assert(restored.status === 200 && restored.json.department === 'Quality', restored.text);
+    assert(edited.status === 200 && edited.json.department == null, edited.text);
     const badRole = await request({
       method: 'POST',
       path: '/api/users',
@@ -456,6 +463,31 @@ async function main() {
       }),
     });
     assert(operator.status === 201, operator.text);
+    const stationed = await request({
+      method: 'POST',
+      path: '/api/users',
+      token: admin.token,
+      json: staffBody({
+        username: 'opdept',
+        display_name: 'Stationed Operator',
+        role: 'operator',
+        department: 'Quality',
+        password: 'OperatorPass123',
+      }),
+    });
+    assert(stationed.status === 201 && stationed.json.department === 'Quality', stationed.text);
+    const promoted = await request({
+      method: 'PUT',
+      path: `/api/users/${stationed.json.id}`,
+      token: admin.token,
+      json: staffBody({
+        username: 'opdept',
+        display_name: 'Stationed Operator',
+        role: 'manager',
+        department: 'Quality',
+      }),
+    });
+    assert(promoted.status === 200 && promoted.json.role === 'manager' && promoted.json.department == null, promoted.text);
     const customer = await request({
       method: 'POST',
       path: '/api/users',
@@ -482,6 +514,7 @@ async function main() {
     assert(otherCustomer.status === 201, otherCustomer.text);
 
     const manager = await login('qualitymgr', 'ManagerPass123');
+    assert(manager.user && manager.user.department == null, 'a manager login should not carry a department');
     const operatorLogin = await login('op1', 'OperatorPass123');
     const floaterLogin = await login('floater', 'ManagerPass123');
     const qualityAdmin = await login('qualityadmin', 'AdminPass456');
@@ -533,10 +566,8 @@ async function main() {
     }
 
     const managerBoard = await request({ method: 'GET', path: '/api/admin-board', token: manager.token });
-    assert(managerBoard.json.viewer.restricted === true && managerBoard.json.viewer.can_clear === true, 'a manager with a department can clear it');
-    assert(managerBoard.json.viewer.department === 'Quality', managerBoard.text);
-    const widened = await request({ method: 'GET', path: '/api/admin-board?scope=all', token: manager.token });
-    assert(widened.json.viewer.restricted === false && widened.json.viewer.can_clear === true, 'scope=all should open the manager board');
+    assert(managerBoard.json.viewer.restricted === false && managerBoard.json.viewer.can_clear === false, 'a manager board should match an admin with no department');
+    assert(managerBoard.json.viewer.department == null, managerBoard.text);
     const operatorBoard = await request({ method: 'GET', path: '/api/admin-board?scope=all', token: operatorLogin.token });
     assert(operatorBoard.json.viewer.restricted === true && operatorBoard.json.viewer.can_clear === false, 'an operator still cannot clear the department');
 
@@ -604,16 +635,36 @@ async function main() {
     const sameStill = await workOrderState(db, 'P10-SAME');
     assert(sameStill.department === 'Quality' && sameStill.status === 'open', 'a rejected move should leave the work order');
 
+    const managerRows = await request({
+      method: 'GET',
+      path: '/api/admin-board/work-orders?limit=100',
+      token: manager.token,
+    });
+    const managerIds = (managerRows.json.work_orders || []).map((row) => row.external_id);
+    assert(managerIds.includes('P10-SAME') && managerIds.includes('P10-OTHER'), 'a manager should see every department');
+    assert(managerRows.json.viewer.restricted === false && managerRows.json.viewer.department == null, managerRows.text);
+
+    await db.run(`UPDATE users SET department = 'Quality' WHERE username = 'qualitymgr'`);
+    const stuckBoard = await request({ method: 'GET', path: '/api/admin-board', token: manager.token });
+    assert(stuckBoard.json.viewer.restricted === false && stuckBoard.json.viewer.can_clear === false && stuckBoard.json.viewer.department == null, 'a stored department should not restrict a manager');
     const other = await workOrderState(db, 'P10-OTHER');
-    const scopedDenied = await request({
+    const crossMove = await request({
       method: 'POST',
       path: `/api/workorders/${other.id}/move`,
       token: manager.token,
-      json: { department: 'Quality', note: 'should not apply' },
+      json: { department: 'Quality', note: 'from dispatch' },
     });
-    assert(scopedDenied.status === 403 && /your department/.test(scopedDenied.text), scopedDenied.text);
-    const otherStill = await workOrderState(db, 'P10-OTHER');
-    assert(otherStill.department === 'Dispatch', 'a restricted manager should not move another department');
+    assert(crossMove.status === 200 && crossMove.json.department === 'Quality', crossMove.text);
+    const otherMoved = await workOrderState(db, 'P10-OTHER');
+    assert(otherMoved.department === 'Quality', 'a manager should move a work order that is not in one department');
+    await insertOrder('P10-MSCAN', customer.json.id, 'Large Format');
+    const managerScan = await request({
+      method: 'POST',
+      path: '/api/barcode',
+      token: manager.token,
+      json: { scanned_value: 'P10-MSCAN', location: 'Dispatch' },
+    });
+    assert(managerScan.status === 201 && managerScan.json.location === 'Dispatch' && managerScan.json.to_department === 'Dispatch', managerScan.text);
 
     const eventsBefore = await db.get(`SELECT COUNT(*) AS count FROM barcode_events`);
     const qual = await workOrderState(db, 'P10-QUAL');
@@ -768,7 +819,7 @@ async function main() {
       token: manager.token,
       json: { department: 'Planroom' },
     });
-    assert(mgrAgain.status === 403, 'a restricted manager cannot move a work order after it leaves their department');
+    assert(mgrAgain.status === 200 && mgrAgain.json.department === 'Planroom', 'a manager can move a work order again after it changes department');
     const floaterMove = await request({
       method: 'POST',
       path: `/api/workorders/${other.id}/move`,
