@@ -264,7 +264,7 @@ async function main() {
   const upgraded = openDb(checkedDb);
   await upgraded.exec('PRAGMA foreign_keys = ON');
   const tableSql = await upgraded.get(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'`);
-  assert(tableSql && !/\bCHECK\b/i.test(tableSql.sql), `the rebuilt users table should not keep a role check: ${tableSql && tableSql.sql}`);
+  assert(tableSql && !/\bCHECK\s*\(/i.test(tableSql.sql), `the rebuilt users table should not keep a role check: ${tableSql && tableSql.sql}`);
   const legacy = await upgraded.get(`SELECT username, role, badge, password_hash FROM users WHERE username = 'legacyop'`);
   assert(legacy && legacy.role === 'operator' && legacy.badge === 'gold' && legacy.password_hash === 'x', 'the rebuild should keep the operator row');
   const legacyCustomer = await upgraded.get(`SELECT role, badge FROM users WHERE username = 'legacycust'`);
@@ -335,7 +335,7 @@ async function main() {
   await initDatabase(freshDb);
   const fresh = openDb(freshDb);
   const freshSql = await fresh.get(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'`);
-  assert(freshSql && !/\bCHECK\b/i.test(freshSql.sql), 'a new database should not check users.role');
+  assert(freshSql && !/\bCHECK\s*\(/i.test(freshSql.sql), `a new database should not check users.role: ${freshSql && freshSql.sql}`);
   await fresh.run(
     `INSERT INTO users (username, password_hash, role, display_name) VALUES ('freshmgr', 'x', 'manager', 'Fresh Manager')`
   );
