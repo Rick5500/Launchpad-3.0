@@ -2,9 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Box, InputBase, Snackbar } from '@mui/material';
 import { authFetch } from '../api';
 import { requestBoardRefresh } from '../boardEvents';
-import headerScanNotice from './headerScanNotice';
-
-const { advanceNotice, reduceNotice } = headerScanNotice;
+import { advanceNotice, reduceNotice } from './headerScanNotice.mjs';
 
 function isTypingTarget(node) {
   if (!node || node === document.body || node === document.documentElement) return false;

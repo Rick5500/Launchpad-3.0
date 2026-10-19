@@ -2,10 +2,10 @@
 // warnings stay queued, capped so a burst cannot trail the scanner by a
 // minute. Successes collapse to the latest one.
 
-const NOTICE_SEVERE_CAP = 5;
+export const NOTICE_SEVERE_CAP = 5;
 const SEVERITY_RANK = { error: 3, warning: 2, success: 1, info: 0 };
 
-function severityRank(severity) {
+export function severityRank(severity) {
   return Object.prototype.hasOwnProperty.call(SEVERITY_RANK, severity) ? SEVERITY_RANK[severity] : 0;
 }
 
@@ -26,7 +26,7 @@ function normalizeQueue(queue) {
   return latestSuccess ? [...keptSevere, latestSuccess] : keptSevere;
 }
 
-function reduceNotice(current, incoming) {
+export function reduceNotice(current, incoming) {
   if (!current) return { ...incoming, queue: [] };
   if (severityRank(incoming.severity) > severityRank(current.severity)) {
     const displaced = { id: current.id, severity: current.severity, message: current.message };
@@ -35,17 +35,10 @@ function reduceNotice(current, incoming) {
   return { ...current, queue: normalizeQueue([...(current.queue || []), incoming]) };
 }
 
-function advanceNotice(current, id) {
+export function advanceNotice(current, id) {
   if (!current || current.id !== id) return current;
   const queue = current.queue || [];
   if (!queue.length) return null;
   const [next, ...rest] = queue;
   return { ...next, queue: rest };
 }
-
-module.exports = {
-  NOTICE_SEVERE_CAP,
-  reduceNotice,
-  advanceNotice,
-  severityRank,
-};

@@ -15,8 +15,6 @@ const os = require('os');
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 
-const { NOTICE_SEVERE_CAP, reduceNotice } = require('../../frontend/src/components/headerScanNotice');
-
 const backendDir = path.join(__dirname, '..');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-phase9-'));
 const freshDb = path.join(tmp, 'fresh.db');
@@ -249,7 +247,7 @@ async function checkCaseDuplicateInit() {
   assert(twins.length === 2, `both case variants should remain, found ${twins.map((row) => row.name).join(', ')}`);
 }
 
-function checkNoticeQueue() {
+function checkNoticeQueue({ NOTICE_SEVERE_CAP, reduceNotice }) {
   let current = null;
   for (let i = 1; i <= 8; i += 1) {
     current = reduceNotice(current, { id: i, severity: 'success', message: `ok ${i}` });
@@ -350,7 +348,8 @@ async function checkDepartmentSeed() {
 }
 
 async function main() {
-  checkNoticeQueue();
+  const notice = await import('../../frontend/src/components/headerScanNotice.mjs');
+  checkNoticeQueue(notice);
   await checkDepartmentSeed();
   await checkCaseDuplicateInit();
 
