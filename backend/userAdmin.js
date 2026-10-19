@@ -67,11 +67,15 @@ function parseRole(value, required) {
   return { value: role };
 }
 
+// Shared by self-registration, admin create, and a username change. Sign-in
+// accepts the same characters and does not apply a stricter pattern.
+const USERNAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._@+'-]{1,79}$/;
+
 function parseUsername(value, required) {
   const parsed = parseText(value, 'username', { required, max: 80 });
   if (parsed.error || parsed.value == null) return parsed;
-  if (!/^[A-Za-z0-9][A-Za-z0-9._@-]{1,79}$/.test(parsed.value)) {
-    return { error: 'username must be 2 to 80 characters and use letters, digits, or . _ @ -' };
+  if (!USERNAME_PATTERN.test(parsed.value)) {
+    return { error: "username must be 2 to 80 characters and use letters, digits, or . _ @ - + '" };
   }
   return parsed;
 }
@@ -154,10 +158,11 @@ function bearerToken(req) {
 
 function emailAsUsername(email) {
   if (email.length > 80) return { error: 'email must be 80 characters or fewer' };
-  if (!/^[A-Za-z0-9][A-Za-z0-9._@+'-]{0,79}$/.test(email)) {
+  const parsed = parseUsername(email, true);
+  if (parsed.error) {
     return { error: "email cannot be used as a sign-in name. Use letters, digits, and . _ + ' @ -" };
   }
-  return { value: email };
+  return parsed;
 }
 
 function honeypotTripped(source) {
@@ -169,7 +174,10 @@ function honeypotTripped(source) {
 }
 
 function isUniqueConstraint(err) {
-  return Boolean(err) && (err.code === 'SQLITE_CONSTRAINT' || /UNIQUE constraint failed/i.test(String(err.message || '')));
+  if (!err) return false;
+  if (err.code === 'SQLITE_CONSTRAINT_UNIQUE' || err.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') return true;
+  const message = String(err.message || '');
+  return /UNIQUE constraint failed/i.test(message) || /PRIMARY KEY constraint failed/i.test(message);
 }
 
 function conflictError(err) {
@@ -375,8 +383,14 @@ async function updateUser(actorId, id, body) {
     outcome = await withTransaction(async (tx) => {
     const existing = await tx.get(`SELECT ${PUBLIC_COLUMNS} FROM users WHERE id = ?`, [parsedId.value]);
     if (!existing) throw httpError(404, 'User not found');
-    const username = parseUsername(source.username == null || source.username === '' ? existing.username : source.username, true);
-    if (username.error) throw httpError(400, username.error);
+    const suppliedName = source.username == null ? '' : String(source.username).trim();
+    const usernameChanging = suppliedName !== '' && suppliedName !== existing.username;
+    let nextUsername = existing.username;
+    if (usernameChanging) {
+      const username = parseUsername(suppliedName, true);
+      if (username.error) throw httpError(400, username.error);
+      nextUsername = username.value;
+    }
 
     const currentlyActive = existing.is_active !== 0;
     if (existing.id === actor && existing.role === 'admin' && role.value !== 'admin') {
@@ -395,7 +409,7 @@ async function updateUser(actorId, id, body) {
 
     const taken = await tx.get(
       'SELECT id FROM users WHERE lower(trim(username)) = lower(trim(?)) AND id != ?',
-      [username.value, existing.id]
+      [nextUsername, existing.id]
     );
     if (taken) throw httpError(409, 'Username is already in use');
 
@@ -416,7 +430,7 @@ async function updateUser(actorId, id, body) {
            is_active = ?, updated_at = datetime('now')
        WHERE id = ?`,
       [
-        username.value,
+        nextUsername,
         role.value,
         displayName.value,
         profile.value.company,
@@ -434,20 +448,20 @@ async function updateUser(actorId, id, body) {
       ]
     );
     const departmentMessage = department.value
-      ? `Updated ${username.value} department to ${department.value}`
-      : `Updated ${username.value} department to all departments`;
+      ? `Updated ${nextUsername} department to ${department.value}`
+      : `Updated ${nextUsername} department to all departments`;
     await activityLog.recordOn(tx, actorId, action, 'user', existing.id, {
-      username: username.value,
+      username: nextUsername,
       role: role.value,
       previous_role: existing.role,
       is_active: active.value === 1,
       department: department.value,
       previous_department: previousDepartment,
       message: action === 'user.deactivated'
-        ? `Deactivated ${username.value}`
+        ? `Deactivated ${nextUsername}`
         : action === 'user.reactivated'
-          ? `Reactivated ${username.value}`
-          : (departmentChanged ? departmentMessage : `Updated ${username.value}`),
+          ? `Reactivated ${nextUsername}`
+          : (departmentChanged ? departmentMessage : `Updated ${nextUsername}`),
     });
     return {
       id: existing.id,

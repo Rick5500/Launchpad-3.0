@@ -395,6 +395,39 @@ async function checkValidationRateLimit() {
   }
 }
 
+async function checkParallelSuccessCap() {
+  const server = startServer(rateDb, ratePort, {
+    REGISTER_RATE_IP_MAX: '5',
+    REGISTER_RATE_IP_ATTEMPT_MAX: '100',
+    REGISTER_RATE_GLOBAL_MAX: '200',
+  });
+  await server.ready;
+  try {
+    const responses = await Promise.all(Array.from({ length: 15 }, (_, index) => request({
+      method: 'POST',
+      path: '/api/auth/register',
+      port: ratePort,
+      json: accountBody({
+        company: `Parallel ${index}`,
+        email: `parallel${index}@burst.example`,
+      }),
+    })));
+    const created = responses.filter((row) => row.status === 201);
+    const blocked = responses.filter((row) => row.status === 429);
+    const statuses = responses.map((row) => row.status).join(',');
+    assert(created.length === 5, `expected 5 parallel successes, got ${created.length} (${statuses})`);
+    assert(blocked.length === 10, `expected 10 parallel 429s, got ${blocked.length} (${statuses})`);
+    assert(blocked.every((row) => row.headers['retry-after']), 'parallel 429s should set Retry-After');
+    const db = openDb(rateDb);
+    const count = await db.get(`SELECT COUNT(*) AS count FROM users WHERE lower(email) LIKE 'parallel%@burst.example'`);
+    await db.close();
+    assert(count.count === 5, `database should store 5 parallel accounts, got ${count.count}`);
+    console.log('PASS rate limit parallel');
+  } finally {
+    await server.stop();
+  }
+}
+
 async function runApiChecks() {
   const server = startServer(freshDb, port);
   await server.ready;
@@ -601,6 +634,48 @@ async function runApiChecks() {
       }),
     });
     assert(apostrophe.status === 201 && apostrophe.json.user.username === "o'neil@oneil.example", `apostrophe email should register, got ${apostrophe.status} ${apostrophe.text}`);
+    const plusAccount = await request({
+      method: 'POST',
+      path: '/api/auth/register',
+      json: accountBody({
+        company: 'Plus Orders',
+        contact_name: 'Pat Orders',
+        email: 'pat+orders@x.com',
+      }),
+    });
+    assert(plusAccount.status === 201 && plusAccount.json.user.username === 'pat+orders@x.com', `plus email should register, got ${plusAccount.status} ${plusAccount.text}`);
+    const quoteLogin = await login("o'neil@oneil.example", 'Northwind1');
+    assert(quoteLogin.user.username === "o'neil@oneil.example", 'sign-in should accept an apostrophe in the username');
+    const plusLogin = await login('pat+orders@x.com', 'Northwind1');
+    assert(plusLogin.user.username === 'pat+orders@x.com', 'sign-in should accept a plus in the username');
+    const quoteEdit = await request({
+      method: 'PUT',
+      path: `/api/users/${apostrophe.json.user.id}`,
+      token: admin.token,
+      json: { display_name: 'X', role: 'customer', is_active: false },
+    });
+    assert(quoteEdit.status === 200 && quoteEdit.json.is_active === false && quoteEdit.json.display_name === 'X' && quoteEdit.json.username === "o'neil@oneil.example", `admin should deactivate an apostrophe account, got ${quoteEdit.status} ${quoteEdit.text}`);
+    const plusEdit = await request({
+      method: 'PUT',
+      path: `/api/users/${plusAccount.json.user.id}`,
+      token: admin.token,
+      json: { display_name: 'X', role: 'customer', is_active: false },
+    });
+    assert(plusEdit.status === 200 && plusEdit.json.is_active === false && plusEdit.json.display_name === 'X' && plusEdit.json.username === 'pat+orders@x.com', `admin should deactivate a plus account, got ${plusEdit.status} ${plusEdit.text}`);
+    const specialUser = await request({
+      method: 'POST',
+      path: '/api/users',
+      token: admin.token,
+      json: {
+        username: "o'brien+desk@x.com",
+        display_name: 'Special Desk',
+        role: 'customer',
+        email: 'special-desk@x.com',
+        password: 'SpecialDesk1',
+        is_active: true,
+      },
+    });
+    assert(specialUser.status === 201 && specialUser.json.username === "o'brien+desk@x.com", `admin create should allow + and ', got ${specialUser.status} ${specialUser.text}`);
 
     const staffNotes = await request({ method: 'GET', path: '/api/notifications', token: admin.token });
     assert(staffNotes.status === 200, staffNotes.text);
@@ -735,6 +810,7 @@ async function main() {
   await checkRateLimit({ REGISTER_RATE_IP_MAX: '2', REGISTER_RATE_GLOBAL_MAX: '50' }, 'ip');
   await checkRateLimit({ REGISTER_RATE_IP_MAX: '20', REGISTER_RATE_GLOBAL_MAX: '2' }, 'global');
   await checkValidationRateLimit();
+  await checkParallelSuccessCap();
   console.log('Phase 11 checks passed.');
 }
 
