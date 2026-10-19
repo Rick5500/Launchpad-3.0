@@ -381,6 +381,7 @@ async function seedNotificationSettings() {
     ['work_order_on_hold', 1, 'in_app'],
     ['work_order_completed', 1, 'in_app'],
     ['work_order_rush', 1, 'in_app'],
+    ['customer_registered', 1, 'in_app'],
   ];
 
   for (const event of events) {
@@ -555,6 +556,8 @@ async function seedSystemSettings() {
     ['company_name', 'Accent Imaging, Inc.'],
     ['company_address', '8121 Brownleigh Drive\nRaleigh, NC 27617'],
     ['company_phone', '919-782-3332'],
+    // Missing means customers can register. An admin's saved off switch is left alone.
+    ['customer_self_signup_enabled', '1'],
   ];
   for (const [key, value] of defaults) {
     const existing = await get('SELECT key FROM system_settings WHERE key = ?', [key]);
@@ -1108,6 +1111,7 @@ async function main() {
   await normalizeLegacyWorkOrderStatuses();
   await ensureDepartmentNameIndex();
   await ensureExternalIdUniqueIndex();
+  await ensureUserIdentityIndexes();
   console.log('Database initialization complete.');
 }
 
@@ -1130,6 +1134,45 @@ async function ensureDepartmentNameIndex() {
   await run(
     'CREATE UNIQUE INDEX IF NOT EXISTS idx_departments_name_nocase ON departments(name COLLATE NOCASE)'
   );
+}
+
+// Case-insensitive uniqueness. Skip an index when an older database already has
+// duplicates, and leave those rows in place so init can finish.
+async function ensureUserIdentityIndexes() {
+  const usernameDup = await get(
+    `SELECT lower(username) AS name
+     FROM users
+     GROUP BY lower(username)
+     HAVING COUNT(*) > 1
+     LIMIT 1`
+  );
+  if (usernameDup) {
+    console.warn(
+      `Skipping case-insensitive unique index on users.username because duplicates exist (${usernameDup.name})`
+    );
+  } else {
+    await run('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_nocase ON users(username COLLATE NOCASE)');
+  }
+
+  const emailDup = await get(
+    `SELECT lower(trim(email)) AS email
+     FROM users
+     WHERE email IS NOT NULL AND trim(email) != ''
+     GROUP BY lower(trim(email))
+     HAVING COUNT(*) > 1
+     LIMIT 1`
+  );
+  if (emailDup) {
+    console.warn(
+      `Skipping case-insensitive unique index on users.email because duplicates exist (${emailDup.email})`
+    );
+  } else {
+    await run(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_nocase
+       ON users(email COLLATE NOCASE)
+       WHERE email IS NOT NULL AND trim(email) != ''`
+    );
+  }
 }
 
 async function ensureExternalIdUniqueIndex() {

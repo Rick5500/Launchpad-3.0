@@ -15,6 +15,20 @@ const {
 } = require('./shopProfile');
 
 const LETTERHEAD_KEYS = ['company_name', 'company_address', 'company_phone'];
+const SIGNUP_KEY = 'customer_self_signup_enabled';
+
+function signupEnabledFromValue(value) {
+  if (value == null || String(value).trim() === '') return true;
+  const text = String(value).trim().toLowerCase();
+  if (text === '0' || text === 'false' || text === 'off' || text === 'no') return false;
+  return true;
+}
+
+function parseSignupFlag(value) {
+  if (value === true || value === 1 || value === '1' || value === 'true') return { value: '1' };
+  if (value === false || value === 0 || value === '0' || value === 'false') return { value: '0' };
+  return { error: 'customer_self_signup_enabled must be true or false' };
+}
 
 function environmentDueSoonHours() {
   const raw = process.env.DUE_SOON_HOURS;
@@ -115,6 +129,7 @@ function present(map) {
     last_backup_at: map.last_backup_at == null || String(map.last_backup_at).trim() === ''
       ? null
       : String(map.last_backup_at),
+    customer_self_signup_enabled: signupEnabledFromValue(map[SIGNUP_KEY]),
     read_only: {
       delivery_timezone: rules.timezone,
       delivery_timezone_configured: timezoneConfigured,
@@ -143,7 +158,7 @@ function hasOwn(body, key) {
 
 async function updateSettings(actorId, body) {
   const source = body || {};
-  const allowed = new Set([...LETTERHEAD_KEYS, 'due_soon_hours', 'last_backup_at']);
+  const allowed = new Set([...LETTERHEAD_KEYS, 'due_soon_hours', 'last_backup_at', SIGNUP_KEY]);
   const unknown = Object.keys(source).filter((key) => !allowed.has(key));
   if (unknown.length) throw httpError(400, `Unknown setting: ${unknown[0]}`);
 
@@ -174,6 +189,11 @@ async function updateSettings(actorId, body) {
     const parsed = parseBackup(source.last_backup_at);
     if (parsed.error) throw httpError(400, parsed.error);
     changes.push(['last_backup_at', parsed.value]);
+  }
+  if (hasOwn(source, SIGNUP_KEY)) {
+    const parsed = parseSignupFlag(source[SIGNUP_KEY]);
+    if (parsed.error) throw httpError(400, parsed.error);
+    changes.push([SIGNUP_KEY, parsed.value]);
   }
   if (!changes.length) throw httpError(400, 'No settings to update');
 
@@ -223,9 +243,18 @@ async function loadRuntimeCache() {
   }
 }
 
+async function customerSelfSignupEnabled() {
+  const row = await get('SELECT value FROM system_settings WHERE key = ?', [SIGNUP_KEY]);
+  if (!row) return true;
+  return signupEnabledFromValue(row.value);
+}
+
 module.exports = {
+  SIGNUP_KEY,
   getSettings,
   updateSettings,
   loadRuntimeCache,
   loadLetterhead,
+  customerSelfSignupEnabled,
+  signupEnabledFromValue,
 };

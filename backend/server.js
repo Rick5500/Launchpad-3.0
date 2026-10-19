@@ -49,6 +49,9 @@ const settingsRouter = require('./routes/settings');
 const activityRouter = require('./routes/activity');
 const searchRouter = require('./routes/search');
 const systemSettings = require('./systemSettings');
+const userAdmin = require('./userAdmin');
+const registerLimit = require('./registerLimit');
+const { sendError } = require('./httpError');
 
 
 // Health check
@@ -62,6 +65,34 @@ function clientIp(req) {
 }
 
 // Auth routes
+app.get('/api/auth/config', async (req, res) => {
+  try {
+    res.json({
+      customer_self_signup_enabled: await systemSettings.customerSelfSignupEnabled(),
+    });
+  } catch (err) {
+    sendError(res, err, 'AUTH CONFIG ERROR:', 'Unable to load sign-in options');
+  }
+});
+
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const enabled = await systemSettings.customerSelfSignupEnabled();
+    if (!enabled) {
+      return res.status(403).json({ error: 'Customer sign-up is turned off' });
+    }
+    const limit = registerLimit.check(clientIp(req));
+    if (!limit.allowed) {
+      res.set('Retry-After', String(limit.retryAfterSeconds));
+      return res.status(429).json({ error: 'Too many registration attempts. Try again later.' });
+    }
+    const session = await userAdmin.registerCustomer(req.body);
+    return res.status(201).json(session);
+  } catch (err) {
+    return sendError(res, err, 'REGISTER ERROR:', 'Unable to create an account');
+  }
+});
+
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: 'username and password required' });

@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const auth = require('./auth');
 const activityLog = require('./activityLog');
+const notifyEmail = require('./notifyEmail');
 const { resetUserPassword, passwordPolicyError } = require('./passwordReset');
 const { get, all, withTransaction } = require('./dbAsync');
 const { httpError } = require('./httpError');
@@ -151,6 +152,53 @@ function bearerToken(req) {
   return null;
 }
 
+function emailAsUsername(email) {
+  if (email.length > 80) return { error: 'email must be 80 characters or fewer' };
+  if (!/^[A-Za-z0-9][A-Za-z0-9._@+-]{0,79}$/.test(email)) {
+    return { error: 'email cannot be used as a sign-in name. Use letters, digits, and . _ + @ -' };
+  }
+  return { value: email };
+}
+
+function honeypotTripped(source) {
+  if (!source || !Object.prototype.hasOwnProperty.call(source, 'website')) return false;
+  const value = source.website;
+  if (value == null) return false;
+  if (typeof value === 'string') return value.trim() !== '';
+  return true;
+}
+
+function isUniqueConstraint(err) {
+  return Boolean(err) && (err.code === 'SQLITE_CONSTRAINT' || /UNIQUE constraint failed/i.test(String(err.message || '')));
+}
+
+// Same columns as an admin-created account. Role, department, and active are arguments, never raw body fields.
+async function insertUserRow(tx, row) {
+  return tx.run(
+    `INSERT INTO users (
+       username, password_hash, role, display_name, company, contact_name, phone, email,
+       address_line1, address_line2, city, state, zip, department, is_active, created_at, updated_at
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))`,
+    [
+      row.username,
+      row.passwordHash,
+      row.role,
+      row.displayName,
+      row.company,
+      row.contactName,
+      row.phone,
+      row.email,
+      row.addressLine1,
+      row.addressLine2,
+      row.city,
+      row.state,
+      row.zip,
+      row.department,
+      row.isActive,
+    ]
+  );
+}
+
 async function countOtherActiveAdmins(tx, userId) {
   const row = await tx.get(
     `SELECT COUNT(*) AS count
@@ -260,29 +308,23 @@ async function createUser(actorId, body) {
     if (taken) throw httpError(409, 'Username is already in use');
     const department = await departmentForRole(tx, source, role.value, null);
     if (department.error) throw httpError(400, department.error);
-    const inserted = await tx.run(
-      `INSERT INTO users (
-         username, password_hash, role, display_name, company, contact_name, phone, email,
-         address_line1, address_line2, city, state, zip, department, is_active, created_at, updated_at
-       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))`,
-      [
-        username.value,
-        hash,
-        role.value,
-        displayName.value,
-        profile.value.company,
-        profile.value.contactName,
-        profile.value.phone,
-        profile.value.email,
-        profile.value.addressLine1,
-        profile.value.addressLine2,
-        profile.value.city,
-        profile.value.state,
-        profile.value.zip,
-        department.value,
-        active.value,
-      ]
-    );
+    const inserted = await insertUserRow(tx, {
+      username: username.value,
+      passwordHash: hash,
+      role: role.value,
+      displayName: displayName.value,
+      company: profile.value.company,
+      contactName: profile.value.contactName,
+      phone: profile.value.phone,
+      email: profile.value.email,
+      addressLine1: profile.value.addressLine1,
+      addressLine2: profile.value.addressLine2,
+      city: profile.value.city,
+      state: profile.value.state,
+      zip: profile.value.zip,
+      department: department.value,
+      isActive: active.value,
+    });
     await activityLog.recordOn(tx, actorId, 'user.created', 'user', inserted.lastID, {
       username: username.value,
       role: role.value,
@@ -462,6 +504,122 @@ async function resetPassword(actorId, id, body, exceptToken) {
   });
 }
 
+function loginSession(username, password) {
+  return new Promise((resolve, reject) => {
+    auth.login(username, password, (err, result) => (err ? reject(err) : resolve(result)));
+  });
+}
+
+// Public self sign-up. Role is always customer and the account is active immediately.
+// The email is the username, which is how this account signs in.
+async function registerCustomer(body) {
+  const source = body || {};
+  if (honeypotTripped(source)) throw httpError(400, 'Unable to create an account');
+
+  const company = parseText(source.company, 'company', { required: true, max: 160 });
+  if (company.error) throw httpError(400, company.error);
+  const contact = parseText(source.contact_name, 'contact_name', { required: true, max: 160 });
+  if (contact.error) throw httpError(400, contact.error);
+  const phone = parseText(source.phone, 'phone', { required: true, max: 40 });
+  if (phone.error) throw httpError(400, phone.error);
+  if (!/\d/.test(phone.value)) throw httpError(400, 'phone is invalid');
+  const email = parseEmail(source.email, true);
+  if (email.error) throw httpError(400, email.error);
+  const username = emailAsUsername(email.value);
+  if (username.error) throw httpError(400, username.error);
+  const password = typeof source.password === 'string' ? source.password : '';
+  const policyError = passwordPolicyError(password);
+  if (policyError) throw httpError(400, policyError);
+  if (typeof source.password_confirm !== 'string' || source.password_confirm === '') {
+    throw httpError(400, 'password_confirm is required');
+  }
+  if (source.password_confirm !== password) throw httpError(400, 'password confirmation does not match');
+  const address = parsePostalAddress(source, false);
+  if (address.error) throw httpError(400, address.error);
+
+  const hash = await auth.hashPassword(password);
+  let created;
+  try {
+    created = await withTransaction(async (tx) => {
+      const taken = await tx.get(
+        `SELECT id FROM users
+         WHERE lower(username) = lower(?)
+            OR (email IS NOT NULL AND trim(email) != '' AND lower(email) = lower(?))`,
+        [username.value, email.value]
+      );
+      if (taken) throw httpError(409, 'An account with that email already exists');
+      const inserted = await insertUserRow(tx, {
+        username: username.value,
+        passwordHash: hash,
+        role: 'customer',
+        displayName: company.value,
+        company: company.value,
+        contactName: contact.value,
+        phone: phone.value,
+        email: email.value,
+        addressLine1: address.value.addressLine1,
+        addressLine2: address.value.addressLine2,
+        city: address.value.city,
+        state: address.value.state,
+        zip: address.value.zip,
+        department: null,
+        isActive: 1,
+      });
+      await activityLog.recordOn(tx, inserted.lastID, 'customer.self_registered', 'user', inserted.lastID, {
+        username: username.value,
+        role: 'customer',
+        company: company.value,
+        email: email.value,
+        message: `New customer account: ${company.value}`,
+      });
+      const disabled = await tx.get(
+        `SELECT event_key FROM notification_settings
+         WHERE event_key = 'customer_registered' AND channel = 'in_app' AND enabled = 0`
+      );
+      let notification = null;
+      if (!disabled) {
+        const stored = await tx.run(
+          `INSERT INTO notifications
+             (type, title, body, customer_id, work_order_id, delivery_id, dedupe_key)
+           VALUES (?,?,?,?,?,?,?)`,
+          [
+            'customer_registered',
+            `New customer account: ${company.value}`,
+            `${contact.value} created an account for ${company.value}.`,
+            null,
+            null,
+            null,
+            `customer_registered:${inserted.lastID}`,
+          ]
+        );
+        notification = {
+          id: stored.lastID,
+          type: 'customer_registered',
+          title: `New customer account: ${company.value}`,
+          body: `${contact.value} created an account for ${company.value}.`,
+        };
+      }
+      return { id: inserted.lastID, notification };
+    });
+  } catch (err) {
+    if (err && err.status) throw err;
+    if (isUniqueConstraint(err)) throw httpError(409, 'An account with that email already exists');
+    throw err;
+  }
+
+  if (created.notification) {
+    try {
+      notifyEmail.deliver(created.notification);
+    } catch (emailErr) {
+      console.error('EMAIL NOTIFICATION ERROR:', emailErr);
+    }
+  }
+
+  const session = await loginSession(username.value, password);
+  if (!session || !session.token) throw httpError(500, 'Unable to create an account');
+  return session;
+}
+
 async function loadAccess(userId) {
   const row = await get(`SELECT role, department FROM users WHERE id = ?`, [userId]);
   if (!row) return { role: null, department: null };
@@ -476,6 +634,7 @@ module.exports = {
   updateUser,
   updateCustomerAddress,
   resetPassword,
+  registerCustomer,
   present,
   bearerToken,
   parseUsername,

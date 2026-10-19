@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at DATETIME
 );
 
+-- Case-insensitive uniqueness for username and email is added by init_db.js.
+-- It is not created here so an older database with duplicate emails can still initialize.
+
 -- name is unique. init_db.js adds idx_departments_name_nocase so two names
 -- that differ only by case cannot both exist. That index is not created here:
 -- an older database that already has case-only duplicates must still initialize.

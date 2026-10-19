@@ -123,6 +123,45 @@ export function AuthProvider({ children }) {
     [navigate],
   );
 
+  const register = useCallback(
+    async (payload) => {
+      setIsLoggingIn(true);
+      setLoginError('');
+      setAuthMessage('');
+
+      try {
+        const response = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || !body?.token) {
+          setUser(null);
+          setIsAuthenticated(false);
+          setLoginError(body?.error || 'Unable to create an account.');
+          return false;
+        }
+
+        localStorage.setItem('lp_token', body.token);
+        setUser(body.user);
+        setIsAuthenticated(true);
+        setLoginError('');
+        setAuthMessage('');
+        navigate('/order', { replace: true });
+        return true;
+      } catch {
+        setUser(null);
+        setIsAuthenticated(false);
+        setLoginError('Network error. Please try again.');
+        return false;
+      } finally {
+        setIsLoggingIn(false);
+      }
+    },
+    [navigate],
+  );
+
   const logout = useCallback(() => {
     const token = localStorage.getItem('lp_token');
     if (token) {
@@ -148,10 +187,11 @@ export function AuthProvider({ children }) {
       loginError,
       authMessage,
       login,
+      register,
       logout,
       refreshUser,
     }),
-    [user, isAuthenticated, isLoading, isLoggingIn, loginError, authMessage, login, logout, refreshUser],
+    [user, isAuthenticated, isLoading, isLoggingIn, loginError, authMessage, login, register, logout, refreshUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

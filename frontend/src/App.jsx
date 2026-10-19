@@ -29,15 +29,48 @@ import theme from './theme';
 import { brand } from './brand';
 
 function LoginScreen() {
-  const { login, isLoggingIn, loginError, authMessage } = useAuth();
+  const { login, register, isLoggingIn, loginError, authMessage } = useAuth();
+  const [mode, setMode] = useState('sign-in');
+  const [signupEnabled, setSignupEnabled] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [company, setCompany] = useState('');
+  const [contactName, setContactName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [website, setWebsite] = useState('');
   const [localError, setLocalError] = useState('');
   const usernameRef = useRef(null);
+  const companyRef = useRef(null);
 
   useEffect(() => {
-    usernameRef.current?.focus();
+    let cancelled = false;
+    fetch('/api/auth/config')
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) return;
+        if (!cancelled) setSignupEnabled(body.customer_self_signup_enabled === true);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    if (mode === 'sign-in') usernameRef.current?.focus();
+    else companyRef.current?.focus();
+  }, [mode]);
+
+  function showRegister() {
+    setLocalError('');
+    setMode('register');
+  }
+
+  function showSignIn() {
+    setLocalError('');
+    setMode('sign-in');
+  }
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -57,6 +90,44 @@ function LoginScreen() {
     await login(username.trim(), password);
   }
 
+  async function handleRegister(event) {
+    event.preventDefault();
+    setLocalError('');
+
+    if (!company.trim() || !contactName.trim() || !email.trim() || !phone.trim()) {
+      setLocalError('Company name, contact name, email, and phone are required.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setLocalError('Enter a valid email address. That email is your sign-in name.');
+      return;
+    }
+    if (!/\d/.test(phone)) {
+      setLocalError('Enter a phone number that includes a digit.');
+      return;
+    }
+    if (newPassword.length < 8) {
+      setLocalError('Password must be at least 8 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setLocalError('Password and confirmation do not match.');
+      return;
+    }
+
+    await register({
+      company: company.trim(),
+      contact_name: contactName.trim(),
+      email: email.trim(),
+      phone: phone.trim(),
+      password: newPassword,
+      password_confirm: confirmPassword,
+      website,
+    });
+  }
+
+  const alertText = loginError || localError || authMessage;
+
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: brand.navy, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2.5, p: 2 }}>
       <Box
@@ -67,35 +138,130 @@ function LoginScreen() {
       />
       <Box sx={{ width: 440, maxWidth: '100%', bgcolor: '#fff', borderRadius: 2, boxShadow: 6, overflow: 'hidden' }}>
         <Box sx={{ p: 4 }}>
-        <Typography variant="h5" sx={{ color: brand.navy, fontWeight: 700, mb: 2 }}>
-          Sign in
-        </Typography>
-        <Box component="form" onSubmit={handleSubmit} sx={{ display: 'grid', gap: 2 }}>
-          <TextField
-            inputRef={usernameRef}
-            label="Username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            fullWidth
-            autoComplete="username"
-            variant="outlined"
-          />
-          <TextField
-            label="Password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            fullWidth
-            autoComplete="current-password"
-            variant="outlined"
-          />
-          <Button type="submit" variant="contained" size="large" disabled={isLoggingIn} sx={{ bgcolor: brand.orange, '&:hover': { bgcolor: brand.orangeDark } }}>
-            {isLoggingIn ? <CircularProgress size={24} color="inherit" /> : 'Login'}
-          </Button>
-        </Box>
-        {(loginError || localError || authMessage) && (
+        {mode === 'sign-in' ? (
+          <>
+            <Typography variant="h5" sx={{ color: brand.navy, fontWeight: 700, mb: 0.5 }}>
+              Sign in
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              If you created an account here, sign in with your email.
+            </Typography>
+            <Box component="form" data-testid="sign-in-form" onSubmit={handleSubmit} sx={{ display: 'grid', gap: 2 }}>
+              <TextField
+                inputRef={usernameRef}
+                label="Username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                fullWidth
+                autoComplete="username"
+                variant="outlined"
+              />
+              <TextField
+                label="Password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                fullWidth
+                autoComplete="current-password"
+                variant="outlined"
+              />
+              <Button type="submit" variant="contained" size="large" disabled={isLoggingIn} sx={{ bgcolor: brand.orange, '&:hover': { bgcolor: brand.orangeDark } }}>
+                {isLoggingIn ? <CircularProgress size={24} color="inherit" /> : 'Login'}
+              </Button>
+              {signupEnabled ? (
+                <Button type="button" data-testid="create-account-link" onClick={showRegister} sx={{ color: brand.orange }}>
+                  Create an account
+                </Button>
+              ) : null}
+            </Box>
+          </>
+        ) : (
+          <>
+            <Typography variant="h5" sx={{ color: brand.navy, fontWeight: 700, mb: 0.5 }}>
+              Create an account
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Your account is ready to use right away. Sign in later with this email.
+            </Typography>
+            <Box component="form" data-testid="register-form" onSubmit={handleRegister} sx={{ display: 'grid', gap: 2, position: 'relative' }}>
+              <Box aria-hidden="true" sx={{ position: 'absolute', left: '-10000px', top: 'auto', width: 1, height: 1, overflow: 'hidden' }}>
+                <label>
+                  Website
+                  <input
+                    tabIndex={-1}
+                    autoComplete="off"
+                    name="website"
+                    value={website}
+                    onChange={(event) => setWebsite(event.target.value)}
+                  />
+                </label>
+              </Box>
+              <TextField
+                inputRef={companyRef}
+                label="Company name"
+                value={company}
+                onChange={(event) => setCompany(event.target.value)}
+                fullWidth
+                autoComplete="organization"
+                required
+              />
+              <TextField
+                label="Contact name"
+                value={contactName}
+                onChange={(event) => setContactName(event.target.value)}
+                fullWidth
+                autoComplete="name"
+                required
+              />
+              <TextField
+                label="Email"
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                fullWidth
+                autoComplete="email"
+                required
+                helperText="This email is your sign-in name."
+              />
+              <TextField
+                label="Phone"
+                value={phone}
+                onChange={(event) => setPhone(event.target.value)}
+                fullWidth
+                autoComplete="tel"
+                required
+              />
+              <TextField
+                label="Password"
+                type="password"
+                value={newPassword}
+                onChange={(event) => setNewPassword(event.target.value)}
+                fullWidth
+                autoComplete="new-password"
+                required
+                helperText="At least 8 characters."
+              />
+              <TextField
+                label="Confirm password"
+                type="password"
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                fullWidth
+                autoComplete="new-password"
+                required
+              />
+              <Button type="submit" variant="contained" size="large" disabled={isLoggingIn} sx={{ bgcolor: brand.orange, '&:hover': { bgcolor: brand.orangeDark } }}>
+                {isLoggingIn ? <CircularProgress size={24} color="inherit" /> : 'Create account'}
+              </Button>
+              <Button type="button" onClick={showSignIn} sx={{ color: brand.navy }}>
+                Back to sign in
+              </Button>
+            </Box>
+          </>
+        )}
+        {alertText && (
           <Alert severity="warning" sx={{ mt: 2 }}>
-            {loginError || localError || authMessage}
+            {alertText}
           </Alert>
         )}
         </Box>
