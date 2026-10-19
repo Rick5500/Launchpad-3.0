@@ -5,7 +5,7 @@ const users = require('../userAdmin');
 
 const router = express.Router();
 
-router.use(auth.requireAuth, auth.requireRole('admin', 'operator'));
+router.use(auth.requireAuth, auth.requireRole('admin', 'manager', 'operator'));
 
 function sendError(res, err, label, fallback) {
   if (err && err.status && err.message && err.name !== 'SqliteError') {

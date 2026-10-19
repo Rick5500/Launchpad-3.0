@@ -13,7 +13,7 @@ const {
 const { printForOrder } = require('../printWorkOrder');
 
 const router = express.Router();
-const orderRoles = auth.requireRole('admin', 'operator', 'customer');
+const orderRoles = auth.requireRole('admin', 'manager', 'operator', 'customer');
 
 function sendOrderError(res, err, fallback) {
   if (err instanceof OrderError || err.status) {

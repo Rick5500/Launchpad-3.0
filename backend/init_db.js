@@ -743,6 +743,257 @@ async function migrateLegacyBarcodeLocations() {
   }
 }
 
+function quoteIdent(name) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+    throw new Error(`Unexpected SQL name: ${name}`);
+  }
+  return `"${name}"`;
+}
+
+function endOfParens(sql, openIndex) {
+  let depth = 0;
+  let quote = null;
+  for (let index = openIndex; index < sql.length; index += 1) {
+    const ch = sql[index];
+    if (quote) {
+      if (ch === quote) {
+        if (sql[index + 1] === quote) {
+          index += 1;
+          continue;
+        }
+        quote = null;
+      }
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`' || ch === '[') {
+      quote = ch === '[' ? ']' : ch;
+      continue;
+    }
+    if (ch === '(') depth += 1;
+    else if (ch === ')') {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  throw new Error('Unbalanced parentheses in users CREATE TABLE');
+}
+
+function checkBodies(sql) {
+  const bodies = [];
+  let quote = null;
+  let index = 0;
+  while (index < sql.length) {
+    const ch = sql[index];
+    if (quote) {
+      if (ch === quote) {
+        if (sql[index + 1] === quote) {
+          index += 2;
+          continue;
+        }
+        quote = null;
+      }
+      index += 1;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`' || ch === '[') {
+      quote = ch === '[' ? ']' : ch;
+      index += 1;
+      continue;
+    }
+    if (ch === '-' && sql[index + 1] === '-') {
+      const end = sql.indexOf('\n', index);
+      index = end === -1 ? sql.length : end + 1;
+      continue;
+    }
+    if (ch === '/' && sql[index + 1] === '*') {
+      const end = sql.indexOf('*/', index + 2);
+      index = end === -1 ? sql.length : end + 2;
+      continue;
+    }
+    if (/^CHECK\s*\(/i.test(sql.slice(index)) && (index === 0 || !/[A-Za-z0-9_]/.test(sql[index - 1]))) {
+      const open = sql.indexOf('(', index);
+      const close = endOfParens(sql, open);
+      bodies.push(sql.slice(open + 1, close));
+      index = close + 1;
+      continue;
+    }
+    index += 1;
+  }
+  return bodies;
+}
+
+function usersRoleCheckBlocksManager(sql) {
+  if (!sql) return false;
+  const roleClauses = checkBodies(sql).filter((clause) => /\brole\b/i.test(clause));
+  if (!roleClauses.length) return false;
+  return roleClauses.some((clause) => !/\bmanager\b/i.test(clause));
+}
+
+const CONSTRAINT_TAIL = /(?:CONSTRAINT\s+(?:"[^"]+"|`[^`]+`|\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_]*)\s+)?$/i;
+
+// Drop only a role CHECK that omits manager. Collation, other checks, and keys stay.
+function rewriteUsersCreateSql(sql) {
+  let result = '';
+  let quote = null;
+  let index = 0;
+  while (index < sql.length) {
+    const ch = sql[index];
+    if (quote) {
+      result += ch;
+      if (ch === quote) {
+        if (sql[index + 1] === quote) {
+          result += sql[index + 1];
+          index += 2;
+          continue;
+        }
+        quote = null;
+      }
+      index += 1;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`' || ch === '[') {
+      quote = ch === '[' ? ']' : ch;
+      result += ch;
+      index += 1;
+      continue;
+    }
+    if (ch === '-' && sql[index + 1] === '-') {
+      const end = sql.indexOf('\n', index);
+      const stop = end === -1 ? sql.length : end + 1;
+      result += sql.slice(index, stop);
+      index = stop;
+      continue;
+    }
+    if (ch === '/' && sql[index + 1] === '*') {
+      const end = sql.indexOf('*/', index + 2);
+      const stop = end === -1 ? sql.length : end + 2;
+      result += sql.slice(index, stop);
+      index = stop;
+      continue;
+    }
+    if (/^CHECK\s*\(/i.test(sql.slice(index)) && (index === 0 || !/[A-Za-z0-9_]/.test(sql[index - 1]))) {
+      const open = sql.indexOf('(', index);
+      const close = endOfParens(sql, open);
+      const body = sql.slice(open + 1, close);
+      const blocks = /\brole\b/i.test(body) && !/\bmanager\b/i.test(body);
+      if (!blocks) {
+        result += sql.slice(index, close + 1);
+        index = close + 1;
+        continue;
+      }
+      result = result.replace(CONSTRAINT_TAIL, '').replace(/,\s*$/, '');
+      index = close + 1;
+      continue;
+    }
+    result += ch;
+    index += 1;
+  }
+
+  let cleaned = '';
+  quote = null;
+  index = 0;
+  while (index < result.length) {
+    const ch = result[index];
+    if (quote) {
+      cleaned += ch;
+      if (ch === quote) {
+        if (result[index + 1] === quote) {
+          cleaned += result[index + 1];
+          index += 2;
+          continue;
+        }
+        quote = null;
+      }
+      index += 1;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`' || ch === '[') {
+      quote = ch === '[' ? ']' : ch;
+      cleaned += ch;
+      index += 1;
+      continue;
+    }
+    if (ch === ',') {
+      let next = index + 1;
+      while (next < result.length && /\s/.test(result[next])) next += 1;
+      if (result[next] === ',' || result[next] === ')') {
+        index += 1;
+        continue;
+      }
+    }
+    cleaned += ch;
+    index += 1;
+  }
+  return cleaned;
+}
+
+function renameUsersCreateSql(sql) {
+  const match = /^(\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?)(?:"users"|`users`|\[users\]|users)(\s*\()/i.exec(sql);
+  if (!match) throw new Error('users CREATE TABLE statement was not recognized');
+  return `${match[1]}"users__role_rebuild"${match[2]}${sql.slice(match[0].length)}`;
+}
+
+// The current schema does not CHECK users.role. An older database might.
+// Rebuilding rewrites that role CHECK in the original CREATE TABLE statement.
+async function ensureUsersRoleAllowsManager() {
+  const table = await get(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'`);
+  if (!table || !usersRoleCheckBlocksManager(table.sql)) return;
+
+  const createSql = renameUsersCreateSql(rewriteUsersCreateSql(table.sql));
+  if (usersRoleCheckBlocksManager(createSql)) {
+    throw new Error('users role rebuild left a CHECK that omits manager');
+  }
+
+  const columns = await all('PRAGMA table_info(users)');
+  const explicitIndexes = await all(
+    `SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'users' AND sql IS NOT NULL`
+  );
+  const triggers = await all(
+    `SELECT sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'users' AND sql IS NOT NULL`
+  );
+  const names = columns.map((column) => quoteIdent(column.name)).join(', ');
+
+  await exec('PRAGMA foreign_keys = OFF');
+  try {
+    await exec('BEGIN IMMEDIATE');
+    await run('DROP TABLE IF EXISTS users__role_rebuild');
+    await run(createSql);
+    await run(`INSERT INTO users__role_rebuild (${names}) SELECT ${names} FROM users`);
+    await run('DROP TABLE users');
+    await run('ALTER TABLE users__role_rebuild RENAME TO users');
+    for (const index of explicitIndexes) {
+      if (index.sql) await run(index.sql);
+    }
+    for (const trigger of triggers) {
+      if (trigger.sql) await run(trigger.sql);
+    }
+    await exec('COMMIT');
+  } catch (err) {
+    try {
+      await exec('ROLLBACK');
+    } catch (rollbackErr) {
+      console.error('USERS ROLE REBUILD ROLLBACK ERROR:', rollbackErr);
+    }
+    throw err;
+  } finally {
+    await exec('PRAGMA foreign_keys = ON');
+  }
+  console.log('Relaxed users.role so a manager account can be stored');
+}
+
+// Managers see every department. A department stored on an older manager row is cleared.
+async function clearManagerDepartments() {
+  const result = await run(
+    `UPDATE users
+     SET department = NULL, updated_at = datetime('now')
+     WHERE lower(role) = 'manager'
+       AND department IS NOT NULL`
+  );
+  if (result.changes > 0) {
+    console.log(`Cleared department on ${result.changes} manager account(s)`);
+  }
+}
+
 async function main() {
   await exec(schema);
   await ensureColumns('work_orders', [
@@ -788,6 +1039,8 @@ async function main() {
     { name: 'updated_at', definition: 'DATETIME' },
   ]);
   await run('UPDATE users SET is_active = 1 WHERE is_active IS NULL');
+  await ensureUsersRoleAllowsManager();
+  await clearManagerDepartments();
   await ensureColumns('services', [
     { name: 'code', definition: 'TEXT' },
     { name: 'suffix_mode', definition: "TEXT DEFAULT 'sequence'" },

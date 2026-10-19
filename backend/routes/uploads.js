@@ -13,7 +13,7 @@ const {
 const { maxUnattachedUploads, countUnattachedUploads } = require('../uploadMaintenance');
 
 const router = express.Router();
-const uploadRoles = auth.requireRole('admin', 'operator', 'customer');
+const uploadRoles = auth.requireRole('admin', 'manager', 'operator', 'customer');
 
 function run(sql, params = []) {
   return new Promise((resolve, reject) => {
@@ -45,7 +45,7 @@ function publicFile(row) {
 
 async function canAccessFile(user, file) {
   if (!file) return false;
-  if (user.role === 'admin' || user.role === 'operator') return true;
+  if (user.role === 'admin' || user.role === 'manager' || user.role === 'operator') return true;
   if (user.role !== 'customer') return false;
   const userId = Number(user.userId || user.id);
   if (Number(file.customer_id) === userId) return true;

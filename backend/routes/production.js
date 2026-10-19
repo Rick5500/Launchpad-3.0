@@ -3,7 +3,7 @@ const auth = require('../auth');
 const db = require('../db');
 const router = express.Router();
 
-router.use(auth.requireAuth, auth.requireRole('admin', 'operator'));
+router.use(auth.requireAuth, auth.requireRole('admin', 'manager', 'operator'));
 
 router.get('/', (req, res) => {
   db.all(

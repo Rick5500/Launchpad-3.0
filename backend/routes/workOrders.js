@@ -3,6 +3,7 @@ const auth = require('../auth');
 const db = require('../db');
 const { WORK_ORDER_STATUSES } = require('../statuses');
 const barcodeEvents = require('../barcodeEvents');
+const users = require('../userAdmin');
 const { loadWorkOrderContext } = require('../orderService');
 const { printForWorkOrder } = require('../printWorkOrder');
 const { isPrintableBarcode } = require('../barcodeSvg');
@@ -10,7 +11,7 @@ const notifications = require('../notifications');
 const activityLog = require('../activityLog');
 const router = express.Router();
 
-const staffRoles = auth.requireRole('admin', 'operator');
+const staffRoles = auth.requireRole('admin', 'manager', 'operator');
 
 function parsePositiveInteger(value) {
   if (typeof value === 'number') {
@@ -493,6 +494,33 @@ router.put('/:id', auth.requireAuth, staffRoles, (req, res) => {
       );
     }
   );
+  }
+});
+
+router.post('/:id/move', auth.requireAuth, auth.requireRole('admin', 'manager'), async (req, res) => {
+  const id = parsePositiveInteger(req.params.id);
+  if (!id) return res.status(400).json({ error: 'id must be a positive integer' });
+  const parsed = barcodeEvents.parseManualMove(req.body);
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+
+  try {
+    const access = await users.loadAccess(req.user.userId);
+    if (access.role !== 'admin' && access.role !== 'manager') {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const result = await barcodeEvents.moveWorkOrder({
+      workOrderId: id,
+      department: parsed.department,
+      note: parsed.note,
+      actorId: req.user.userId,
+    });
+    res.json(result);
+  } catch (err) {
+    if (err && err.status && err.publicMessage) {
+      return res.status(err.status).json({ error: err.publicMessage });
+    }
+    console.error('WORK ORDER MOVE ERROR:', err);
+    return res.status(500).json({ error: 'Failed to move work order' });
   }
 });
 

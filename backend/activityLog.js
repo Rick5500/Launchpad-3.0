@@ -38,7 +38,7 @@ function createdEntry({ actorId, workOrderId, externalId, department, orderNumbe
   };
 }
 
-function transitionEntries({ actorId, previous, next }) {
+function transitionEntries({ actorId, previous, next, manual = false, note = null }) {
   const entries = [];
   const from = String(previous?.department || '').trim();
   const to = String(next?.department || '').trim();
@@ -47,17 +47,25 @@ function transitionEntries({ actorId, previous, next }) {
   if (!id) return entries;
 
   if (from !== to) {
+    const destination = to || 'another department';
+    let message = manual ? `Manual move to ${destination}` : `Moved to ${destination}`;
+    if (manual && note) message = `${message}. ${note}`;
+    const detail = {
+      external_id: externalId,
+      from_department: from || null,
+      to_department: to || null,
+      message,
+    };
+    if (manual) {
+      detail.manual = true;
+      detail.note = note || null;
+    }
     entries.push({
       actorId,
       action: 'work_order.moved',
       entityType: 'work_order',
       entityId: id,
-      detail: {
-        external_id: externalId,
-        from_department: from || null,
-        to_department: to || null,
-        message: `Moved to ${to || 'another department'}`,
-      },
+      detail,
     });
   }
 

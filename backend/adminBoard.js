@@ -44,11 +44,16 @@ function assignedDepartment(user) {
   return value || null;
 }
 
-// Operators with a department cannot widen the board. An admin can pass scope=all.
+// Operators with a department cannot widen the board. An admin with a department can pass scope=all.
+// A manager is not assigned a department and sees every department.
+function canWidenBoard(role) {
+  return role === 'admin';
+}
+
 function resolveBoardScope(user, query) {
-  const assigned = assignedDepartment(user);
   const role = user && user.role;
-  const canClear = role === 'admin' && Boolean(assigned);
+  const assigned = role === 'manager' ? null : assignedDepartment(user);
+  const canClear = canWidenBoard(role) && Boolean(assigned);
   const requested = String((query && query.scope) || '').trim().toLowerCase();
   if (!assigned || (canClear && requested === 'all')) {
     return { assigned, restricted: false, canClear, department: null };
@@ -56,7 +61,7 @@ function resolveBoardScope(user, query) {
   return {
     assigned,
     restricted: true,
-    canClear: role === 'admin',
+    canClear: canWidenBoard(role),
     department: assigned,
   };
 }
@@ -294,6 +299,8 @@ function presentActivity(row, timeZone, now) {
     entity_id: row.entity_id,
     external_id: detail.external_id || detail.order_number || null,
     summary,
+    manual: Boolean(detail.manual),
+    note: detail.note || null,
     actor_id: row.actor_id,
     actor_name: row.actor_name || 'System',
     created_at: row.created_at,

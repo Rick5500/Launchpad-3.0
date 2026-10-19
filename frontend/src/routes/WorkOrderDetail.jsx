@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Box, Button, Card, CardContent, Chip, Grid, Typography, Tabs, Tab, Divider, Table, TableBody, TableCell, TableContainer, TableHead, TableRow } from '@mui/material';
+import { Alert, Box, Button, Card, CardContent, Chip, Grid, Snackbar, Typography, Tabs, Tab, Divider, Table, TableBody, TableCell, TableContainer, TableHead, TableRow } from '@mui/material';
 import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
 import SectionCard from '../components/SectionCard';
+import MoveWorkOrderDialog from '../components/MoveWorkOrderDialog';
 import { authFetch, downloadAuthorized } from '../api';
+import { requestBoardRefresh } from '../boardEvents';
 import { useAuth } from '../context/AuthContext';
 import { canonicalWorkOrderStatus } from '../workOrderStatus';
 import { formatFileSize } from '../brand';
@@ -154,12 +156,33 @@ function RoutingPanel({ workOrder, hideInternal }) {
                   <TableCell>{row.status || '—'}</TableCell>
                   <TableCell>{formatStamp(row.event_time)}</TableCell>
                   {!hideInternal && <TableCell>{row.scanned_by || '—'}</TableCell>}
-                  {!hideInternal && <TableCell>{row.notes || '—'}</TableCell>}
+                  {!hideInternal && (
+                    <TableCell>
+                      {row.manual ? <Chip label="Manual" size="small" sx={{ mr: 0.75 }} /> : null}
+                      {row.notes || '—'}
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </TableContainer>
+      )}
+      {!hideInternal && (workOrder.activity || []).length > 0 && (
+        <Box sx={{ mt: 2, display: 'grid', gap: 1 }}>
+          <Typography variant="subtitle2">Activity</Typography>
+          {(workOrder.activity || []).map((item) => (
+            <Box key={item.id}>
+              <Typography>
+                {item.manual ? <Chip label="Manual" size="small" sx={{ mr: 0.75 }} /> : null}
+                {item.summary}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {item.actor_name || 'System'} · {formatStamp(item.created_at)}
+              </Typography>
+            </Box>
+          ))}
+        </Box>
       )}
     </Box>
   );
@@ -242,7 +265,8 @@ export default function WorkOrderDetail() {
   const navigate = useNavigate();
   const { id } = useParams();
   const { user } = useAuth();
-  const canManageOrders = user?.role === 'admin' || user?.role === 'operator';
+  const canManageOrders = user?.role === 'admin' || user?.role === 'manager' || user?.role === 'operator';
+  const canMove = user?.role === 'admin' || user?.role === 'manager';
 
   const [workOrder, setWorkOrder] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -251,6 +275,9 @@ export default function WorkOrderDetail() {
   const [events, setEvents] = useState([]);
   const [eventsLoading, setEventsLoading] = useState(true);
   const [eventsError, setEventsError] = useState('');
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -292,7 +319,7 @@ export default function WorkOrderDetail() {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, reloadKey]);
 
   if (loading) return <LoadingState message="Loading work order details..." />;
   if (error) return <ErrorState message={error} />;
@@ -313,6 +340,11 @@ export default function WorkOrderDetail() {
           <Button variant="outlined" onClick={() => navigate(`/work-orders/${id}/print`)}>
             Print Work Order
           </Button>
+          {canMove && (
+            <Button variant="outlined" data-testid="move-work-order" onClick={() => setMoveOpen(true)}>
+              Move to…
+            </Button>
+          )}
           {canManageOrders && (
             <Button variant="contained" onClick={() => navigate(`/work-orders/${id}/edit`)}>
               Edit Work Order
@@ -339,6 +371,19 @@ export default function WorkOrderDetail() {
           {getTabContent(activeTab, workOrder, { events, loading: eventsLoading, error: eventsError }, user?.role === 'customer')}
         </CardContent>
       </Card>
+      <MoveWorkOrderDialog
+        open={moveOpen}
+        workOrder={workOrder}
+        onClose={() => setMoveOpen(false)}
+        onMoved={(message) => {
+          setNotice(message);
+          setReloadKey((value) => value + 1);
+          requestBoardRefresh();
+        }}
+      />
+      <Snackbar open={Boolean(notice)} autoHideDuration={4000} onClose={() => setNotice('')} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+        <Alert severity="success" onClose={() => setNotice('')} sx={{ width: '100%' }}>{notice}</Alert>
+      </Snackbar>
     </Box>
   );
 }

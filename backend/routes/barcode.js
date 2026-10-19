@@ -6,7 +6,7 @@ const users = require('../userAdmin');
 const { createFixedWindowLimiter } = require('../rateLimit');
 
 const router = express.Router();
-const staffRoles = auth.requireRole('admin', 'operator');
+const staffRoles = auth.requireRole('admin', 'manager', 'operator');
 
 function positiveIntEnv(name, fallback) {
   const parsed = Number(process.env[name]);
@@ -118,7 +118,7 @@ router.post('/', auth.requireAuth, staffRoles, limitBarcodeScans, async (req, re
   let scanLocation = location.value;
   try {
     const access = await users.loadAccess(req.user.userId);
-    if (access.department) scanLocation = access.department;
+    if (access.role !== 'manager' && access.department) scanLocation = access.department;
   } catch (err) {
     return sendServiceError(res, err, 'BARCODE CREATE ERROR:', 'Failed to record barcode event');
   }

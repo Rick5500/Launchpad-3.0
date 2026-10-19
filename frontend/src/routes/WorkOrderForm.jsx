@@ -65,7 +65,7 @@ export default function WorkOrderForm() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const isOperator = user?.role === 'operator';
+  const isOperator = user?.role === 'operator' || user?.role === 'manager';
   const [values, setValues] = useState(defaultValues);
   const [customers, setCustomers] = useState([]);
   const [departments, setDepartments] = useState([]);

@@ -124,24 +124,24 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={user ? <Navigate to={user.role === 'customer' ? '/order' : '/'} replace /> : <LoginScreen />} />
-      <Route path="/order" element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><CustomerOrderForm /></ProtectedRoute>} />
-      <Route path="/orders/:id" element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><OrderDetail /></ProtectedRoute>} />
-      <Route path="/orders/:id/print" element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><WorkOrderPrint /></ProtectedRoute>} />
-      <Route path="/work-orders/:id/print" element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><WorkOrderPrint /></ProtectedRoute>} />
+      <Route path="/order" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><CustomerOrderForm /></ProtectedRoute>} />
+      <Route path="/orders/:id" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><OrderDetail /></ProtectedRoute>} />
+      <Route path="/orders/:id/print" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><WorkOrderPrint /></ProtectedRoute>} />
+      <Route path="/work-orders/:id/print" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><WorkOrderPrint /></ProtectedRoute>} />
       <Route path="/" element={<Layout user={user} onLogout={logout} />}>
-        <Route index element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><HomeOrOrder /></ProtectedRoute>} />
-        <Route path="work-orders" element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><WorkOrdersList /></ProtectedRoute>} />
-        <Route path="work-orders/new" element={<ProtectedRoute roles={['admin', 'operator']}><WorkOrderForm /></ProtectedRoute>} />
-        <Route path="work-orders/:id" element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><WorkOrderDetail /></ProtectedRoute>} />
-        <Route path="work-orders/:id/edit" element={<ProtectedRoute roles={['admin', 'operator']}><WorkOrderForm /></ProtectedRoute>} />
-        <Route path="production-board" element={<ProtectedRoute roles={['admin', 'operator']}><ProductionBoard /></ProtectedRoute>} />
-        <Route path="scan" element={<ProtectedRoute roles={['admin', 'operator']}><BarcodeScan /></ProtectedRoute>} />
+        <Route index element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><HomeOrOrder /></ProtectedRoute>} />
+        <Route path="work-orders" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><WorkOrdersList /></ProtectedRoute>} />
+        <Route path="work-orders/new" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><WorkOrderForm /></ProtectedRoute>} />
+        <Route path="work-orders/:id" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><WorkOrderDetail /></ProtectedRoute>} />
+        <Route path="work-orders/:id/edit" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><WorkOrderForm /></ProtectedRoute>} />
+        <Route path="production-board" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><ProductionBoard /></ProtectedRoute>} />
+        <Route path="scan" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><BarcodeScan /></ProtectedRoute>} />
         <Route path="customers" element={<ProtectedRoute roles={['admin']}><Customers /></ProtectedRoute>} />
-        <Route path="delivery" element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><Deliveries /></ProtectedRoute>} />
-        <Route path="reports" element={<ProtectedRoute roles={['admin', 'operator']}><Reports /></ProtectedRoute>} />
-        <Route path="reports/:reportId" element={<ProtectedRoute roles={['admin', 'operator']}><Reports /></ProtectedRoute>} />
-        <Route path="notifications" element={<ProtectedRoute roles={['admin', 'operator', 'customer']}><Notifications /></ProtectedRoute>} />
-        <Route path="search" element={<ProtectedRoute roles={['admin', 'operator']}><SearchOrders /></ProtectedRoute>} />
+        <Route path="delivery" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><Deliveries /></ProtectedRoute>} />
+        <Route path="reports" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><Reports /></ProtectedRoute>} />
+        <Route path="reports/:reportId" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><Reports /></ProtectedRoute>} />
+        <Route path="notifications" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><Notifications /></ProtectedRoute>} />
+        <Route path="search" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><SearchOrders /></ProtectedRoute>} />
         <Route path="services" element={<ProtectedRoute roles={['admin']}><ServicesPage /></ProtectedRoute>} />
         <Route path="users" element={<ProtectedRoute roles={['admin']}><UsersPage /></ProtectedRoute>} />
         <Route path="settings" element={<ProtectedRoute roles={['admin']}><SystemSettingsPage /></ProtectedRoute>} />

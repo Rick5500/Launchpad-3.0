@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'customer', -- admin, customer, operator
+  role TEXT NOT NULL DEFAULT 'customer', -- admin, manager, operator, customer. No CHECK: init_db.js relaxes an older one.
   display_name TEXT,
   company TEXT,
   contact_name TEXT,
@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS users (
   city TEXT,
   state TEXT,
   zip TEXT,
-  department TEXT, -- staff home department; NULL means every department
+  department TEXT, -- staff home department; NULL means every department. Managers are stored with NULL
   is_active INTEGER DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME

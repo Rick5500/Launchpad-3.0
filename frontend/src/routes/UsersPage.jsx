@@ -91,7 +91,7 @@ export default function UsersPage() {
   function update(field, value) {
     setForm((current) => {
       const next = { ...current, [field]: value };
-      if (field === 'role' && value === 'customer') next.department = '';
+      if (field === 'role' && (value === 'customer' || value === 'manager')) next.department = '';
       return next;
     });
   }
@@ -111,7 +111,7 @@ export default function UsersPage() {
       city: row.city || '',
       state: row.state || '',
       zip: row.zip || '',
-      department: row.department || '',
+      department: row.role === 'manager' || row.role === 'customer' ? '' : (row.department || ''),
       password: '',
       is_active: Boolean(row.is_active),
     });
@@ -139,7 +139,7 @@ export default function UsersPage() {
       city: form.city,
       state: form.state,
       zip: form.zip,
-      department: form.role === 'customer' ? null : (form.department || null),
+      department: form.role === 'customer' || form.role === 'manager' ? null : (form.department || null),
       is_active: form.is_active,
     };
     if (!editingId && form.password) payload.password = form.password;
@@ -195,6 +195,7 @@ export default function UsersPage() {
           <TextField label="Display name" value={form.display_name} onChange={(event) => update('display_name', event.target.value)} required />
           <TextField select label="Role" value={form.role} onChange={(event) => update('role', event.target.value)}>
             <MenuItem value="admin">Admin</MenuItem>
+            <MenuItem value="manager">Manager</MenuItem>
             <MenuItem value="operator">Operator</MenuItem>
             <MenuItem value="customer">Customer</MenuItem>
           </TextField>
@@ -238,6 +239,7 @@ export default function UsersPage() {
           <TextField select label="Role" value={role} onChange={(event) => setRole(event.target.value)} sx={{ minWidth: 160 }}>
             <MenuItem value="">All roles</MenuItem>
             <MenuItem value="admin">Admin</MenuItem>
+            <MenuItem value="manager">Manager</MenuItem>
             <MenuItem value="operator">Operator</MenuItem>
             <MenuItem value="customer">Customer</MenuItem>
           </TextField>
@@ -263,7 +265,7 @@ export default function UsersPage() {
                   <TableCell>{row.username}{row.id === user?.id ? ' (you)' : ''}</TableCell>
                   <TableCell>{row.display_name}</TableCell>
                   <TableCell>{row.role}</TableCell>
-                  <TableCell>{row.role === 'customer' ? '—' : (row.department || 'All departments')}</TableCell>
+                  <TableCell>{row.role === 'customer' ? '—' : row.role === 'manager' || !row.department ? 'All departments' : row.department}</TableCell>
                   <TableCell>{row.email || '—'}</TableCell>
                   <TableCell><Chip size="small" label={row.is_active ? 'Active' : 'Inactive'} color={row.is_active ? 'success' : 'default'} /></TableCell>
                   <TableCell>

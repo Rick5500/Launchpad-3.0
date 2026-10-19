@@ -4,7 +4,7 @@ const locations = require('../barcodeLocations');
 const { sendError } = require('../httpError');
 
 const router = express.Router();
-const staff = auth.requireRole('admin', 'operator');
+const staff = auth.requireRole('admin', 'manager', 'operator');
 
 router.get('/', auth.requireAuth, staff, async (req, res) => {
   try {
