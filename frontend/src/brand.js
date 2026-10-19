@@ -13,6 +13,30 @@ export const brand = {
   danger: '#C62828',
 };
 
+const EASTERN_ZONES = new Set([
+  'America/New_York',
+  'America/Detroit',
+  'America/Indiana/Indianapolis',
+  'America/Kentucky/Louisville',
+  'America/Toronto',
+  'US/Eastern',
+  'EST5EDT',
+]);
+
+export function timezoneLabel(timeZone) {
+  const zone = String(timeZone || '').trim();
+  if (!zone) return '';
+  if (EASTERN_ZONES.has(zone)) return 'Eastern';
+  try {
+    const part = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'short' })
+      .formatToParts(new Date())
+      .find((item) => item.type === 'timeZoneName');
+    return part ? part.value : zone;
+  } catch (err) {
+    return zone;
+  }
+}
+
 export function formatClockLabel(hhmm) {
   const match = /^(\d{2}):(\d{2})$/.exec(String(hhmm || ''));
   if (!match) return hhmm || '';

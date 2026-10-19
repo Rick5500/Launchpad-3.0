@@ -1,6 +1,6 @@
 const db = require('./db');
 const { getOrder } = require('./orderService');
-const { deliveryWindow, willCallWindow, hoursLabel, usesWillCallHours } = require('./deliveryRules');
+const { classifyDelivery, deliveryWindow, getRules, hoursLabel, usesWillCallHours, willCallWindow } = require('./deliveryRules');
 const { code128Svg } = require('./barcodeSvg');
 const { loadLetterhead, DEFAULT_NAME, DEFAULT_ADDRESS, DEFAULT_PHONE, addressLines } = require('./shopProfile');
 const { displayFieldList, readFieldValues, PAYMENT_UNSPECIFIED, RETURN_UNSPECIFIED } = require('./serviceFields');
@@ -55,6 +55,46 @@ function deliveryHoursLabel(methodName, willCallFlag) {
 
 function utcNow() {
   return new Date().toISOString().slice(0, 19).replace('T', ' ');
+}
+
+const EASTERN_ZONES = new Set([
+  'America/New_York',
+  'America/Detroit',
+  'America/Indiana/Indianapolis',
+  'America/Kentucky/Louisville',
+  'America/Toronto',
+  'US/Eastern',
+  'EST5EDT',
+]);
+
+function timezoneLabel(timeZone) {
+  const zone = String(timeZone || '').trim();
+  if (!zone) return '';
+  if (EASTERN_ZONES.has(zone)) return 'Eastern';
+  return zone;
+}
+
+function sheetTiming(dueDate, dueTime, status) {
+  const rules = getRules();
+  const finished = /^(completed|complete)$/i.test(String(status || '').trim());
+  const date = String(dueDate || '').trim().slice(0, 10);
+  const clock = /^(\d{2}):(\d{2})/.exec(String(dueTime || '').trim());
+  let overdue = false;
+  let dueSoon = false;
+  if (!finished && /^\d{4}-\d{2}-\d{2}$/.test(date) && clock) {
+    const flags = classifyDelivery({
+      status: 'pending',
+      due_time: `${date} ${clock[1]}:${clock[2]}:00`,
+    }, new Date(), rules);
+    overdue = Boolean(flags.overdue);
+    dueSoon = Boolean(flags.due_soon);
+  }
+  return {
+    timezone: rules.timezone,
+    timezone_label: timezoneLabel(rules.timezone),
+    overdue,
+    due_soon: dueSoon,
+  };
 }
 
 function routingStatusLabel(status) {
@@ -154,6 +194,7 @@ async function buildSheet(workOrderId, viewer) {
        wo.description,
        wo.quantity,
        wo.status,
+       wo.priority,
        wo.department,
        wo.due_date,
        wo.notes,
@@ -260,6 +301,9 @@ async function buildSheet(workOrderId, viewer) {
     barcodeError = 'barcode unavailable';
   }
   const specialInstructions = textOrEmpty(row.notes).trim() || textOrEmpty(row.order_notes).trim();
+  const dueDate = row.order_due_date || (row.due_date ? String(row.due_date).slice(0, 10) : null);
+  const dueTime = row.order_due_time || null;
+  const timing = sheetTiming(dueDate, dueTime, row.status);
   const process = uniqueParts([row.service_name, row.stage_name, row.department]).join(' · ');
   const methodName = row.delivery_method || (delivery && delivery.carrier) || '';
   const willCallFlag = delivery ? delivery.will_call : false;
@@ -275,8 +319,13 @@ async function buildSheet(workOrderId, viewer) {
     order_number: row.order_number || null,
     description: row.description || null,
     submitted_at: row.order_created_at || row.created_at || null,
-    due_date: row.order_due_date || (row.due_date ? String(row.due_date).slice(0, 10) : null),
-    due_time: row.order_due_time || null,
+    due_date: dueDate,
+    due_time: dueTime,
+    priority: row.priority || 'Normal',
+    timezone: timing.timezone,
+    timezone_label: timing.timezone_label,
+    overdue: timing.overdue,
+    due_soon: timing.due_soon,
     contact: {
       company: row.order_company || row.customer_company || row.customer_name || '',
       contact_name: row.order_contact_name || row.customer_contact_name || row.customer_name || '',
@@ -407,6 +456,7 @@ async function printForOrder(viewer, rawId) {
 module.exports = {
   SCAN_INSTRUCTIONS,
   SHOP,
+  timezoneLabel,
   printForWorkOrder,
   printForOrder,
 };
