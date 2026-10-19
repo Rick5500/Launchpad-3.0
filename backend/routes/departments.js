@@ -3,6 +3,8 @@ const auth = require('../auth');
 const db = require('../db');
 const { withTransaction } = require('../dbAsync');
 const activityLog = require('../activityLog');
+const { httpError } = require('../httpError');
+const { cascadeDepartmentRename } = require('../departmentRename');
 const router = express.Router();
 
 function parseBoolean(value) {
@@ -21,10 +23,16 @@ function isUniqueConstraint(err) {
 }
 
 function respondDepartmentWriteError(res, err, action) {
-  console.error(`DEPARTMENTS ${action.toUpperCase()} ERROR:`, err);
-  if (isUniqueConstraint(err)) {
-    return res.status(409).json({ error: 'A department with that name already exists' });
+  if (err && err.status && err.publicMessage) {
+    return res.status(err.status).json({ error: err.publicMessage });
   }
+  if (isUniqueConstraint(err)) {
+    const message = /barcode_locations\.location/i.test(err.message || '')
+      ? 'A scan location already uses that name'
+      : 'A department with that name already exists';
+    return res.status(409).json({ error: message });
+  }
+  console.error(`DEPARTMENTS ${action.toUpperCase()} ERROR:`, err);
   return res.status(500).json({ error: `Failed to ${action} department` });
 }
 
@@ -70,20 +78,34 @@ router.post('/', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
   const sortOrder = parseSortOrder(payload.sort_order);
   const isActive = parseBoolean(payload.is_active ?? 1);
 
-  db.run(
-    `INSERT INTO departments (name, description, color, icon, sort_order, is_active, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
-    [name, description, color, icon, sortOrder, isActive],
-    function (err) {
-      if (err) return respondDepartmentWriteError(res, err, 'create');
-
-      const newId = this.lastID;
-      db.get('SELECT * FROM departments WHERE id = ?', [newId], (err2, row) => {
-        if (err2) return res.status(201).json({ id: newId });
-        res.status(201).json(row || { id: newId });
-      });
+  db.get(
+    'SELECT id FROM departments WHERE lower(name) = lower(?)',
+    [name],
+    (lookupErr, collision) => {
+      if (lookupErr) return respondDepartmentWriteError(res, lookupErr, 'create');
+      if (collision) {
+        return res.status(409).json({ error: 'A department with that name already exists' });
+      }
+      insertDepartment();
     }
   );
+
+  function insertDepartment() {
+    db.run(
+      `INSERT INTO departments (name, description, color, icon, sort_order, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [name, description, color, icon, sortOrder, isActive],
+      function (err) {
+        if (err) return respondDepartmentWriteError(res, err, 'create');
+
+        const newId = this.lastID;
+        db.get('SELECT * FROM departments WHERE id = ?', [newId], (err2, row) => {
+          if (err2) return res.status(201).json({ id: newId });
+          res.status(201).json(row || { id: newId });
+        });
+      }
+    );
+  }
 });
 
 router.put('/:id', auth.requireAuth, auth.requireRole('admin'), async (req, res) => {
@@ -102,24 +124,27 @@ router.put('/:id', auth.requireAuth, auth.requireRole('admin'), async (req, res)
     const row = await withTransaction(async (tx) => {
       const existing = await tx.get('SELECT * FROM departments WHERE id = ?', [id]);
       if (!existing) return null;
+      const previousName = String(existing.name || '');
+      const collision = await tx.get(
+        'SELECT id FROM departments WHERE id != ? AND lower(name) = lower(?)',
+        [existing.id, name]
+      );
+      if (collision) {
+        throw httpError(409, 'A department with that name already exists');
+      }
       await tx.run(
         `UPDATE departments
          SET name = ?, description = ?, color = ?, icon = ?, sort_order = ?, is_active = ?, updated_at = datetime('now')
          WHERE id = ?`,
         [name, description, color, icon, sortOrder, isActive, id]
       );
-      const previousName = String(existing.name || '');
       if (previousName !== name) {
-        const updatedUsers = await tx.run(
-          `UPDATE users
-           SET department = ?, updated_at = datetime('now')
-           WHERE lower(trim(coalesce(department, ''))) = lower(?)`,
-          [name, previousName]
-        );
+        const changes = await cascadeDepartmentRename(tx, previousName, name);
         await activityLog.recordOn(tx, req.user.userId, 'department.updated', 'department', existing.id, {
           previous_name: previousName,
           name,
-          users_updated: updatedUsers.changes || 0,
+          users_updated: changes.users,
+          changes,
           message: `Renamed department ${previousName} to ${name}`,
         });
       }

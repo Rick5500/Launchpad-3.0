@@ -760,8 +760,30 @@ async function main() {
   await seedProductionBoard();
   await seedDeliveries();
   await normalizeLegacyWorkOrderStatuses();
+  await ensureDepartmentNameIndex();
   await ensureExternalIdUniqueIndex();
   console.log('Database initialization complete.');
+}
+
+// Case-insensitive uniqueness. Skip when an older database already has
+// Quality and quality, and leave those rows in place.
+async function ensureDepartmentNameIndex() {
+  const duplicate = await get(
+    `SELECT lower(name) AS name
+     FROM departments
+     GROUP BY lower(name)
+     HAVING COUNT(*) > 1
+     LIMIT 1`
+  );
+  if (duplicate) {
+    console.warn(
+      `Skipping case-insensitive unique index on departments.name because duplicates exist (${duplicate.name})`
+    );
+    return;
+  }
+  await run(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_departments_name_nocase ON departments(name COLLATE NOCASE)'
+  );
 }
 
 async function ensureExternalIdUniqueIndex() {

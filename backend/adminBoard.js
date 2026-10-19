@@ -94,15 +94,21 @@ function scanDepartmentSql(alias = 'e') {
   )`;
 }
 
+// json_extract throws on malformed JSON in this SQLite build. A plain-text
+// activity row must not take down the restricted board.
+function jsonDetailText(alias, path) {
+  return `CASE WHEN json_valid(${alias}.detail) THEN json_extract(${alias}.detail, '${path}') ELSE NULL END`;
+}
+
 // Work-order events only. A row matches when the work order is in the
 // department now, or the event names that department as current, from, or to.
 function activityDepartmentSql(alias = 'a') {
   return `(
     lower(coalesce(${alias}.entity_type, '')) = 'work_order'
     AND (
-      lower(trim(coalesce(json_extract(${alias}.detail, '$.department'), ''))) = lower(?)
-      OR lower(trim(coalesce(json_extract(${alias}.detail, '$.from_department'), ''))) = lower(?)
-      OR lower(trim(coalesce(json_extract(${alias}.detail, '$.to_department'), ''))) = lower(?)
+      lower(trim(coalesce(${jsonDetailText(alias, '$.department')}, ''))) = lower(?)
+      OR lower(trim(coalesce(${jsonDetailText(alias, '$.from_department')}, ''))) = lower(?)
+      OR lower(trim(coalesce(${jsonDetailText(alias, '$.to_department')}, ''))) = lower(?)
       OR EXISTS (
         SELECT 1 FROM work_orders wo
         WHERE wo.id = ${alias}.entity_id

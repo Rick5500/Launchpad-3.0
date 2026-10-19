@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at DATETIME
 );
 
+-- name is unique. init_db.js adds idx_departments_name_nocase so two names
+-- that differ only by case cannot both exist. That index is not created here:
+-- an older database that already has case-only duplicates must still initialize.
 CREATE TABLE IF NOT EXISTS departments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,

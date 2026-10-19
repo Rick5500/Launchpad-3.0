@@ -32,6 +32,13 @@ function BarcodeMark() {
   );
 }
 
+const NOTICE_MS = 4000;
+const SEVERITY_RANK = { error: 3, warning: 2, success: 1, info: 0 };
+
+function severityRank(severity) {
+  return Object.prototype.hasOwnProperty.call(SEVERITY_RANK, severity) ? SEVERITY_RANK[severity] : 0;
+}
+
 function noticeFor(body) {
   const label = body.external_id || 'Work order';
   if (body.department_moved && body.to_department) {
@@ -39,6 +46,27 @@ function noticeFor(body) {
   }
   const where = body.to_department || body.from_department || 'the same department';
   return { severity: 'warning', message: `${label} stayed in ${where}` };
+}
+
+// A burst of scans used to replace the visible snackbar immediately, so an
+// error could vanish in a few hundred milliseconds when the next scan succeeded.
+// The visible notice keeps its full time. A milder result waits. A more severe
+// result takes the screen and the one it replaced is shown afterward.
+function reduceNotice(current, incoming) {
+  if (!current) return { ...incoming, queue: [] };
+  if (severityRank(incoming.severity) > severityRank(current.severity)) {
+    const displaced = { id: current.id, severity: current.severity, message: current.message };
+    return { ...incoming, queue: [displaced, ...(current.queue || [])] };
+  }
+  return { ...current, queue: [...(current.queue || []), incoming] };
+}
+
+function advanceNotice(current, id) {
+  if (!current || current.id !== id) return current;
+  const queue = current.queue || [];
+  if (!queue.length) return null;
+  const [next, ...rest] = queue;
+  return { ...next, queue: rest };
 }
 
 export default function HeaderScan({ user, autoFocus }) {
@@ -67,7 +95,16 @@ export default function HeaderScan({ user, autoFocus }) {
 
   function showNotice(next) {
     noticeSeq.current += 1;
-    setNotice({ ...next, id: noticeSeq.current });
+    const item = {
+      id: noticeSeq.current,
+      severity: next.severity || 'info',
+      message: next.message,
+    };
+    setNotice((current) => reduceNotice(current, item));
+  }
+
+  function advance(id) {
+    setNotice((current) => advanceNotice(current, id));
   }
 
   useEffect(() => {
@@ -211,23 +248,28 @@ export default function HeaderScan({ user, autoFocus }) {
         />
         <BarcodeMark />
       </Box>
-      <Snackbar
-        key={notice ? notice.id : 'scan-notice'}
-        open={Boolean(notice)}
-        autoHideDuration={4000}
-        onClose={() => setNotice(null)}
-        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-        sx={{ mt: 7 }}
-      >
-        <Alert
-          severity={notice?.severity || 'info'}
-          variant="filled"
-          onClose={() => setNotice(null)}
-          sx={{ width: '100%' }}
+      {notice ? (
+        <Snackbar
+          key={notice.id}
+          open
+          autoHideDuration={NOTICE_MS}
+          onClose={(_event, reason) => {
+            if (reason === 'clickaway') return;
+            advance(notice.id);
+          }}
+          anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+          sx={{ mt: 7 }}
         >
-          {notice?.message}
-        </Alert>
-      </Snackbar>
+          <Alert
+            severity={notice.severity || 'info'}
+            variant="filled"
+            onClose={() => advance(notice.id)}
+            sx={{ width: '100%' }}
+          >
+            {notice.message}
+          </Alert>
+        </Snackbar>
+      ) : null}
     </>
   );
 }
