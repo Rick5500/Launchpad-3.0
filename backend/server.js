@@ -81,14 +81,17 @@ app.post('/api/auth/register', async (req, res) => {
     if (!enabled) {
       return res.status(403).json({ error: 'Customer sign-up is turned off' });
     }
-    const limit = registerLimit.check(clientIp(req));
+    const ip = clientIp(req);
+    const limit = registerLimit.checkAttempt(ip);
     if (!limit.allowed) {
       res.set('Retry-After', String(limit.retryAfterSeconds));
       return res.status(429).json({ error: 'Too many registration attempts. Try again later.' });
     }
     const session = await userAdmin.registerCustomer(req.body);
+    registerLimit.recordLimited(ip);
     return res.status(201).json(session);
   } catch (err) {
+    if (err && err.honeypot) registerLimit.recordLimited(clientIp(req));
     return sendError(res, err, 'REGISTER ERROR:', 'Unable to create an account');
   }
 });

@@ -154,8 +154,8 @@ function bearerToken(req) {
 
 function emailAsUsername(email) {
   if (email.length > 80) return { error: 'email must be 80 characters or fewer' };
-  if (!/^[A-Za-z0-9][A-Za-z0-9._@+-]{0,79}$/.test(email)) {
-    return { error: 'email cannot be used as a sign-in name. Use letters, digits, and . _ + @ -' };
+  if (!/^[A-Za-z0-9][A-Za-z0-9._@+'-]{0,79}$/.test(email)) {
+    return { error: "email cannot be used as a sign-in name. Use letters, digits, and . _ + ' @ -" };
   }
   return { value: email };
 }
@@ -170,6 +170,13 @@ function honeypotTripped(source) {
 
 function isUniqueConstraint(err) {
   return Boolean(err) && (err.code === 'SQLITE_CONSTRAINT' || /UNIQUE constraint failed/i.test(String(err.message || '')));
+}
+
+function conflictError(err) {
+  if (err && err.status) return err;
+  if (!isUniqueConstraint(err)) return err;
+  if (/users\.username/i.test(String(err.message || ''))) return httpError(409, 'Username is already in use');
+  return httpError(409, 'That value is already in use');
 }
 
 // Same columns as an admin-created account. Role, department, and active are arguments, never raw body fields.
@@ -303,8 +310,10 @@ async function createUser(actorId, body) {
   }
   const password = generated ? generatePassword() : supplied;
   const hash = await auth.hashPassword(password);
-  const id = await withTransaction(async (tx) => {
-    const taken = await tx.get('SELECT id FROM users WHERE lower(username) = lower(?)', [username.value]);
+  let id;
+  try {
+    id = await withTransaction(async (tx) => {
+    const taken = await tx.get('SELECT id FROM users WHERE lower(trim(username)) = lower(trim(?))', [username.value]);
     if (taken) throw httpError(409, 'Username is already in use');
     const department = await departmentForRole(tx, source, role.value, null);
     if (department.error) throw httpError(400, department.error);
@@ -335,6 +344,9 @@ async function createUser(actorId, body) {
     });
     return inserted.lastID;
   });
+  } catch (err) {
+    throw conflictError(err);
+  }
   const row = await get(`SELECT ${PUBLIC_COLUMNS} FROM users WHERE id = ?`, [id]);
   const payload = present(row);
   if (generated) payload.password = password;
@@ -358,7 +370,9 @@ async function updateUser(actorId, id, body) {
   }
 
   const actor = Number(actorId);
-  const outcome = await withTransaction(async (tx) => {
+  let outcome;
+  try {
+    outcome = await withTransaction(async (tx) => {
     const existing = await tx.get(`SELECT ${PUBLIC_COLUMNS} FROM users WHERE id = ?`, [parsedId.value]);
     if (!existing) throw httpError(404, 'User not found');
     const username = parseUsername(source.username == null || source.username === '' ? existing.username : source.username, true);
@@ -380,7 +394,7 @@ async function updateUser(actorId, id, body) {
     }
 
     const taken = await tx.get(
-      'SELECT id FROM users WHERE lower(username) = lower(?) AND id != ?',
+      'SELECT id FROM users WHERE lower(trim(username)) = lower(trim(?)) AND id != ?',
       [username.value, existing.id]
     );
     if (taken) throw httpError(409, 'Username is already in use');
@@ -441,6 +455,9 @@ async function updateUser(actorId, id, body) {
       wasActive,
     };
   });
+  } catch (err) {
+    throw conflictError(err);
+  }
 
   if (role.value !== outcome.previousRole || (outcome.wasActive && active.value === 0)) {
     auth.clearSessionsForUser(outcome.id);
@@ -514,7 +531,11 @@ function loginSession(username, password) {
 // The email is the username, which is how this account signs in.
 async function registerCustomer(body) {
   const source = body || {};
-  if (honeypotTripped(source)) throw httpError(400, 'Unable to create an account');
+  if (honeypotTripped(source)) {
+    const error = httpError(400, 'Unable to create an account');
+    error.honeypot = true;
+    throw error;
+  }
 
   const company = parseText(source.company, 'company', { required: true, max: 160 });
   if (company.error) throw httpError(400, company.error);
@@ -543,8 +564,11 @@ async function registerCustomer(body) {
     created = await withTransaction(async (tx) => {
       const taken = await tx.get(
         `SELECT id FROM users
-         WHERE lower(username) = lower(?)
-            OR (email IS NOT NULL AND trim(email) != '' AND lower(email) = lower(?))`,
+         WHERE lower(trim(username)) = lower(trim(?))
+            OR (
+              email IS NOT NULL AND trim(email) != ''
+              AND lower(trim(email)) = lower(trim(?))
+            )`,
         [username.value, email.value]
       );
       if (taken) throw httpError(409, 'An account with that email already exists');

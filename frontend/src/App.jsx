@@ -44,6 +44,7 @@ function LoginScreen() {
   const [localError, setLocalError] = useState('');
   const usernameRef = useRef(null);
   const companyRef = useRef(null);
+  const registerAlertRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,6 +128,11 @@ function LoginScreen() {
   }
 
   const alertText = loginError || localError || authMessage;
+
+  useEffect(() => {
+    if (mode !== 'register' || !alertText) return;
+    registerAlertRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [mode, alertText]);
 
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: brand.navy, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2.5, p: 2 }}>
@@ -250,6 +256,11 @@ function LoginScreen() {
                 autoComplete="new-password"
                 required
               />
+              {alertText ? (
+                <Box ref={registerAlertRef}>
+                  <Alert severity="warning">{alertText}</Alert>
+                </Box>
+              ) : null}
               <Button type="submit" variant="contained" size="large" disabled={isLoggingIn} sx={{ bgcolor: brand.orange, '&:hover': { bgcolor: brand.orangeDark } }}>
                 {isLoggingIn ? <CircularProgress size={24} color="inherit" /> : 'Create account'}
               </Button>
@@ -259,7 +270,7 @@ function LoginScreen() {
             </Box>
           </>
         )}
-        {alertText && (
+        {mode !== 'register' && alertText && (
           <Alert severity="warning" sx={{ mt: 2 }}>
             {alertText}
           </Alert>

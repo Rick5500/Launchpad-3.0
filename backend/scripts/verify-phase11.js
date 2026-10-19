@@ -53,6 +53,7 @@ function baseEnv(databaseFile, extra = {}) {
     UPLOAD_DIR: path.join(tmp, 'uploads'),
     UV_THREADPOOL_SIZE: process.env.UV_THREADPOOL_SIZE || '32',
     REGISTER_RATE_IP_MAX: '40',
+    REGISTER_RATE_IP_ATTEMPT_MAX: '80',
     REGISTER_RATE_GLOBAL_MAX: '80',
     ...extra,
   };
@@ -220,7 +221,7 @@ async function checkUpgrade() {
   assert(letterhead && letterhead.value === 'Accent Imaging, Inc.', 'letterhead seed should stay in place');
   assert(note && note.enabled === 1 && note.channel === 'in_app', 'new-customer notifications should start enabled');
   assert(usernameIndex, 'username case-insensitive index should be created');
-  assert(emailIndex, 'email case-insensitive index should be created');
+  assert(!emailIndex, 'email should not get a unique index');
 
   await seeded.run(`DELETE FROM system_settings WHERE key = 'customer_self_signup_enabled'`);
   await seeded.run(`DELETE FROM notification_settings WHERE event_key = 'customer_registered'`);
@@ -239,7 +240,8 @@ async function checkUpgrade() {
   assert(restored && restored.value === '1', 'an upgraded database should gain the sign-up setting turned on');
   assert(names.count === 1, 'upgrade should not duplicate company_name');
   assert(noteAgain && noteAgain.enabled === 1, 'upgrade should add the notification event once');
-  assert(usernameAgain && emailAgain, 'upgrade should add the identity indexes');
+  assert(usernameAgain, 'upgrade should add the username index');
+  assert(!emailAgain, 'upgrade should not add an email index');
 
   await after.run(`UPDATE system_settings SET value = '0' WHERE key = 'customer_self_signup_enabled'`);
   await after.run(`UPDATE notification_settings SET enabled = 0 WHERE event_key = 'customer_registered'`);
@@ -255,27 +257,34 @@ async function checkUpgrade() {
   assert(saved && saved.value === '0' && savedCount.count === 1, 'init must not turn customer self sign-up back on');
   assert(quiet && quiet.enabled === 0 && quietCount.count === 1, 'init must not re-enable a notification an admin turned off');
 
-  await check.run('DROP INDEX IF EXISTS idx_users_email_nocase');
-  await check.run(
+  await check.run('CREATE UNIQUE INDEX idx_users_email_nocase ON users(email COLLATE NOCASE)');
+  await check.close();
+  const repaired = await initDatabase(upgradeDb);
+  assert(repaired.code === 0, `init should drop a leftover email index\n${repaired.err}`);
+  const repairedDb = openDb(upgradeDb);
+  const droppedIndex = await indexRow(repairedDb, 'idx_users_email_nocase');
+  const usernameKept = await indexRow(repairedDb, 'idx_users_username_nocase');
+  assert(!droppedIndex, 'init should drop idx_users_email_nocase');
+  assert(usernameKept, 'dropping the email index should leave the username index');
+  await repairedDb.run(
     `INSERT INTO users (username, password_hash, role, display_name, email, is_active)
      VALUES ('dup-a', 'x', 'customer', 'Dup A', 'Dup@Example.com', 1)`
   );
-  await check.run(
+  await repairedDb.run(
     `INSERT INTO users (username, password_hash, role, display_name, email, is_active)
      VALUES ('dup-b', 'x', 'customer', 'Dup B', 'dup@example.com', 1)`
   );
-  await check.close();
+  await repairedDb.close();
 
   const warned = await initDatabase(upgradeDb);
   assert(warned.code === 0, `init should continue when duplicate emails already exist\n${warned.err}`);
-  assert(/users\.email because duplicates exist/i.test(`${warned.out}\n${warned.err}`), 'init should warn about duplicate emails');
   const left = openDb(upgradeDb);
   const skipped = await indexRow(left, 'idx_users_email_nocase');
   const stillOff = await left.get(`SELECT value FROM system_settings WHERE key = 'customer_self_signup_enabled'`);
-  const both = await left.get(`SELECT COUNT(*) AS count FROM users WHERE lower(email) = 'dup@example.com'`);
+  const both = await left.get(`SELECT COUNT(*) AS count FROM users WHERE lower(trim(email)) = 'dup@example.com'`);
   await left.close();
-  assert(!skipped, 'init should leave the email index off when duplicates already exist');
-  assert(stillOff && stillOff.value === '0', 'the duplicate-email warning path should keep the saved switch');
+  assert(!skipped, 'init should not create an email index when duplicate emails already exist');
+  assert(stillOff && stillOff.value === '0', 'the duplicate-email path should keep the saved switch');
   assert(both.count === 2, 'existing duplicate emails should remain');
   console.log('PASS upgrade');
 }
@@ -312,6 +321,75 @@ async function checkRateLimit(extraEnv, label) {
     await db.close();
     assert(!row, `${label} must not create the blocked account`);
     console.log(`PASS rate limit ${label}`);
+  } finally {
+    await server.stop();
+  }
+}
+
+async function renameUserCase(token, currentName, nextName) {
+  const listed = await request({
+    method: 'GET',
+    path: `/api/users?limit=100&q=${encodeURIComponent(currentName)}`,
+    token,
+  });
+  assert(listed.status === 200, listed.text);
+  const row = (listed.json.users || []).find((user) => String(user.username).toLowerCase() === currentName.toLowerCase());
+  assert(row && row.id, `missing user ${currentName}`);
+  const updated = await request({
+    method: 'PUT',
+    path: `/api/users/${row.id}`,
+    token,
+    json: {
+      username: nextName,
+      display_name: row.display_name,
+      role: row.role,
+      is_active: row.is_active,
+      company: row.company,
+      contact_name: row.contact_name,
+      phone: row.phone,
+      email: row.email,
+    },
+  });
+  assert(updated.status === 200 && updated.json.username === nextName, `rename ${currentName} failed: ${updated.status} ${updated.text}`);
+}
+
+async function checkInitAfterCaseRename() {
+  const again = await initDatabase(freshDb);
+  assert(again.code === 0, `init after a case-only rename should succeed\n${again.out}\n${again.err}`);
+  const db = openDb(freshDb);
+  const whitebox = await db.get(`SELECT username, COUNT(*) AS count FROM users WHERE lower(username) = 'whitebox'`);
+  const admin = await db.get(`SELECT username, COUNT(*) AS count FROM users WHERE lower(username) = 'admin'`);
+  await db.close();
+  assert(whitebox && whitebox.count === 1 && whitebox.username === 'Whitebox', `whitebox should stay a single renamed row: ${JSON.stringify(whitebox)}`);
+  assert(admin && admin.count === 1 && admin.username === 'Admin', `admin should stay a single renamed row: ${JSON.stringify(admin)}`);
+  console.log('PASS init after case rename');
+}
+
+async function checkValidationRateLimit() {
+  const server = startServer(rateDb, ratePort, {
+    REGISTER_RATE_IP_MAX: '2',
+    REGISTER_RATE_IP_ATTEMPT_MAX: '30',
+    REGISTER_RATE_GLOBAL_MAX: '200',
+  });
+  await server.ready;
+  try {
+    for (let index = 1; index <= 6; index += 1) {
+      const invalid = await request({
+        method: 'POST',
+        path: '/api/auth/register',
+        port: ratePort,
+        json: accountBody({ company: '  ', email: `typo${index}@rate.example` }),
+      });
+      assert(invalid.status === 400, `validation failure ${index} should stay 400, got ${invalid.status} ${invalid.text}`);
+    }
+    const created = await request({
+      method: 'POST',
+      path: '/api/auth/register',
+      port: ratePort,
+      json: accountBody({ company: 'Typo Fixed', email: 'typo-fixed@rate.example' }),
+    });
+    assert(created.status === 201 && created.json && created.json.token, `validation failures should not use the success limit: ${created.status} ${created.text}`);
+    console.log('PASS rate limit validation');
   } finally {
     await server.stop();
   }
@@ -428,12 +506,101 @@ async function runApiChecks() {
     });
     assert(emailClash.status === 409 && /already exists/.test(emailClash.json.error), emailClash.text);
 
+    const coOne = await request({
+      method: 'POST',
+      path: '/api/customers',
+      token: admin.token,
+      json: { display_name: 'Co One', email: 'buyer@big.com', password: 'CoOnePass1' },
+    });
+    assert(coOne.status === 201, `first shared email should be saved: ${coOne.status} ${coOne.text}`);
+    const coTwo = await request({
+      method: 'POST',
+      path: '/api/customers',
+      token: admin.token,
+      json: { display_name: 'Co Two', email: 'buyer@big.com', password: 'CoTwoPass1' },
+    });
+    assert(coTwo.status === 201, `admin create with a duplicate email should be 201, got ${coTwo.status} ${coTwo.text}`);
+    const acmeUpper = await request({
+      method: 'POST',
+      path: '/api/customers',
+      token: admin.token,
+      json: { display_name: 'Acme Upper', username: 'ACME', password: 'AcmeUpper1' },
+    });
+    assert(acmeUpper.status === 409 && /already in use/i.test(acmeUpper.json && acmeUpper.json.error), `case-variant username should be 409, got ${acmeUpper.status} ${acmeUpper.text}`);
+    const acmeGenerated = await request({
+      method: 'POST',
+      path: '/api/customers',
+      token: admin.token,
+      json: { display_name: 'Acme', password: 'AcmeGenPass1' },
+    });
+    assert(acmeGenerated.status === 201 && String(acmeGenerated.json.username).toLowerCase() === 'acme-1', `generated username should be suffixed, got ${acmeGenerated.status} ${acmeGenerated.text}`);
+    const sharedStaff = await request({
+      method: 'POST',
+      path: '/api/users',
+      token: admin.token,
+      json: {
+        username: 'buyerdesk',
+        display_name: 'Buyer Desk',
+        role: 'customer',
+        email: 'buyer@big.com',
+        password: 'BuyerDesk1',
+        is_active: true,
+      },
+    });
+    assert(sharedStaff.status === 201, `admin user create with a duplicate email should be 201, got ${sharedStaff.status} ${sharedStaff.text}`);
+    const staffCase = await request({
+      method: 'POST',
+      path: '/api/users',
+      token: admin.token,
+      json: {
+        username: 'BuyerDesk',
+        display_name: 'Buyer Desk Two',
+        role: 'customer',
+        email: 'desk@big.com',
+        password: 'BuyerDesk2',
+        is_active: true,
+      },
+    });
+    assert(staffCase.status === 409 && /already in use/i.test(staffCase.json && staffCase.json.error), `user admin case-variant username should be 409, got ${staffCase.status} ${staffCase.text}`);
+    const sharedEdit = await request({
+      method: 'PUT',
+      path: `/api/users/${sharedStaff.json.id}`,
+      token: admin.token,
+      json: {
+        username: 'buyerdesk',
+        display_name: 'Buyer Desk',
+        role: 'customer',
+        email: 'ada@northwind.example',
+        is_active: true,
+      },
+    });
+    assert(sharedEdit.status === 200 && sharedEdit.json.email === 'ada@northwind.example', `admin email edit should keep a shared email, got ${sharedEdit.status} ${sharedEdit.text}`);
+
+    await db.run(`UPDATE users SET email = ? WHERE id = ?`, ['  spaced@trim.example  ', coOne.json.id]);
+    const trimmedClash = await request({
+      method: 'POST',
+      path: '/api/auth/register',
+      json: accountBody({ company: 'Trim Co', contact_name: 'Trim Person', email: 'Spaced@Trim.example' }),
+    });
+    assert(trimmedClash.status === 409 && /already exists/.test(trimmedClash.json.error), `trimmed email should collide, got ${trimmedClash.status} ${trimmedClash.text}`);
+
     const activity = await db.get(
       `SELECT action, actor_id, entity_id, detail FROM activity_log WHERE action = 'customer.self_registered'`
     );
     assert(activity && activity.actor_id === activity.entity_id, 'self registration should record the new customer as the actor');
     const detail = JSON.parse(activity.detail);
     assert(detail.role === 'customer' && detail.message === 'New customer account: Northwind Signs', activity.detail);
+
+    const apostrophe = await request({
+      method: 'POST',
+      path: '/api/auth/register',
+      json: accountBody({
+        company: "O'Neil Signs",
+        contact_name: "Pat O'Neil",
+        email: "o'neil@oneil.example",
+      }),
+    });
+    assert(apostrophe.status === 201 && apostrophe.json.user.username === "o'neil@oneil.example", `apostrophe email should register, got ${apostrophe.status} ${apostrophe.text}`);
 
     const staffNotes = await request({ method: 'GET', path: '/api/notifications', token: admin.token });
     assert(staffNotes.status === 200, staffNotes.text);
@@ -549,6 +716,9 @@ async function runApiChecks() {
     assert(refused.status === 403 && /turned off/.test(refused.json.error), refused.text);
     const stillIn = await login('ada@northwind.example', 'Northwind1');
     assert(stillIn.user.role === 'customer', 'turning sign-up off should leave existing customers able to sign in');
+
+    await renameUserCase(admin.token, 'whitebox', 'Whitebox');
+    await renameUserCase(admin.token, 'admin', 'Admin');
     console.log('PASS registration');
   } finally {
     await db.close();
@@ -561,8 +731,10 @@ async function main() {
   await initDatabase(freshDb);
   await initDatabase(rateDb);
   await runApiChecks();
+  await checkInitAfterCaseRename();
   await checkRateLimit({ REGISTER_RATE_IP_MAX: '2', REGISTER_RATE_GLOBAL_MAX: '50' }, 'ip');
   await checkRateLimit({ REGISTER_RATE_IP_MAX: '20', REGISTER_RATE_GLOBAL_MAX: '2' }, 'global');
+  await checkValidationRateLimit();
   console.log('Phase 11 checks passed.');
 }
 

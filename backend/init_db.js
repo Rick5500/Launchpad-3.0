@@ -95,7 +95,7 @@ async function ensureProductionStagesTable() {
 }
 
 async function seedAdmin() {
-  const existing = await get('SELECT id FROM users WHERE username = ?', ['admin']);
+  const existing = await get('SELECT id FROM users WHERE lower(username) = lower(?)', ['admin']);
   if (existing) {
     console.log('Admin user already exists');
     return;
@@ -126,7 +126,7 @@ async function seedCustomers() {
   ];
 
   for (const [username, displayName] of customers) {
-    const existing = await get('SELECT id FROM users WHERE username = ?', [username]);
+    const existing = await get('SELECT id FROM users WHERE lower(username) = lower(?)', [username]);
     if (existing) {
       console.log(`Customer user already exists: ${username}`);
     } else {
@@ -141,7 +141,7 @@ async function seedCustomers() {
     await run(
       `UPDATE users
        SET company = display_name
-       WHERE username = ? AND role = 'customer' AND (company IS NULL OR trim(company) = '')`,
+       WHERE lower(username) = lower(?) AND role = 'customer' AND (company IS NULL OR trim(company) = '')`,
       [username]
     );
   }
@@ -418,7 +418,7 @@ async function seedStages() {
 }
 
 async function seedSampleOrders() {
-  const customer = await get('SELECT id FROM users WHERE username = ?', ['acme']);
+  const customer = await get('SELECT id FROM users WHERE lower(username) = lower(?)', ['acme']);
   if (!customer) {
     console.log('Skipping sample work orders because customer user acme is missing');
     return;
@@ -1136,9 +1136,12 @@ async function ensureDepartmentNameIndex() {
   );
 }
 
-// Case-insensitive uniqueness. Skip an index when an older database already has
-// duplicates, and leave those rows in place so init can finish.
+// Usernames are unique ignoring case. Emails are not: two companies may share an
+// ordering address. Self-registration checks email itself. Drop an email index
+// from an earlier build of that check so admin saves are not rejected.
 async function ensureUserIdentityIndexes() {
+  await run('DROP INDEX IF EXISTS idx_users_email_nocase');
+
   const usernameDup = await get(
     `SELECT lower(username) AS name
      FROM users
@@ -1150,29 +1153,9 @@ async function ensureUserIdentityIndexes() {
     console.warn(
       `Skipping case-insensitive unique index on users.username because duplicates exist (${usernameDup.name})`
     );
-  } else {
-    await run('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_nocase ON users(username COLLATE NOCASE)');
+    return;
   }
-
-  const emailDup = await get(
-    `SELECT lower(trim(email)) AS email
-     FROM users
-     WHERE email IS NOT NULL AND trim(email) != ''
-     GROUP BY lower(trim(email))
-     HAVING COUNT(*) > 1
-     LIMIT 1`
-  );
-  if (emailDup) {
-    console.warn(
-      `Skipping case-insensitive unique index on users.email because duplicates exist (${emailDup.email})`
-    );
-  } else {
-    await run(
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_nocase
-       ON users(email COLLATE NOCASE)
-       WHERE email IS NOT NULL AND trim(email) != ''`
-    );
-  }
+  await run('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_nocase ON users(username COLLATE NOCASE)');
 }
 
 async function ensureExternalIdUniqueIndex() {
