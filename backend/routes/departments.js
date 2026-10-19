@@ -44,6 +44,14 @@ function keepActive(payload, existing) {
   return parseBoolean(payload.is_active);
 }
 
+function keepFlag(payload, key, existing) {
+  if (!fieldProvided(payload, key)) {
+    if (existing == null) return 1;
+    return existing ? 1 : 0;
+  }
+  return parseBoolean(payload[key]);
+}
+
 function isUniqueConstraint(err) {
   return Boolean(err && /UNIQUE constraint failed/i.test(err.message || ''));
 }
@@ -64,7 +72,7 @@ function respondDepartmentWriteError(res, err, action) {
 
 router.get('/', auth.requireAuth, (req, res) => {
   db.all(
-    `SELECT id, name, description, color, icon, sort_order, is_active, created_at, updated_at
+    `SELECT id, name, description, color, icon, sort_order, is_active, show_on_board, created_at, updated_at
      FROM departments
      ORDER BY is_active DESC, sort_order ASC, name ASC`,
     [],
@@ -78,7 +86,7 @@ router.get('/', auth.requireAuth, (req, res) => {
 router.get('/:id', auth.requireAuth, (req, res) => {
   const id = req.params.id;
   db.get(
-    `SELECT id, name, description, color, icon, sort_order, is_active, created_at, updated_at
+    `SELECT id, name, description, color, icon, sort_order, is_active, show_on_board, created_at, updated_at
      FROM departments
      WHERE id = ?`,
     [id],
@@ -103,6 +111,7 @@ router.post('/', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
   const icon = String(payload.icon || '').trim();
   const sortOrder = parseSortOrder(payload.sort_order);
   const isActive = parseBoolean(payload.is_active ?? 1);
+  const showOnBoard = fieldProvided(payload, 'show_on_board') ? parseBoolean(payload.show_on_board) : 1;
 
   db.get(
     'SELECT id FROM departments WHERE lower(name) = lower(?)',
@@ -118,9 +127,9 @@ router.post('/', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
 
   function insertDepartment() {
     db.run(
-      `INSERT INTO departments (name, description, color, icon, sort_order, is_active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
-      [name, description, color, icon, sortOrder, isActive],
+      `INSERT INTO departments (name, description, color, icon, sort_order, is_active, show_on_board, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [name, description, color, icon, sortOrder, isActive, showOnBoard],
       function (err) {
         if (err) return respondDepartmentWriteError(res, err, 'create');
 
@@ -153,6 +162,7 @@ router.put('/:id', auth.requireAuth, auth.requireRole('admin'), async (req, res)
       const icon = keepOrTrim(payload, 'icon', existing.icon);
       const sortOrder = keepSortOrder(payload, existing.sort_order);
       const isActive = keepActive(payload, existing.is_active);
+      const showOnBoard = keepFlag(payload, 'show_on_board', existing.show_on_board);
       const collision = await tx.get(
         'SELECT id FROM departments WHERE id != ? AND lower(name) = lower(?)',
         [existing.id, name]
@@ -162,9 +172,9 @@ router.put('/:id', auth.requireAuth, auth.requireRole('admin'), async (req, res)
       }
       await tx.run(
         `UPDATE departments
-         SET name = ?, description = ?, color = ?, icon = ?, sort_order = ?, is_active = ?, updated_at = datetime('now')
+         SET name = ?, description = ?, color = ?, icon = ?, sort_order = ?, is_active = ?, show_on_board = ?, updated_at = datetime('now')
          WHERE id = ?`,
-        [name, description, color, icon, sortOrder, isActive, id]
+        [name, description, color, icon, sortOrder, isActive, showOnBoard, id]
       );
       if (previousName !== name) {
         const changes = await cascadeDepartmentRename(tx, previousName, name);

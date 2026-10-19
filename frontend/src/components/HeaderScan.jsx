@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Box, InputBase, Snackbar } from '@mui/material';
 import { authFetch } from '../api';
 import { requestBoardRefresh } from '../boardEvents';
-import { advanceNotice, reduceNotice } from './headerScanNotice.mjs';
+import { advanceNotice, noticeDelay, reduceNotice } from './headerScanNotice.mjs';
 
 function isTypingTarget(node) {
   if (!node || node === document.body || node === document.documentElement) return false;
@@ -32,8 +32,6 @@ function BarcodeMark() {
     </Box>
   );
 }
-
-const NOTICE_MS = 4000;
 
 function noticeFor(body) {
   const label = body.external_id || 'Work order';
@@ -93,6 +91,13 @@ export default function HeaderScan({ user, autoFocus }) {
   function advance(id) {
     setNotice((current) => advanceNotice(current, id));
   }
+
+  useEffect(() => {
+    if (!notice) return undefined;
+    const id = notice.id;
+    const timer = setTimeout(() => closeNotice(id), noticeDelay(notice));
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -239,7 +244,6 @@ export default function HeaderScan({ user, autoFocus }) {
         <Snackbar
           key={notice.id}
           open
-          autoHideDuration={NOTICE_MS}
           onMouseDownCapture={() => {
             restoreScanFocus.current = scanIsFocused();
           }}

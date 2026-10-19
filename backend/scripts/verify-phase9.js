@@ -247,7 +247,13 @@ async function checkCaseDuplicateInit() {
   assert(twins.length === 2, `both case variants should remain, found ${twins.map((row) => row.name).join(', ')}`);
 }
 
-function checkNoticeQueue({ NOTICE_SEVERE_CAP, reduceNotice }) {
+function checkNoticeQueue({
+  NOTICE_SEVERE_CAP,
+  NOTICE_ALONE_MS,
+  NOTICE_QUEUED_MS,
+  reduceNotice,
+  advanceNotice,
+}) {
   let current = null;
   for (let i = 1; i <= 8; i += 1) {
     current = reduceNotice(current, { id: i, severity: 'success', message: `ok ${i}` });
@@ -269,18 +275,60 @@ function checkNoticeQueue({ NOTICE_SEVERE_CAP, reduceNotice }) {
     `the oldest pending errors should drop, got ${current.queue.map((item) => item.message).join(',')}`
   );
 
-  current = reduceNotice(null, { id: 1, severity: 'warning', message: 'warn' });
-  current = reduceNotice(current, { id: 2, severity: 'success', message: 'ok early' });
-  current = reduceNotice(current, { id: 3, severity: 'error', message: 'bad' });
+  current = reduceNotice(null, { id: 1, severity: 'warning', message: 'warn' }, 0);
+  current = reduceNotice(current, { id: 2, severity: 'success', message: 'ok early' }, 10);
+  current = reduceNotice(current, { id: 3, severity: 'error', message: 'bad' }, 20);
   assert(current.severity === 'error' && current.message === 'bad', 'a more severe result should take the screen');
   assert(
-    current.queue.map((item) => item.message).join(',') === 'warn,ok early',
-    `the warning and success should stay queued, got ${JSON.stringify(current.queue)}`
+    current.queue.map((item) => item.message).join(',') === 'ok early',
+    `a notice already on screen should not be queued again, got ${JSON.stringify(current.queue)}`
   );
-  current = reduceNotice(current, { id: 4, severity: 'success', message: 'ok later' });
+  current = reduceNotice(current, { id: 4, severity: 'success', message: 'ok later' }, 30);
   assert(
-    current.queue.map((item) => item.message).join(',') === 'warn,ok later',
+    current.queue.map((item) => item.message).join(',') === 'ok later',
     `a later success should replace the pending success, got ${JSON.stringify(current.queue)}`
+  );
+
+  const severities = ['warning', 'success', 'error'];
+  const events = [];
+  for (let i = 0; i < 20; i += 1) {
+    events.push({
+      id: i + 1,
+      time: i * 1500,
+      severity: severities[i % severities.length],
+      message: `scan ${i + 1}`,
+    });
+  }
+  let state = null;
+  const shown = new Map();
+  let lastShownAt = null;
+  function countVisible(item, time) {
+    shown.set(item.message, (shown.get(item.message) || 0) + 1);
+    lastShownAt = time;
+  }
+  function drain(until) {
+    while (state) {
+      const due = state.shownAt + (state.queue && state.queue.length ? NOTICE_QUEUED_MS : NOTICE_ALONE_MS);
+      if (due > until) break;
+      state = advanceNotice(state, state.id, due);
+      if (state) countVisible(state, due);
+    }
+  }
+  for (const event of events) {
+    drain(event.time);
+    const previousId = state && state.id;
+    state = reduceNotice(state, event, event.time);
+    if (state && state.id !== previousId) countVisible(state, event.time);
+  }
+  const lastScan = events[events.length - 1].time;
+  drain(lastScan + 60000);
+  for (const [message, count] of shown) {
+    assert(count === 1, `${message} was shown ${count} times`);
+  }
+  assert(shown.size > 0, 'the scan mix should show a notice');
+  assert(
+    lastShownAt != null && lastShownAt - lastScan <= 5000,
+    `the last notice should be within 5s of the last scan (${lastShownAt} vs ${lastScan})`
   );
 }
 
@@ -347,10 +395,51 @@ async function checkDepartmentSeed() {
   assert(afterSecond.count === beforeSecond.count, 'init should stay idempotent after the upgrade');
 }
 
+async function checkShowOnBoardUpgrade() {
+  const boardDb = path.join(tmp, 'board.db');
+  await initDatabase(boardDb);
+  const seeded = openDb(boardDb);
+  const repro = await seeded.get(`SELECT show_on_board FROM departments WHERE name = 'Reprographics'`);
+  const adminRow = await seeded.get(`SELECT show_on_board FROM departments WHERE name = 'Admin'`);
+  const large = await seeded.get(`SELECT show_on_board FROM departments WHERE name = 'Large Format'`);
+  assert(repro && repro.show_on_board === 0 && adminRow && adminRow.show_on_board === 0, 'a fresh database should hide Reprographics and Admin');
+  assert(large && large.show_on_board === 1, 'a fresh database should show Large Format');
+  await seeded.run('ALTER TABLE departments DROP COLUMN show_on_board');
+  await seeded.close();
+
+  await initDatabase(boardDb);
+  const upgraded = openDb(boardDb);
+  const reproUp = await upgraded.get(`SELECT show_on_board FROM departments WHERE name = 'Reprographics'`);
+  const adminUp = await upgraded.get(`SELECT show_on_board FROM departments WHERE name = 'Admin'`);
+  const largeUp = await upgraded.get(`SELECT show_on_board FROM departments WHERE name = 'Large Format'`);
+  assert(reproUp && reproUp.show_on_board === 0 && adminUp && adminUp.show_on_board === 0, 'an upgraded database should hide Reprographics and Admin');
+  assert(largeUp && largeUp.show_on_board === 1, 'an upgraded database should keep Large Format on the board');
+  await upgraded.run(`UPDATE departments SET show_on_board = 1 WHERE name = 'Reprographics'`);
+  await upgraded.close();
+  await initDatabase(boardDb);
+  const toggled = openDb(boardDb);
+  const reproKept = await toggled.get(`SELECT show_on_board FROM departments WHERE name = 'Reprographics'`);
+  assert(reproKept && reproKept.show_on_board === 1, 'a later init should leave the board toggle alone');
+
+  await toggled.run(`UPDATE departments SET name = 'reprographics' WHERE name = 'Reprographics'`);
+  const flag = JSON.parse((await toggled.get(`SELECT value FROM system_settings WHERE key = 'departments_seeded'`)).value);
+  await toggled.run(
+    `UPDATE system_settings SET value = ? WHERE key = 'departments_seeded'`,
+    [JSON.stringify(flag.filter((name) => name !== 'Reprographics'))]
+  );
+  await toggled.close();
+  await initDatabase(boardDb);
+  const cased = openDb(boardDb);
+  const rows = await cased.all(`SELECT name FROM departments WHERE lower(name) = 'reprographics' ORDER BY name`);
+  await cased.close();
+  assert(rows.length === 1 && rows[0].name === 'reprographics', `a case-only existing department should not be seeded again: ${rows.map((row) => row.name).join(', ')}`);
+}
+
 async function main() {
   const notice = await import('../../frontend/src/components/headerScanNotice.mjs');
   checkNoticeQueue(notice);
   await checkDepartmentSeed();
+  await checkShowOnBoardUpgrade();
   await checkCaseDuplicateInit();
 
   await initDatabase(freshDb);
@@ -381,6 +470,16 @@ async function main() {
   try {
     const admin = await login('admin', adminPassword);
 
+    const openingBoard = await request({ method: 'GET', path: '/api/admin-board', token: admin.token });
+    assert(openingBoard.status === 200, openingBoard.text);
+    const openingTabs = (openingBoard.json.tabs || []).map((tab) => tab.key);
+    assert(openingTabs.includes('Large Format') && openingTabs.includes('Delivery'), `the old board departments should stay: ${openingTabs.join(', ')}`);
+    assert(!openingTabs.includes('Reprographics') && !openingTabs.includes('Admin'), `empty off-board departments should stay hidden: ${openingTabs.join(', ')}`);
+    assert(openingTabs.includes('Manufacturing') || openingTabs.includes('Assembly'), `legacy departments with work should still appear: ${openingTabs.join(', ')}`);
+    const openingEmpty = ((openingBoard.json.alerts || []).find((alert) => alert.id === 'empty-queues') || {}).departments || [];
+    assert(!openingEmpty.includes('Reprographics') && !openingEmpty.includes('Admin'), `the empty-queue alert should match the old board: ${openingEmpty.join(', ')}`);
+    assert(!/Reprographics/.test((openingBoard.json.alerts || []).map((alert) => alert.detail || '').join(' ')), 'the empty-queue text should not name Reprographics');
+
     const lowerQuality = await request({
       method: 'POST',
       path: '/api/departments',
@@ -398,6 +497,7 @@ async function main() {
     assert(upperQuality.status === 409, `creating QUALITY should be 409: ${upperQuality.status} ${upperQuality.text}`);
 
     const bindery = await createDepartment(admin.token, 'P9 Bindery');
+    assert(Number(bindery.show_on_board) === 1, 'a new department should show on the board unless told otherwise');
     const spare = await createDepartment(admin.token, 'P9 Spare');
     const caps = await createDepartment(admin.token, 'P9 Caps');
     const alpha = await createDepartment(admin.token, 'P9 Alpha');
@@ -806,6 +906,7 @@ async function main() {
     assert(spareNameOnly.json.icon === 'print', 'an omitted icon should stay');
     assert(Number(spareNameOnly.json.sort_order) === 44, 'an omitted sort order should stay');
     assert(Number(spareNameOnly.json.is_active) === 1, 'an omitted active flag should stay');
+    assert(Number(spareNameOnly.json.show_on_board) === 1, 'an omitted board flag should stay');
     const spareCleared = await request({
       method: 'PUT',
       path: `/api/departments/${spare.id}`,
@@ -889,6 +990,38 @@ async function main() {
     }
     const planroomService = await db.get(`SELECT department_name FROM services WHERE name = 'Planroom'`);
     assert(planroomService && planroomService.department_name === 'File Room', 'the Planroom service should follow the rename');
+
+    const reprographics = await db.get(`SELECT id FROM departments WHERE name = 'Reprographics'`);
+    const showRepro = await request({
+      method: 'PUT',
+      path: `/api/departments/${reprographics.id}`,
+      token: admin.token,
+      json: { name: 'Reprographics', show_on_board: 1 },
+    });
+    assert(showRepro.status === 200 && Number(showRepro.json.show_on_board) === 1, showRepro.text);
+    assert(showRepro.json.description, 'turning the board flag on should leave the description');
+    const shownBoard = await request({ method: 'GET', path: '/api/admin-board', token: admin.token });
+    const shownTabs = (shownBoard.json.tabs || []).map((tab) => tab.key);
+    const shownEmpty = ((shownBoard.json.alerts || []).find((alert) => alert.id === 'empty-queues') || {}).departments || [];
+    assert(shownTabs.includes('Reprographics'), `showing Reprographics should add its tab: ${shownTabs.join(', ')}`);
+    assert(shownEmpty.includes('Reprographics'), 'an empty department shown on the board should be in the empty-queue alert');
+    const hideRepro = await request({
+      method: 'PUT',
+      path: `/api/departments/${reprographics.id}`,
+      token: admin.token,
+      json: { name: 'Reprographics', show_on_board: 0 },
+    });
+    assert(hideRepro.status === 200 && Number(hideRepro.json.show_on_board) === 0, hideRepro.text);
+    await db.run(
+      `INSERT INTO work_orders (external_id, description, quantity, status, department)
+       VALUES ('P9-REPRO', 'repro job', 1, 'open', 'Reprographics')`
+    );
+    const workBoard = await request({ method: 'GET', path: '/api/admin-board', token: admin.token });
+    const workTabs = (workBoard.json.tabs || []).map((tab) => tab.key);
+    const workEmpty = ((workBoard.json.alerts || []).find((alert) => alert.id === 'empty-queues') || {}).departments || [];
+    assert(workTabs.includes('Reprographics'), `a hidden department with work should still appear: ${workTabs.join(', ')}`);
+    assert(!workEmpty.includes('Reprographics'), 'a hidden department should stay out of the empty-queue alert');
+    assert(!workTabs.includes('Admin'), 'Admin should stay off the board while it has no work');
   } finally {
     await db.close();
     await server.stop();

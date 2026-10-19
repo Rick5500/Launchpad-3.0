@@ -74,6 +74,7 @@ async function ensureDepartmentsTable() {
     icon TEXT,
     sort_order INTEGER DEFAULT 0,
     is_active INTEGER DEFAULT 1,
+    show_on_board INTEGER NOT NULL DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME
   )`);
@@ -150,6 +151,24 @@ async function seedCustomers() {
 // later init does not insert the old name again. A name added to DEPARTMENT_SEEDS
 // after the flag exists is inserted once.
 const DEPARTMENT_SEED_SETTING = 'departments_seeded';
+// The tabs the board listed before show_on_board existed. Reprographics and
+// Admin stay off that list so an upgraded database matches the old board.
+const BOARD_DEPARTMENT_NAMES = new Set([
+  'large format',
+  'small format',
+  'signs & graphics',
+  'scanning',
+  'planroom',
+  'archive file',
+  'quality',
+  'dispatch',
+  'delivery',
+  'complete',
+]);
+
+function seedShowsOnBoard(name) {
+  return BOARD_DEPARTMENT_NAMES.has(String(name || '').trim().toLowerCase()) ? 1 : 0;
+}
 const DEPARTMENT_SEEDS = [
   ['Large Format', 'Plans, drawings, and bid sets', '#1E88E5', 'description', 1, 1],
   ['Small Format', 'Small format print production', '#43A047', 'print', 2, 1],
@@ -195,8 +214,26 @@ async function writeSeededDepartmentNames(names) {
 
 async function insertDepartmentSeed(department) {
   await run(
-    'INSERT INTO departments (name, description, color, icon, sort_order, is_active) VALUES (?,?,?,?,?,?)',
-    department
+    `INSERT INTO departments (name, description, color, icon, sort_order, is_active, show_on_board)
+     VALUES (?,?,?,?,?,?,?)`,
+    [...department, seedShowsOnBoard(department[0])]
+  );
+}
+
+// Backfill only when this init adds the column. A later init leaves an
+// administrator's toggle alone, and new departments default to shown.
+async function ensureShowOnBoard() {
+  const rows = await all('PRAGMA table_info(departments)');
+  if (rows.some((row) => row.name === 'show_on_board')) return;
+  await run('ALTER TABLE departments ADD COLUMN show_on_board INTEGER NOT NULL DEFAULT 1');
+  const names = [...BOARD_DEPARTMENT_NAMES];
+  await run(
+    `UPDATE departments
+     SET show_on_board = CASE
+       WHEN lower(trim(name)) IN (${names.map(() => '?').join(',')}) THEN 1
+       ELSE 0
+     END`,
+    names
   );
 }
 
@@ -219,7 +256,7 @@ async function seedDepartments() {
   for (const department of DEPARTMENT_SEEDS) {
     const name = department[0];
     if (known.has(name)) continue;
-    const existing = await get('SELECT id FROM departments WHERE name = ?', [name]);
+    const existing = await get('SELECT id FROM departments WHERE lower(name) = lower(?)', [name]);
     if (!existing) await insertDepartmentSeed(department);
     known.add(name);
     changed = true;
@@ -760,6 +797,7 @@ async function main() {
   await ensureColumns('departments', [
     { name: 'next_department', definition: 'TEXT' },
   ]);
+  await ensureShowOnBoard();
   await ensureColumns('work_orders', [
     { name: 'order_id', definition: 'INTEGER' },
     { name: 'service_id', definition: 'INTEGER' },

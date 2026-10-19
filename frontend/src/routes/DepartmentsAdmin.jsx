@@ -38,6 +38,7 @@ const emptyForm = {
   icon: '',
   sort_order: '0',
   is_active: true,
+  show_on_board: true,
 };
 
 export default function DepartmentsAdmin() {
@@ -68,7 +69,7 @@ export default function DepartmentsAdmin() {
   const inactiveDepartments = useMemo(() => departments.filter((dept) => dept.is_active === 0), [departments]);
 
   const handleChange = (field) => (event) => {
-    const value = field === 'is_active' ? event.target.checked : event.target.value;
+    const value = field === 'is_active' || field === 'show_on_board' ? event.target.checked : event.target.value;
     setForm((current) => ({ ...current, [field]: value }));
   };
 
@@ -86,6 +87,7 @@ export default function DepartmentsAdmin() {
       ...form,
       sort_order: Number(form.sort_order),
       is_active: Boolean(form.is_active),
+      show_on_board: Boolean(form.show_on_board),
     };
 
     try {
@@ -114,6 +116,7 @@ export default function DepartmentsAdmin() {
       icon: department.icon || '',
       sort_order: String(department.sort_order ?? 0),
       is_active: Boolean(department.is_active),
+      show_on_board: department.show_on_board !== 0 && department.show_on_board !== false,
     });
   };
 
@@ -240,6 +243,10 @@ export default function DepartmentsAdmin() {
                   control={<Switch checked={Boolean(form.is_active)} onChange={handleChange('is_active')} />}
                   label={form.is_active ? 'Active' : 'Inactive'}
                 />
+                <FormControlLabel
+                  control={<Switch checked={Boolean(form.show_on_board)} onChange={handleChange('show_on_board')} />}
+                  label="Show on board"
+                />
                 <Button type="submit" variant="contained" startIcon={<AddIcon />} disabled={saving}>
                   {saving ? 'Saving…' : editingId ? 'Update Department' : 'Create Department'}
                 </Button>
@@ -282,7 +289,10 @@ export default function DepartmentsAdmin() {
                             </Box>
                           </TableCell>
                           <TableCell>
-                            <Chip label={department.is_active ? 'Active' : 'Inactive'} color={department.is_active ? 'success' : 'default'} size="small" />
+                            <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                              <Chip label={department.is_active ? 'Active' : 'Inactive'} color={department.is_active ? 'success' : 'default'} size="small" />
+                              <Chip label={department.show_on_board === 0 ? 'Hidden from board' : 'On board'} size="small" variant="outlined" />
+                            </Box>
                           </TableCell>
                           <TableCell>{department.sort_order ?? 0}</TableCell>
                           <TableCell>

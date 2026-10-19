@@ -35,6 +35,10 @@ class BoardError extends Error {
   }
 }
 
+function showsOnBoard(row) {
+  return Boolean(row) && row.show_on_board !== 0 && row.show_on_board !== false;
+}
+
 function assignedDepartment(user) {
   const value = user && user.department != null ? String(user.department).trim() : '';
   return value || null;
@@ -614,7 +618,7 @@ async function listScans(limit, department) {
 async function loadAlerts(now = new Date(), scope = null) {
   const window = completionWindow();
   const [departments, activeRows, deliveries, backup, stored] = await Promise.all([
-    all(`SELECT name, color, sort_order, is_active FROM departments ORDER BY sort_order, name`),
+    all(`SELECT name, color, sort_order, is_active, show_on_board FROM departments ORDER BY sort_order, name`),
     all(
       `SELECT trim(coalesce(wo.department, '')) AS name, COUNT(*) AS count
        FROM work_orders wo
@@ -650,7 +654,7 @@ async function loadAlerts(now = new Date(), scope = null) {
   let tracked = 0;
   const trackedRows = scope && scope.restricted
     ? [known.get(String(scope.department || '').trim().toLowerCase())].filter(Boolean)
-    : departments;
+    : departments.filter((row) => showsOnBoard(row));
   for (const row of trackedRows) {
     if (!row.is_active) continue;
     if (String(row.name).trim().toLowerCase() === 'complete') continue;
@@ -763,7 +767,7 @@ async function loadSummary(user, query) {
     scans,
     alerts,
   ] = await Promise.all([
-    all(`SELECT name, color, sort_order, is_active FROM departments ORDER BY sort_order, name`),
+    all(`SELECT name, color, sort_order, is_active, show_on_board FROM departments ORDER BY sort_order, name`),
     all(
       `SELECT trim(coalesce(wo.department, '')) AS name, COUNT(*) AS count
        FROM work_orders wo
@@ -800,6 +804,7 @@ async function loadSummary(user, query) {
   const tabs = [{ key: 'All', label: 'All', count: totalActiveRow ? totalActiveRow.count : 0, color: null }];
   const shown = new Set(['all']);
   for (const row of departments) {
+    if (!showsOnBoard(row)) continue;
     const key = String(row.name).trim().toLowerCase();
     const activeCount = activeByLower.get(key) || 0;
     if (!row.is_active && activeCount === 0) continue;

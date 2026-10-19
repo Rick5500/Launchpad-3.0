@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS departments (
   icon TEXT,
   sort_order INTEGER DEFAULT 0,
   is_active INTEGER DEFAULT 1,
+  show_on_board INTEGER NOT NULL DEFAULT 1, -- 0 keeps an empty department off the board tabs
   next_department TEXT, -- production route target; null at the end of the route
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME
