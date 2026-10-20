@@ -96,6 +96,22 @@ export function formatShopStamp(value, timeZone) {
   }
 }
 
+export function formatLocalTimestamp(value) {
+  if (value == null || value === '') return '';
+  const text = String(value).trim();
+  let date;
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?$/.test(text)) {
+    date = new Date(`${text.replace(' ', 'T')}Z`);
+  } else {
+    date = new Date(text);
+  }
+  if (Number.isNaN(date.getTime())) return text;
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(date);
+}
+
 export function formatClockLabel(hhmm) {
   const match = /^(\d{2}):(\d{2})$/.exec(String(hhmm || ''));
   if (!match) return hhmm || '';

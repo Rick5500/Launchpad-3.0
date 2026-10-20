@@ -84,12 +84,15 @@ const pdfBytes = Buffer.from('%PDF-1.4 phase18 art');
 const calls = [];
 let graphGets = 0;
 const tokenBodies = [];
+const preferHeaders = [];
+let tokenStatus = 200;
+let graphMode = 'inbox';
 
 function messages() {
   return [
     {
       id: 'msg-order',
-      subject: 'PO 44821 <script>alert(1)</script> banners',
+      subject: 'PO 44821 <3 <script>alert(1)</script> banners',
       receivedDateTime: new Date().toISOString(),
       hasAttachments: true,
       from: { emailAddress: { name: 'Pat Eighteen', address: 'pat@phase18.example' } },
@@ -186,9 +189,16 @@ function startMock() {
       req.on('data', (chunk) => chunks.push(chunk));
       req.on('end', () => {
         tokenBodies.push(Buffer.concat(chunks).toString('utf8'));
+        if (tokenStatus !== 200) {
+          sendJson(res, tokenStatus, {
+            error: 'invalid_client',
+            error_description: 'The client credentials were rejected',
+          });
+          return;
+        }
         sendJson(res, 200, {
           token_type: 'Bearer',
-          expires_in: 3600,
+          expires_in: 30,
           access_token: accessToken,
         });
       });
@@ -204,7 +214,34 @@ function startMock() {
       sendJson(res, 401, { error: { code: 'InvalidAuthenticationToken', message: 'bad token' } });
       return;
     }
-    if (url.pathname.endsWith('/messages/delta') || url.pathname === '/v1.0/delta') {
+    if (url.pathname.endsWith('/messages/delta') || url.pathname === '/v1.0/delta' || url.pathname === '/v1.0/delta-done') {
+      preferHeaders.push(String(req.headers.prefer || ''));
+      if (graphMode === 'deny') {
+        sendJson(res, 403, { error: { code: 'ErrorAccessDenied', message: 'Access denied' } });
+        return;
+      }
+      if (graphMode === 'backlog') {
+        const page = Number(url.searchParams.get('page') || '0');
+        if (!Number.isInteger(page) || page < 0 || page >= 30) {
+          sendJson(res, 200, {
+            value: [],
+            '@odata.deltaLink': `${graphBase}/v1.0/delta-done`,
+          });
+          return;
+        }
+        sendJson(res, 200, {
+          value: [{
+            id: `backlog-${page}`,
+            subject: `Backlog page ${page}`,
+            receivedDateTime: new Date().toISOString(),
+            hasAttachments: false,
+            from: { emailAddress: { name: 'Queue', address: `queue${page}@elsewhere.example` } },
+            body: { contentType: 'text', content: `Queued page ${page}` },
+          }],
+          '@odata.nextLink': `${graphBase}/v1.0/delta?page=${page + 1}`,
+        });
+        return;
+      }
       sendJson(res, 200, {
         value: messages(),
         '@odata.deltaLink': `${graphBase}/v1.0/delta`,
@@ -390,7 +427,12 @@ async function main() {
   const savedTenant = process.env.M365_TENANT_ID;
   delete process.env.M365_TENANT_ID;
   assert(graphMail.isConfigured() === false, 'polling config should be off without a tenant');
+  const hidden = graphMail.publicConfig();
+  assert(hidden.configured === false && hidden.mailbox == null && hidden.folder == null, `an unconfigured mailbox should stay hidden: ${JSON.stringify(hidden)}`);
+  assert(!JSON.stringify(hidden).includes(mailbox), 'status config should not include the mailbox address when unset');
   process.env.M365_TENANT_ID = savedTenant;
+  const shown = graphMail.publicConfig();
+  assert(shown.configured === true && shown.mailbox === mailbox, 'a configured mailbox is visible to staff');
   assert(graphMail.isConfigured() === true, 'the test mailbox should be configured');
   const pollerModule = require('../inboundEmailPoller');
   assert(pollerModule.backoffDelay(1, 180) === 360000, 'the first failure waits twice the poll interval');
@@ -423,6 +465,12 @@ async function main() {
   const again = await spawnNode(path.join(backendDir, 'init_db.js'), initEnv);
   if (again.code !== 0) throw new Error(`second init_db failed (${again.code})\n${again.out}\n${again.err}`);
   console.log('PASS fresh init_db twice');
+
+  const inboundEmail = require('../inboundEmail');
+  delete process.env.M365_TENANT_ID;
+  const hiddenStatus = await inboundEmail.syncStatus({ role: 'admin' });
+  assert(hiddenStatus.configured === false && hiddenStatus.mailbox == null, `status should hide the mailbox when Microsoft 365 is not configured: ${JSON.stringify(hiddenStatus)}`);
+  process.env.M365_TENANT_ID = savedTenant;
 
   const pageSource = fs.readFileSync(path.join(backendDir, '../frontend/src/routes/EmailOrders.jsx'), 'utf8');
   assert(!pageSource.includes('dangerouslySetInnerHTML'), 'the email page should render subject and body as text');
@@ -502,6 +550,7 @@ async function main() {
     assert(!server.logs().includes(clientSecret), 'the client secret should not be logged');
     assert(!server.logs().includes(accessToken), 'the access token should not be logged');
     assert(calls.every((call) => call.method === 'GET' || (call.method === 'POST' && call.path.endsWith('/oauth2/v2.0/token'))), `Graph should be read-only: ${calls.map((call) => `${call.method} ${call.path}`).join(', ')}`);
+    assert(preferHeaders.some((value) => value.includes('odata.maxpagesize=50')), `delta reads should ask for 50 messages per page: ${preferHeaders.join(' | ')}`);
 
     const list = await waitForEmails(admin.token);
     assert(list.json.total === 3, `three emails should be stored, saw ${list.json.total}`);
@@ -523,7 +572,8 @@ async function main() {
     assert(orderMail && domainMail && dismissMail, 'the three messages should be listed');
     const detail = await request({ method: 'GET', path: `/api/inbound-emails/${orderMail.id}`, token: operator.token });
     assert(detail.status === 200, detail.text);
-    assert(!detail.json.subject.includes('<') && !detail.json.subject.includes('alert'), `subject should be plain text: ${detail.json.subject}`);
+    assert(detail.json.subject.includes('<3'), `subject should keep <3: ${detail.json.subject}`);
+    assert(detail.json.subject.includes('<script>alert(1)</script>'), `subject should be stored as text: ${detail.json.subject}`);
     assert(detail.json.subject.includes('PO 44821'), detail.json.subject);
     assert(!detail.json.body_text.includes('<') && !detail.json.body_text.includes('alert'), `body should be plain text: ${detail.json.body_text}`);
     assert(detail.json.body_text.includes('Please print the lobby banners.'), detail.json.body_text);
@@ -564,6 +614,48 @@ async function main() {
     const byName = Object.fromEntries((options.json.services || []).map((service) => [service.name, service]));
     setServiceNames(byName);
     const payload = orderBody(byName, created.json.id);
+    const inboundFile = await db.get(
+      `SELECT id, stored_name, order_file_id
+       FROM inbound_email_attachments
+       WHERE inbound_email_id = ? AND stored_name IS NOT NULL AND skipped_reason IS NULL`,
+      [orderMail.id]
+    );
+    assert(inboundFile && inboundFile.stored_name, 'the pdf attachment should have a stored name');
+    const inboundPath = path.join(uploadDir, inboundFile.stored_name);
+    assert(fs.existsSync(inboundPath), 'the inbound pdf should be on disk before convert');
+    const badCustomer = await request({
+      method: 'POST',
+      path: `/api/inbound-emails/${orderMail.id}/convert`,
+      token: admin.token,
+      json: { ...payload, customer_id: 999999 },
+    });
+    assert(badCustomer.status === 400, `an unknown customer should be rejected before files are copied: ${badCustomer.status} ${badCustomer.text}`);
+    const filesAfterBadCustomer = await db.get('SELECT COUNT(*) AS count FROM order_files');
+    assert(filesAfterBadCustomer.count === 0, 'a bad customer should not create order files');
+    const stillNew = await db.get('SELECT status FROM inbound_emails WHERE id = ?', [orderMail.id]);
+    assert(stillNew.status === 'new', `the email should stay new after a rejected customer: ${stillNew.status}`);
+    const badOrder = await request({
+      method: 'POST',
+      path: `/api/inbound-emails/${orderMail.id}/convert`,
+      token: admin.token,
+      json: { ...payload, project_name: '' },
+    });
+    assert(badOrder.status === 400, `an incomplete order should fail: ${badOrder.status} ${badOrder.text}`);
+    const orphans = await db.get('SELECT COUNT(*) AS count FROM order_files');
+    assert(orphans.count === 0, 'a failed convert should delete the order file rows it created');
+    const afterFailure = await db.get(
+      'SELECT stored_name, order_file_id FROM inbound_email_attachments WHERE id = ?',
+      [inboundFile.id]
+    );
+    assert(afterFailure.stored_name === inboundFile.stored_name, 'a failed convert should keep the inbound file name');
+    assert(afterFailure.order_file_id == null, 'a failed convert should clear the order file pointer');
+    assert(fs.existsSync(inboundPath), 'a failed convert should leave the inbound pdf on disk');
+    const namesAfterFailure = fs.readdirSync(uploadDir);
+    assert(namesAfterFailure.length === 1 && namesAfterFailure[0] === inboundFile.stored_name, `only the inbound file should remain: ${namesAfterFailure.join(',')}`);
+    await db.run(
+      'UPDATE inbound_email_attachments SET order_file_id = ? WHERE id = ?',
+      [424242, inboundFile.id]
+    );
     const [first, second] = await Promise.all([
       request({ method: 'POST', path: `/api/inbound-emails/${orderMail.id}/convert`, token: admin.token, json: payload }),
       request({ method: 'POST', path: `/api/inbound-emails/${orderMail.id}/convert`, token: admin.token, json: payload }),
@@ -578,8 +670,20 @@ async function main() {
     assert(third.status === 409 && third.json.order_id === winner.json.order.id, `a later convert should not create another order: ${third.status} ${third.text}`);
     const orderCount = await db.get(`SELECT COUNT(*) AS count FROM orders WHERE po_number = '44821'`);
     assert(orderCount.count === 1, `converting twice should leave one order, saw ${orderCount.count}`);
-    const orderFiles = await db.all('SELECT original_name FROM order_files WHERE order_id = ?', [winner.json.order.id]);
+    const orderFiles = await db.all('SELECT id, original_name, stored_name FROM order_files WHERE order_id = ?', [winner.json.order.id]);
     assert(orderFiles.length === 1 && orderFiles[0].original_name === 'art.pdf', `order files were ${JSON.stringify(orderFiles)}`);
+    assert(orderFiles[0].stored_name !== inboundFile.stored_name, 'the order file should be its own copy');
+    const orderPath = path.join(uploadDir, orderFiles[0].stored_name);
+    assert(fs.existsSync(orderPath) && fs.existsSync(inboundPath), 'the order copy and the inbound file should both stay on disk');
+    assert(fs.readFileSync(orderPath).equals(fs.readFileSync(inboundPath)), 'the order copy should match the inbound pdf');
+    const linked = await db.get('SELECT order_file_id FROM inbound_email_attachments WHERE id = ?', [inboundFile.id]);
+    assert(linked.order_file_id === orderFiles[0].id, 'a stale order file id should be replaced with the new copy');
+    const downloadAgain = await request({
+      method: 'GET',
+      path: `/api/inbound-emails/${orderMail.id}/attachments/${inboundFile.id}/download`,
+      token: admin.token,
+    });
+    assert(downloadAgain.status === 200 && downloadAgain.text.includes('%PDF-1.4 phase18 art'), 'the inbound file should still download after convert');
     const converted = await request({ method: 'GET', path: `/api/inbound-emails/${orderMail.id}`, token: admin.token });
     assert(converted.json.status === 'converted' && converted.json.order_id === winner.json.order.id, 'the email should be marked converted');
     const customerOrder = await request({ method: 'GET', path: `/api/orders/${winner.json.order.id}`, token: customer.token });
@@ -621,6 +725,37 @@ async function main() {
     const manual = await request({ method: 'POST', path: '/api/inbound-emails/sync', token: admin.token });
     assert(manual.status === 200, 'check now should still run when scheduled polling is off');
 
+    graphMode = 'backlog';
+    const firstBacklog = await request({ method: 'POST', path: '/api/inbound-emails/sync', token: admin.token });
+    assert(firstBacklog.status === 200, `the first backlog page set should succeed: ${firstBacklog.status} ${firstBacklog.text}`);
+    const paused = await db.get('SELECT delta_link FROM inbound_mail_state WHERE id = 1');
+    assert(paused.delta_link && paused.delta_link.includes('page=25'), `the next page should be saved: ${paused.delta_link}`);
+    const importedBacklog = await db.get(`SELECT COUNT(*) AS count FROM inbound_emails WHERE graph_message_id LIKE 'backlog-%'`);
+    assert(importedBacklog.count === 25, `the page cap should import 25 backlog messages, saw ${importedBacklog.count}`);
+    const secondBacklog = await request({ method: 'POST', path: '/api/inbound-emails/sync', token: admin.token });
+    assert(secondBacklog.status === 200, `the resumed backlog check should succeed: ${secondBacklog.status} ${secondBacklog.text}`);
+    const finished = await db.get('SELECT delta_link FROM inbound_mail_state WHERE id = 1');
+    assert(finished.delta_link && finished.delta_link.endsWith('/v1.0/delta-done'), `the resume should finish the backlog: ${finished.delta_link}`);
+    const allBacklog = await db.get(`SELECT COUNT(*) AS count FROM inbound_emails WHERE graph_message_id LIKE 'backlog-%'`);
+    assert(allBacklog.count === 30, `the next check should import the rest of the backlog, saw ${allBacklog.count}`);
+    graphMode = 'inbox';
+
+    graphMode = 'deny';
+    const denied = await request({ method: 'POST', path: '/api/inbound-emails/sync', token: admin.token });
+    assert(denied.status === 502, `a Microsoft 403 should be a 502, was ${denied.status} ${denied.text}`);
+    assert(denied.json && /refused|Microsoft 365/i.test(denied.json.error || ''), `the 403 message should name Microsoft: ${denied.text}`);
+    graphMode = 'inbox';
+    tokenStatus = 401;
+    const rejected = await request({ method: 'POST', path: '/api/inbound-emails/sync', token: admin.token });
+    assert(rejected.status === 502, `rejected Microsoft credentials should be a 502, was ${rejected.status} ${rejected.text}`);
+    assert(rejected.json && /refused|Microsoft 365/i.test(rejected.json.error || ''), `the 401 message should name Microsoft: ${rejected.text}`);
+    assert(!server.logs().includes(clientSecret), 'a rejected token should not log the client secret');
+    const stillSignedIn = await request({ method: 'GET', path: '/api/inbound-emails?status=all', token: admin.token });
+    assert(stillSignedIn.status === 200, `Check now must not invalidate the admin session: ${stillSignedIn.status} ${stillSignedIn.text}`);
+    const statusAfter = await request({ method: 'GET', path: '/api/inbound-emails/status', token: admin.token });
+    assert(statusAfter.status === 200 && statusAfter.json.mailbox === mailbox, 'a configured status should still name the mailbox');
+    tokenStatus = 200;
+
     console.log('PASS email inbox, draft parse, convert, and roles');
   } finally {
     server.stop();
@@ -638,7 +773,7 @@ async function main() {
     const flag = await restored.get(`SELECT value FROM system_settings WHERE key = 'inbound_email_polling_enabled'`);
     assert(flag && flag.value === '0', 'a saved polling switch should survive init');
     const count = await restored.get('SELECT COUNT(*) AS count FROM inbound_emails');
-    assert(count.count === 3, 'init should keep inbound emails');
+    assert(count.count === 33, `init should keep inbound emails, saw ${count.count}`);
     const converted = await restored.get(`SELECT status, order_id FROM inbound_emails WHERE graph_message_id = 'msg-order'`);
     assert(converted.status === 'converted' && converted.order_id, 'init should keep the converted link');
   } finally {

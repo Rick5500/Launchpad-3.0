@@ -4,7 +4,7 @@ const path = require('path');
 const activityLog = require('./activityLog');
 const { matchSender, parseDraft } = require('./emailDraft');
 const graphMail = require('./graphMail');
-const { htmlToText, plainText, singleLine } = require('./htmlText');
+const { htmlToText, plainText, singleLine, subjectLine } = require('./htmlText');
 const { httpError } = require('./httpError');
 const { all, get, run } = require('./dbAsync');
 const {
@@ -337,7 +337,7 @@ async function ingestMessage(message, token) {
   if (!message || !message.id || message['@removed']) return { skipped: true };
   const graphId = String(message.id).slice(0, 400);
   const from = message.from && message.from.emailAddress ? message.from.emailAddress : {};
-  const subject = singleLine(message.subject || '');
+  const subject = subjectLine(message.subject || '');
   const bodyText = messageBody(message);
   const draft = parseDraft(subject, bodyText);
   const received = message.receivedDateTime ? String(message.receivedDateTime).slice(0, 40) : null;
@@ -377,12 +377,13 @@ async function doSync() {
   let url = state.delta_link || graphMail.initialDeltaUrl(state.watermark);
   const startedFromSavedDelta = Boolean(state.delta_link);
   let usedSavedDelta = startedFromSavedDelta;
-  let deltaLink = state.delta_link || null;
+  let resumeLink = state.delta_link || null;
   let watermark = state.watermark || null;
   let imported = 0;
   let duplicates = 0;
   let pages = 0;
-  while (url && pages < 25) {
+  const pageCap = 25;
+  while (url && pages < pageCap) {
     pages += 1;
     let page;
     try {
@@ -390,12 +391,13 @@ async function doSync() {
         headers: {
           Authorization: `Bearer ${token}`,
           Accept: 'application/json',
+          Prefer: 'odata.maxpagesize=50',
         },
       });
     } catch (err) {
       if (err.status === 410 && usedSavedDelta) {
         usedSavedDelta = false;
-        deltaLink = null;
+        resumeLink = null;
         url = graphMail.initialDeltaUrl(watermark);
         continue;
       }
@@ -410,9 +412,10 @@ async function doSync() {
     }
     if (page['@odata.nextLink']) {
       url = page['@odata.nextLink'];
+      resumeLink = url;
       usedSavedDelta = false;
     } else {
-      if (page['@odata.deltaLink']) deltaLink = page['@odata.deltaLink'];
+      if (page['@odata.deltaLink']) resumeLink = page['@odata.deltaLink'];
       url = null;
     }
   }
@@ -422,7 +425,7 @@ async function doSync() {
          last_success_at = datetime('now'), last_status = 'ok', last_error = NULL,
          last_imported = ?
      WHERE id = 1`,
-    [deltaLink, watermark, imported]
+    [resumeLink, watermark, imported]
   );
   return { imported, duplicates, last_status: 'ok' };
 }
@@ -496,6 +499,43 @@ function parseAttachmentIds(body) {
   });
 }
 
+function removeStoredCopy(storedName) {
+  const full = safeStoredPath(storedName);
+  if (!full || !fs.existsSync(full)) return;
+  try {
+    fs.unlinkSync(full);
+  } catch (err) {
+    if (err.code !== 'ENOENT') console.error('INBOUND FILE CLEANUP ERROR:', err.message);
+  }
+}
+
+async function discardMaterialized(created) {
+  for (const item of created || []) {
+    const removed = await run(
+      'DELETE FROM order_files WHERE id = ? AND order_id IS NULL',
+      [item.orderFileId]
+    );
+    await run(
+      'UPDATE inbound_email_attachments SET order_file_id = NULL WHERE id = ? AND order_file_id = ?',
+      [item.attachmentId, item.orderFileId]
+    );
+    if (removed.changes) removeStoredCopy(item.storedName);
+  }
+}
+
+function copyStoredFile(storedName) {
+  const source = safeStoredPath(storedName);
+  if (!source || !fs.existsSync(source)) return null;
+  const ext = extensionOf(storedName);
+  if (!ALLOWED_EXTENSIONS.has(ext)) return null;
+  ensureUploadDir();
+  const stored = `${crypto.randomBytes(16).toString('hex')}.${ext}`;
+  const dest = safeStoredPath(stored);
+  if (!dest) return null;
+  fs.copyFileSync(source, dest);
+  return stored;
+}
+
 async function materializeAttachments(user, emailId, customerId, attachmentIds) {
   const rows = await all(
     `SELECT id, original_name, stored_name, mime_type, size_bytes, order_file_id
@@ -508,37 +548,82 @@ async function materializeAttachments(user, emailId, customerId, attachmentIds) 
     ? rows.filter((row) => attachmentIds.includes(row.id))
     : rows;
   const ids = [];
-  for (const row of chosen) {
-    if (row.order_file_id) {
-      await run(
-        'UPDATE order_files SET customer_id = ?, uploaded_by = ? WHERE id = ? AND order_id IS NULL',
-        [customerId, Number(user.userId || user.id), row.order_file_id]
-      );
-      ids.push(row.order_file_id);
-      continue;
+  const created = [];
+  const userId = Number(user.userId || user.id);
+  try {
+    for (const row of chosen) {
+      if (row.order_file_id) {
+        const existing = await get(
+          'SELECT id, stored_name, order_id FROM order_files WHERE id = ?',
+          [row.order_file_id]
+        );
+        const copyPath = existing && existing.stored_name ? safeStoredPath(existing.stored_name) : null;
+        const reusable = existing
+          && !existing.order_id
+          && existing.stored_name
+          && existing.stored_name !== row.stored_name
+          && copyPath
+          && fs.existsSync(copyPath);
+        if (reusable) {
+          await run(
+            'UPDATE order_files SET customer_id = ?, uploaded_by = ? WHERE id = ? AND order_id IS NULL',
+            [customerId, userId, existing.id]
+          );
+          ids.push(existing.id);
+          created.push({
+            orderFileId: existing.id,
+            attachmentId: row.id,
+            storedName: existing.stored_name,
+          });
+          continue;
+        }
+        if (existing && !existing.order_id) {
+          await run('DELETE FROM order_files WHERE id = ? AND order_id IS NULL', [existing.id]);
+          if (existing.stored_name && existing.stored_name !== row.stored_name) {
+            removeStoredCopy(existing.stored_name);
+          }
+        }
+        await run(
+          'UPDATE inbound_email_attachments SET order_file_id = NULL WHERE id = ?',
+          [row.id]
+        );
+      }
+      const copyName = copyStoredFile(row.stored_name);
+      if (!copyName) continue;
+      try {
+        const inserted = await run(
+          `INSERT INTO order_files (
+            customer_id, uploaded_by, original_name, stored_name, mime_type, size_bytes
+          ) VALUES (?,?,?,?,?,?)`,
+          [
+            customerId,
+            userId,
+            row.original_name,
+            copyName,
+            row.mime_type || contentTypeFor(row.stored_name),
+            row.size_bytes || 0,
+          ]
+        );
+        await run(
+          'UPDATE inbound_email_attachments SET order_file_id = ? WHERE id = ?',
+          [inserted.lastID, row.id]
+        );
+        created.push({
+          orderFileId: inserted.lastID,
+          attachmentId: row.id,
+          storedName: copyName,
+        });
+        ids.push(inserted.lastID);
+      } catch (err) {
+        removeStoredCopy(copyName);
+        throw err;
+      }
     }
-    const fullPath = safeStoredPath(row.stored_name);
-    if (!fullPath || !fs.existsSync(fullPath)) continue;
-    const inserted = await run(
-      `INSERT INTO order_files (
-        customer_id, uploaded_by, original_name, stored_name, mime_type, size_bytes
-      ) VALUES (?,?,?,?,?,?)`,
-      [
-        customerId,
-        Number(user.userId || user.id),
-        row.original_name,
-        row.stored_name,
-        row.mime_type || contentTypeFor(row.stored_name),
-        row.size_bytes || 0,
-      ]
-    );
-    await run(
-      'UPDATE inbound_email_attachments SET order_file_id = ? WHERE id = ?',
-      [inserted.lastID, row.id]
-    );
-    ids.push(inserted.lastID);
+    return { ids, created };
+  } catch (err) {
+    await discardMaterialized(created);
+    throw err;
   }
-  return ids;
 }
 
 async function loadRow(id) {
@@ -587,16 +672,25 @@ async function convertEmail(user, id, body) {
   }
 
   let created = null;
+  let materialized = [];
   try {
     const payload = { ...(body || {}) };
     const customerId = Number(payload.customer_id);
     if (!Number.isInteger(customerId) || customerId <= 0) {
       throw httpError(400, 'customer_id must be an existing customer');
     }
+    const customer = await get(
+      'SELECT id, role, is_active FROM users WHERE id = ?',
+      [customerId]
+    );
+    if (!customer || customer.role !== 'customer' || customer.is_active === 0) {
+      throw httpError(400, 'customer_id must be an existing customer');
+    }
     const attachmentIds = parseAttachmentIds(payload);
     delete payload.attachment_ids;
-    const fileIds = await materializeAttachments(user, emailId, customerId, attachmentIds);
-    const merged = [...(Array.isArray(payload.file_ids) ? payload.file_ids : []), ...fileIds];
+    const materializedResult = await materializeAttachments(user, emailId, customerId, attachmentIds);
+    materialized = materializedResult.created;
+    const merged = [...(Array.isArray(payload.file_ids) ? payload.file_ids : []), ...materializedResult.ids];
     payload.file_ids = [...new Set(merged)];
     created = await createOrder(user, payload);
     const orderId = created && created.order ? created.order.id : null;
@@ -618,6 +712,9 @@ async function convertEmail(user, id, body) {
     return created;
   } catch (err) {
     if (!created) {
+      await discardMaterialized(materialized).catch((cleanupErr) => {
+        console.error('INBOUND FILE CLEANUP ERROR:', safeErrorText(cleanupErr));
+      });
       await run(
         `UPDATE inbound_emails
          SET status = 'new', updated_at = datetime('now')

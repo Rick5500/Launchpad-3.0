@@ -10,6 +10,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableContainer,
   TableHead,
   TableRow,
   TextField,
@@ -19,7 +20,7 @@ import CustomerOrderForm from './CustomerOrderForm';
 import LoadingState from '../components/LoadingState';
 import SectionCard from '../components/SectionCard';
 import { authFetch, downloadAuthorized } from '../api';
-import { brand } from '../brand';
+import { brand, formatLocalTimestamp } from '../brand';
 import { useAuth } from '../context/AuthContext';
 import { useDocumentTitle } from '../useDocumentTitle';
 
@@ -38,13 +39,7 @@ function statusColor(status) {
 }
 
 function formatWhen(value) {
-  if (!value) return '—';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(date);
+  return formatLocalTimestamp(value) || '—';
 }
 
 function StatusChip({ status }) {
@@ -194,7 +189,7 @@ export default function EmailOrders() {
     : 'The mailbox has not been checked yet';
 
   return (
-    <Box data-testid="email-orders-page">
+    <Box data-testid="email-orders-page" sx={{ minWidth: 0, maxWidth: '100%' }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', alignItems: 'flex-start', mb: 2 }}>
         <Box>
           <Typography variant="h4" sx={{ color: brand.navy, fontWeight: 800 }}>
@@ -239,14 +234,14 @@ export default function EmailOrders() {
         loading && !email ? <LoadingState message="Loading email..." /> : null
       ) : (
         <>
-          <Box sx={{ display: 'flex', gap: 2, mb: 2, alignItems: 'center' }}>
+          <Box sx={{ display: 'flex', gap: 2, mb: 2, alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}>
             <TextField
               select
               label="Status"
               size="small"
               value={status}
               onChange={(event) => setStatus(event.target.value)}
-              sx={{ minWidth: 180 }}
+              sx={{ width: { xs: '100%', sm: 180 }, maxWidth: '100%' }}
             >
               <MenuItem value="new">New</MenuItem>
               <MenuItem value="converted">Converted</MenuItem>
@@ -260,32 +255,42 @@ export default function EmailOrders() {
             <Alert severity="info">No emails in this list.</Alert>
           ) : null}
           {rows.length ? (
-            <Table size="small" sx={{ bgcolor: '#fff' }}>
-              <TableHead>
-                <TableRow>
-                  <TableCell>Received</TableCell>
-                  <TableCell>From</TableCell>
-                  <TableCell>Subject</TableCell>
-                  <TableCell>Customer</TableCell>
-                  <TableCell>Status</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {rows.map((row) => (
-                  <TableRow key={row.id} hover>
-                    <TableCell>{formatWhen(row.received_at)}</TableCell>
-                    <TableCell>{row.from_name || row.from_address}</TableCell>
-                    <TableCell>
-                      <Link component={RouterLink} to={`/email-orders/${row.id}`} underline="hover" sx={{ color: brand.navy, fontWeight: 700 }}>
-                        {row.subject || '(no subject)'}
-                      </Link>
-                    </TableCell>
-                    <TableCell>{row.matched_customer_name || '—'}</TableCell>
-                    <TableCell><StatusChip status={row.status} /></TableCell>
+            <TableContainer sx={{ width: '100%', maxWidth: '100%', overflowX: 'auto' }}>
+              <Table
+                size="small"
+                sx={{
+                  bgcolor: '#fff',
+                  width: '100%',
+                  tableLayout: 'fixed',
+                  '& th, & td': { overflowWrap: 'anywhere', wordBreak: 'break-word' },
+                }}
+              >
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={{ width: '22%' }}>Received</TableCell>
+                    <TableCell sx={{ width: '20%' }}>From</TableCell>
+                    <TableCell sx={{ width: '28%' }}>Subject</TableCell>
+                    <TableCell sx={{ width: '18%' }}>Customer</TableCell>
+                    <TableCell sx={{ width: '12%' }}>Status</TableCell>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHead>
+                <TableBody>
+                  {rows.map((row) => (
+                    <TableRow key={row.id} hover>
+                      <TableCell>{formatWhen(row.received_at)}</TableCell>
+                      <TableCell>{row.from_name || row.from_address}</TableCell>
+                      <TableCell>
+                        <Link component={RouterLink} to={`/email-orders/${row.id}`} underline="hover" sx={{ color: brand.navy, fontWeight: 700 }}>
+                          {row.subject || '(no subject)'}
+                        </Link>
+                      </TableCell>
+                      <TableCell>{row.matched_customer_name || '—'}</TableCell>
+                      <TableCell><StatusChip status={row.status} /></TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
           ) : null}
         </>
       )}

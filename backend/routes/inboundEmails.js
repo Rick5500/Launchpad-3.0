@@ -33,9 +33,9 @@ router.post('/sync', auth.requireAuth, auth.requireRole('admin'), async (req, re
     res.json({ ok: true, ...result, ...status });
   } catch (err) {
     const message = await inboundEmail.recordSyncError(err);
-    console.error('INBOUND MAIL ERROR:', err.status || '', message);
-    const status = err.status && err.status >= 400 && err.status < 500 ? err.status : 502;
-    return res.status(status).json({ error: message });
+    console.error('INBOUND MAIL ERROR:', message);
+    const notConfigured = err && err.status === 400 && /not configured/i.test(message);
+    return res.status(notConfigured ? 400 : 502).json({ error: message });
   }
 });
 

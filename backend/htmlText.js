@@ -57,8 +57,18 @@ function singleLine(value) {
   return htmlToText(value).replace(/\s+/g, ' ').trim().slice(0, 500);
 }
 
+// Subjects are already plain text. Collapsing whitespace must not treat "<3" as a tag.
+function subjectLine(value) {
+  return String(value == null ? '' : value)
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 500);
+}
+
 module.exports = {
   htmlToText,
   plainText,
   singleLine,
+  subjectLine,
 };

@@ -15,6 +15,7 @@ import {
 import SectionCard from '../components/SectionCard';
 import LoadingState from '../components/LoadingState';
 import { authFetch } from '../api';
+import { formatLocalTimestamp } from '../brand';
 
 export default function SystemSettingsPage() {
   const [settings, setSettings] = useState(null);
@@ -245,7 +246,7 @@ export default function SystemSettingsPage() {
           : 'Microsoft 365 is not configured. Set M365_TENANT_ID, M365_CLIENT_ID, M365_CLIENT_SECRET, and M365_MAILBOX on the server. Those values are not stored here.'}
       >
         <Typography sx={{ mb: 1 }}>
-          {inbound.last_success_at ? `Last successful check: ${inbound.last_success_at}` : 'No successful check yet.'}
+          {inbound.last_success_at ? `Last successful check: ${formatLocalTimestamp(inbound.last_success_at)}` : 'No successful check yet.'}
         </Typography>
         {inbound.last_status === 'error' && inbound.last_error ? (
           <Alert severity="warning" sx={{ mb: 1 }}>{inbound.last_error}</Alert>

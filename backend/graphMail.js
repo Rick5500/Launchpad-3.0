@@ -52,8 +52,17 @@ function timeoutMs() {
 }
 
 function publicConfig() {
+  const configured = isConfigured();
+  if (!configured) {
+    return {
+      configured: false,
+      mailbox: null,
+      folder: null,
+      poll_seconds: null,
+    };
+  }
   return {
-    configured: isConfigured(),
+    configured: true,
     mailbox: mailbox() || null,
     folder: folderName(),
     poll_seconds: pollSeconds(),
@@ -110,7 +119,7 @@ async function fetchJson(url, options = {}, meta = {}) {
       signal: controller.signal,
     });
     if (response.status >= 300 && response.status < 400) {
-      throw graphError('Microsoft 365 redirected the mailbox request', response.status);
+      throw graphError('Microsoft 365 redirected the mailbox request', 502);
     }
     const text = await response.text();
     let json = null;
@@ -122,7 +131,10 @@ async function fetchJson(url, options = {}, meta = {}) {
       }
     }
     if (!response.ok) {
-      throw graphError(safeMessage(response.status, json), response.status);
+      // 410 means the saved delta link expired. Every other Microsoft status,
+      // including 401 and 403, stays 502 so the browser does not treat it as a signed-out session.
+      const status = response.status === 410 ? 410 : 502;
+      throw graphError(safeMessage(response.status, json), status);
     }
     return json || {};
   } catch (err) {
