@@ -8,9 +8,9 @@ import { useDocumentTitle } from '../useDocumentTitle';
 import './workOrderPrint.css';
 
 const WRITE_IN_COLUMNS = [
-  { key: 'code', label: 'Code', width: '28%' },
+  { key: 'code', label: 'Code', width: '18%' },
   { key: 'unit', label: 'Unit', width: '12%' },
-  { key: 'quantity', label: 'Quantity', width: '12%' },
+  { key: 'quantity', label: 'Quantity', width: '22%' },
   { key: 'description', label: 'Description', width: '33%' },
   { key: 'price', label: 'Price', width: '15%' },
 ];
@@ -61,6 +61,17 @@ function display(value, fallback = '—') {
   return text || fallback;
 }
 
+function softBreakText(value) {
+  const text = value == null ? '' : String(value).trim();
+  if (!text) return '—';
+  const parts = text.split(/([.@])/);
+  return parts.map((part, index) => (
+    part === '.' || part === '@'
+      ? <React.Fragment key={index}>{part}<wbr /></React.Fragment>
+      : <React.Fragment key={index}>{part}</React.Fragment>
+  ));
+}
+
 function yesNo(value) {
   return value ? 'Yes' : 'No';
 }
@@ -98,11 +109,13 @@ function Barcode({ svg, className }) {
   );
 }
 
-function Field({ label, value }) {
+function Field({ label, value, prominent = false, softBreaks = false }) {
   return (
     <div className="wo-field">
       <span className="wo-label">{label}</span>
-      <span className="wo-value">{display(value)}</span>
+      <span className={prominent ? 'wo-value wo-customer-name' : 'wo-value'}>
+        {softBreaks ? softBreakText(value) : display(value)}
+      </span>
     </div>
   );
 }
@@ -234,7 +247,9 @@ function WorkOrderSheet({ payload, sheet }) {
   const due = dueLabel(sheet);
   const rush = String(sheet.priority || '').trim().toLowerCase() === 'rush';
   const overdue = Boolean(sheet.overdue) && isActiveStatus(sheet.routing?.current_status);
-  const customerName = sheet.contact?.company || sheet.contact?.contact_name || '';
+  const companyName = String(sheet.contact?.company || '').trim();
+  const contactName = String(sheet.contact?.contact_name || '').trim();
+  const customerName = companyName || contactName;
   const continuation = [sheet.barcode_value, customerName].filter((part) => String(part || '').trim()).join(' · ');
   const zone = sheet.timezone;
   const instructions = (payload.scan_instructions || []).join(' ');
@@ -296,14 +311,17 @@ function WorkOrderSheet({ payload, sheet }) {
           </div>
         ) : null}
       </div>
-
+            </td>
+          </tr>
+          <tr>
+            <td>
       <div className="wo-columns">
         <Section title="CUSTOMER">
           <div className="wo-panel-body">
-            <Field label="Company" value={sheet.contact?.company} />
-            <Field label="Contact" value={sheet.contact?.contact_name} />
+            <Field label="Company" value={sheet.contact?.company} prominent={Boolean(companyName)} />
+            <Field label="Contact" value={sheet.contact?.contact_name} prominent={!companyName && Boolean(contactName)} />
             <Field label="Phone" value={sheet.contact?.phone} />
-            <Field label="Email" value={sheet.contact?.email} />
+            <Field label="Email" value={sheet.contact?.email} softBreaks />
             <AddressFields address={sheet.address} />
           </div>
         </Section>
@@ -320,7 +338,7 @@ function WorkOrderSheet({ payload, sheet }) {
               <>
                 <Field label="Bill To" value={sheet.bill_to.name} />
                 <Field label="Bill Phone" value={sheet.bill_to.phone} />
-                <Field label="Bill Email" value={sheet.bill_to.email} />
+                <Field label="Bill Email" value={sheet.bill_to.email} softBreaks />
                 <Field label="Bill Company" value={sheet.bill_to.company} />
                 <Field label="Bill Addr 1" value={sheet.bill_to.line1} />
                 {sheet.bill_to.line2 ? <Field label="Bill Addr 2" value={sheet.bill_to.line2} /> : null}
@@ -330,7 +348,10 @@ function WorkOrderSheet({ payload, sheet }) {
           </div>
         </Section>
       </div>
-
+            </td>
+          </tr>
+          <tr>
+            <td>
       <Section title="JOB DETAILS">
         <div className="wo-meta-line">
           <span><strong>Service:</strong> {display(sheet.service_name)}</span>
@@ -350,7 +371,10 @@ function WorkOrderSheet({ payload, sheet }) {
           <div className="wo-empty">{sheet.specifications || 'No specifications recorded.'}</div>
         )}
       </Section>
-
+            </td>
+          </tr>
+          <tr>
+            <td>
       <Section title="ORIGINALS / FILES">
         <div className="wo-panel-body">
           <Field label="Originals" value={sheet.originals_source_label || 'Not specified'} />
@@ -370,16 +394,19 @@ function WorkOrderSheet({ payload, sheet }) {
             <tbody>
               {sheet.files.map((file) => (
                 <tr key={file.id}>
-                  <td>{file.original_name}</td>
-                  <td>{display(shopStamp(file.uploaded_at, zone))}</td>
-                  <td>{formatFileSize(file.size_bytes)}</td>
+                  <td data-label="File Name">{file.original_name}</td>
+                  <td data-label="Uploaded">{display(shopStamp(file.uploaded_at, zone))}</td>
+                  <td data-label="Size">{formatFileSize(file.size_bytes)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         ) : <div className="wo-empty">No files are attached.</div>}
       </Section>
-
+            </td>
+          </tr>
+          <tr>
+            <td>
       <div className="wo-columns">
         <Section title="SPECIAL INSTRUCTIONS">
           <div className="wo-panel-body">
@@ -400,13 +427,20 @@ function WorkOrderSheet({ payload, sheet }) {
             )) : <Field label="Proof" value="Not specified" />}
           </div>
         </Section>
-        <Section title="PAYMENT METHOD">
-          <div className="wo-panel-body">
-            <Field label="Payment" value={sheet.payment_method_label || 'Not specified'} />
-          </div>
-        </Section>
       </div>
-
+            </td>
+          </tr>
+          <tr>
+            <td>
+      <Section title="PAYMENT METHOD">
+        <div className="wo-panel-body">
+          <Field label="Payment" value={sheet.payment_method_label || 'Not specified'} />
+        </div>
+      </Section>
+            </td>
+          </tr>
+          <tr>
+            <td>
       <Section title="PRODUCTION HISTORY">
         {history.length ? (
           <table className="wo-table">
@@ -422,28 +456,33 @@ function WorkOrderSheet({ payload, sheet }) {
             <tbody>
               {history.map((row) => (
                 <tr key={row.id}>
-                  <td>{display(row.department)}</td>
-                  <td>{display(row.status_label || row.status)}</td>
-                  <td>{display(shopStamp(row.event_time, zone))}</td>
-                  {showStaff ? <td>{display(row.scanned_by)}</td> : null}
-                  {showStaff ? <td>{display(row.notes)}</td> : null}
+                  <td data-label="Department">{display(row.department)}</td>
+                  <td data-label="Status">{display(row.status_label || row.status)}</td>
+                  <td data-label="Date / Time">{display(shopStamp(row.event_time, zone))}</td>
+                  {showStaff ? <td data-label="Recorded By">{display(row.scanned_by)}</td> : null}
+                  {showStaff ? <td data-label="Notes">{display(row.notes)}</td> : null}
                 </tr>
               ))}
             </tbody>
           </table>
         ) : <div className="wo-empty">No production history recorded.</div>}
       </Section>
+            </td>
+          </tr>
+          <tr>
+            <td>
+      <div className="wo-end">
+        <WriteInGrid />
 
-      <WriteInGrid />
-
-      <footer className="wo-footer">
-        <div className="wo-shop-footer">
-          {shopLines.map((line) => <div key={line}>{line}</div>)}
-        </div>
-        <div className="wo-footer-meta">
-          <div>Printed {display(shopStamp(payload.generated_at, zone))}</div>
-        </div>
-      </footer>
+        <footer className="wo-footer">
+          <div className="wo-shop-footer">
+            {shopLines.map((line) => <div key={line}>{line}</div>)}
+          </div>
+          <div className="wo-footer-meta">
+            <div>Printed {display(shopStamp(payload.generated_at, zone))}</div>
+          </div>
+        </footer>
+      </div>
             </td>
           </tr>
         </tbody>
