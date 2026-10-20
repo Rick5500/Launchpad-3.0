@@ -36,7 +36,9 @@ const deliveryRouter = require('./routes/delivery');
 const barcodeRouter = require('./routes/barcode');
 const departmentsRouter = require('./routes/departments');
 const ordersRouter = require('./routes/orders');
+const sharedFileRoutes = require('./routes/sharedFiles');
 const uploadsRouter = require('./routes/uploads');
+sharedFileRoutes.mount(ordersRouter);
 const { ensureUploadDir } = require('./fileStore');
 const { startOrphanSweep } = require('./uploadMaintenance');
 const adminBoardRouter = require('./routes/adminBoard');
@@ -49,6 +51,7 @@ const settingsRouter = require('./routes/settings');
 const activityRouter = require('./routes/activity');
 const searchRouter = require('./routes/search');
 const systemSettings = require('./systemSettings');
+const mailer = require('./mailer');
 const userAdmin = require('./userAdmin');
 const registerLimit = require('./registerLimit');
 const { sendError } = require('./httpError');
@@ -181,6 +184,7 @@ app.use('/api/barcode', barcodeRouter);
 app.use('/api/departments', departmentsRouter);
 app.use('/api/orders', ordersRouter);
 app.use('/api/uploads', uploadsRouter);
+app.use('/api/shared-files', sharedFileRoutes.fileRouter);
 app.use('/api/admin-board', adminBoardRouter);
 app.use('/api/reports', reportsRouter);
 app.use('/api/notifications', notificationsRouter);
@@ -207,6 +211,7 @@ systemSettings.loadRuntimeCache()
     console.error('SETTINGS CACHE ERROR:', err);
   })
   .finally(() => {
+    mailer.warnTestJsonTransport();
     app.listen(port, () => {
       console.log(`Launchpad backend listening on port ${port}`);
       notificationScheduler.start();

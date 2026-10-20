@@ -353,8 +353,37 @@ CREATE INDEX IF NOT EXISTS idx_deliveries_work_order ON deliveries(work_order_id
 CREATE INDEX IF NOT EXISTS idx_deliveries_due_time ON deliveries(due_time);
 CREATE INDEX IF NOT EXISTS idx_deliveries_status ON deliveries(status);
 
+-- Files staff send to the customer (proofs, finished files). Bytes live under UPLOAD_DIR.
+-- deleted_at is a soft delete. customer_downloaded_at is set the first time that customer downloads.
+CREATE TABLE IF NOT EXISTS shared_files (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id INTEGER NOT NULL,
+  work_order_id INTEGER,
+  customer_id INTEGER,
+  uploaded_by INTEGER,
+  original_name TEXT NOT NULL,
+  stored_name TEXT NOT NULL,
+  mime_type TEXT,
+  size_bytes INTEGER NOT NULL,
+  message TEXT,
+  batch_id TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  deleted_at DATETIME,
+  deleted_by INTEGER,
+  replaced_by_id INTEGER,
+  replaces_id INTEGER,
+  customer_downloaded_at DATETIME,
+  FOREIGN KEY(order_id) REFERENCES orders(id),
+  FOREIGN KEY(work_order_id) REFERENCES work_orders(id),
+  FOREIGN KEY(customer_id) REFERENCES users(id),
+  FOREIGN KEY(uploaded_by) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_shared_files_order ON shared_files(order_id);
+CREATE INDEX IF NOT EXISTS idx_shared_files_work_order ON shared_files(work_order_id);
+
 -- In-app notifications. One row per event. Read state is per user in notification_reads.
--- type: delivery_overdue, delivery_due_soon, work_order_on_hold, work_order_completed, work_order_rush
+-- type: delivery_overdue, delivery_due_soon, work_order_on_hold, work_order_completed, work_order_rush, files_shared
 CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   type TEXT NOT NULL,
@@ -363,11 +392,13 @@ CREATE TABLE IF NOT EXISTS notifications (
   customer_id INTEGER,
   work_order_id INTEGER,
   delivery_id INTEGER,
+  order_id INTEGER,
   dedupe_key TEXT NOT NULL UNIQUE,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(customer_id) REFERENCES users(id),
   FOREIGN KEY(work_order_id) REFERENCES work_orders(id),
-  FOREIGN KEY(delivery_id) REFERENCES deliveries(id)
+  FOREIGN KEY(delivery_id) REFERENCES deliveries(id),
+  FOREIGN KEY(order_id) REFERENCES orders(id)
 );
 
 CREATE TABLE IF NOT EXISTS notification_reads (

@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { clearStoredAuth } from '../api';
+import { safeAppPath } from '../safePath';
 
 const AuthContext = createContext(null);
 
@@ -84,7 +85,7 @@ export function AuthProvider({ children }) {
   }, [refreshUser]);
 
   const login = useCallback(
-    async (username, password) => {
+    async (username, password, nextPath) => {
       setIsLoggingIn(true);
       setLoginError('');
       setAuthMessage('');
@@ -109,7 +110,8 @@ export function AuthProvider({ children }) {
         setIsAuthenticated(true);
         setLoginError('');
         setAuthMessage('');
-        navigate(payload.user?.role === 'customer' ? '/order' : '/', { replace: true });
+        const dest = safeAppPath(nextPath);
+        navigate(dest || (payload.user?.role === 'customer' ? '/order' : '/'), { replace: true });
         return true;
       } catch {
         setUser(null);

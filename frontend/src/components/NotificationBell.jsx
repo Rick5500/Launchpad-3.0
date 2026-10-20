@@ -91,7 +91,8 @@ export default function NotificationBell({ user }) {
             onClick={() => {
               setAnchor(null);
               if (!item.read) markRead(item.id);
-              if (item.work_order_id) navigate(`/work-orders/${item.work_order_id}`);
+              if (item.type === 'files_shared' && item.order_id) navigate(`/orders/${item.order_id}#files-from-accent`);
+              else if (item.work_order_id) navigate(`/work-orders/${item.work_order_id}`);
             }}
             sx={{ alignItems: 'flex-start', whiteSpace: 'normal', opacity: item.read ? 0.7 : 1 }}
           >

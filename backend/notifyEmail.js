@@ -1,5 +1,5 @@
-// Optional email delivery. Off unless EMAIL_NOTIFICATIONS is explicitly enabled.
-// There is no SMTP client in this process. Enabling the flag still does not send mail.
+// Optional email for the in-app notification events. Off unless EMAIL_NOTIFICATIONS is explicitly enabled.
+// This stub does not send mail. Files shared with a customer use backend/mailer.js.
 
 const ENABLED = new Set(['1', 'true', 'yes', 'on']);
 
