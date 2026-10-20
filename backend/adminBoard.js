@@ -334,6 +334,65 @@ function presentWorkOrder(row, timeZone) {
   };
 }
 
+// Time colours follow the delivery list for an active work order (open or in-progress).
+// On-hold and finished work are not overdue, matching the printable ticket.
+// A clock time uses classifyDelivery. A date with no clock uses the shop calendar day:
+// a past day is overdue, and today is due today. Due soon wins over due today when both
+// apply, so a job inside the due-soon window is labelled Due soon. Rush is the priority
+// and is reported in addition to any time signal.
+const TIME_ACTIVE_STATUSES = new Set(['open', 'in-progress']);
+
+function shopDateKey(parts) {
+  return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}`;
+}
+
+function boardUrgency(row, now, rules) {
+  const status = String(row.status || '').trim().toLowerCase();
+  const rush = String(row.priority || '').trim().toLowerCase() === 'rush';
+  const active = TIME_ACTIVE_STATUSES.has(status);
+  const dueText = String(row.due_at || '').trim();
+  const timed = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/.exec(dueText);
+  const dateOnly = /^(\d{4}-\d{2}-\d{2})$/.exec(dueText);
+  let overdue = false;
+  let dueToday = false;
+  let dueSoon = false;
+
+  if (active && timed) {
+    const flags = classifyDelivery({
+      status: 'pending',
+      due_time: `${timed[1]} ${timed[2]}:00`,
+    }, now, rules);
+    overdue = Boolean(flags.overdue);
+    dueToday = Boolean(flags.due_today);
+    dueSoon = Boolean(flags.due_soon);
+  } else if (active && dateOnly) {
+    const today = shopDateKey(zonedParts(now, rules.timezone));
+    if (dateOnly[1] < today) overdue = true;
+    else if (dateOnly[1] === today) dueToday = true;
+  }
+
+  const signals = [];
+  if (overdue) signals.push('Overdue');
+  else if (dueSoon) signals.push('Due soon');
+  else if (dueToday) signals.push('Due today');
+  if (rush) signals.push('Rush');
+
+  let tone = null;
+  if (overdue) tone = 'overdue';
+  else if (dueSoon) tone = 'due_soon';
+  else if (dueToday) tone = 'due_today';
+  else if (rush) tone = 'rush';
+
+  return {
+    overdue,
+    due_today: dueToday,
+    due_soon: dueSoon,
+    rush,
+    tone,
+    signals,
+  };
+}
+
 const DUE_AT_SQL = `CASE
   WHEN o.due_date IS NOT NULL AND trim(o.due_date) != '' AND o.due_time IS NOT NULL AND trim(o.due_time) != ''
     THEN o.due_date || ' ' || o.due_time
@@ -489,7 +548,6 @@ async function listWorkOrders(query, user) {
   const limit = parseLimit(query.limit, DEFAULT_PAGE_SIZE);
   const offset = parseOffset(query.offset);
   const filters = workOrderFilters(query, scope);
-  const window = completionWindow();
   const totalRow = await get(
     `SELECT COUNT(*) AS count ${workOrderFrom} ${filters.where}`,
     filters.params
@@ -500,11 +558,18 @@ async function listWorkOrders(query, user) {
      LIMIT ? OFFSET ?`,
     [...filters.params, limit, offset]
   );
+  const rules = getRules();
+  const now = new Date();
   return {
-    work_orders: rows.map((row) => presentWorkOrder(row, window.timezone)),
+    work_orders: rows.map((row) => ({
+      ...presentWorkOrder(row, rules.timezone),
+      urgency: boardUrgency(row, now, rules),
+    })),
     total: totalRow ? totalRow.count : 0,
     limit,
     offset,
+    timezone: rules.timezone,
+    evaluated_at: now.toISOString(),
     viewer: presentViewer(scope),
   };
 }
@@ -990,4 +1055,5 @@ module.exports = {
   listApprovals,
   decideApproval,
   completionWindow,
+  boardUrgency,
 };

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Alert,
@@ -42,6 +42,8 @@ import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import { authFetch } from '../api';
 import { BOARD_REFRESH_EVENT, requestBoardRefresh } from '../boardEvents';
 import MoveWorkOrderDialog from '../components/MoveWorkOrderDialog';
+import BoardDetailPane from '../components/BoardDetailPane';
+import { UrgencyChips, UrgencyLegend, urgencyTone } from '../components/boardUrgency';
 import { useAuth } from '../context/AuthContext';
 import { brand } from '../brand';
 import LoadingState from '../components/LoadingState';
@@ -49,6 +51,9 @@ import ErrorState from '../components/ErrorState';
 
 const PAGE_SIZE = 8;
 const EMPTY_FILTERS = { status: '', priority: '', due_from: '', due_to: '' };
+// Launch Pad 2.0 did not record a refresh interval in this repo. Sixty seconds
+// keeps a shop monitor current without moving focus or clearing the table.
+const BOARD_POLL_MS = 60000;
 
 const STAT_ICONS = {
   'Large Format': DescriptionOutlinedIcon,
@@ -140,6 +145,10 @@ export default function AdminBoard() {
   const [showAllAlerts, setShowAllAlerts] = useState(false);
   const [moveTarget, setMoveTarget] = useState(null);
   const [moveNotice, setMoveNotice] = useState('');
+  const [selectedId, setSelectedId] = useState(null);
+  const [selectedRow, setSelectedRow] = useState(null);
+  const [boardZone, setBoardZone] = useState('');
+  const detailRef = useRef(null);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -205,6 +214,7 @@ export default function AdminBoard() {
         if (cancelled) return;
         setRows(body.work_orders || []);
         setTotal(body.total || 0);
+        setBoardZone(body.timezone || '');
         setTableError('');
       })
       .catch((err) => {
@@ -242,6 +252,27 @@ export default function AdminBoard() {
     window.addEventListener(BOARD_REFRESH_EVENT, onBoardRefresh);
     return () => window.removeEventListener(BOARD_REFRESH_EVENT, onBoardRefresh);
   }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      setRefreshKey((value) => value + 1);
+    }, BOARD_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const fresh = rows.find((row) => row.id === selectedId);
+    if (fresh) setSelectedRow(fresh);
+  }, [rows, selectedId]);
+
+  useEffect(() => {
+    if (!selectedId || !detailRef.current) return;
+    if (window.innerWidth < 1200) {
+      detailRef.current.scrollIntoView({ block: 'nearest' });
+    }
+  }, [selectedId]);
 
   useEffect(() => {
     let timer = 0;
@@ -492,8 +523,17 @@ export default function AdminBoard() {
         ))}
       </Box>
 
-      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 1fr) 300px' }, gap: 2, alignItems: 'start' }}>
-        <Box sx={{ display: 'grid', gap: 2, minWidth: 0 }}>
+      <Box
+        sx={{
+          display: 'grid',
+          gap: 2,
+          alignItems: 'start',
+          gridTemplateColumns: selectedRow
+            ? { xs: '1fr', lg: 'minmax(0, 1fr) 380px', xl: 'minmax(0, 1fr) 400px 300px' }
+            : { xs: '1fr', lg: 'minmax(0, 1fr) 300px' },
+        }}
+      >
+        <Box sx={{ display: 'grid', gap: 2, minWidth: 0, gridColumn: '1', gridRow: 1 }}>
           <Panel
             title={tableTitle}
             action={(
@@ -523,6 +563,9 @@ export default function AdminBoard() {
             )}
           >
             {tableError && <Alert severity="error" sx={{ mb: 1 }}>{tableError}</Alert>}
+            <Box sx={{ mb: 1.25 }}>
+              <UrgencyLegend timezone={boardZone} />
+            </Box>
             <Box sx={{ overflowX: 'auto' }}>
               <Table size="small" sx={{ minWidth: 760 }}>
                 <TableHead>
@@ -556,9 +599,43 @@ export default function AdminBoard() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {rows.length ? rows.map((row) => (
-                    <TableRow key={row.id} hover>
-                      <TableCell sx={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{row.order_number}</TableCell>
+                  {rows.length ? rows.map((row) => {
+                    const tone = urgencyTone(row.urgency);
+                    const signalText = (row.urgency?.signals || []).join(', ');
+                    return (
+                    <TableRow
+                      key={row.id}
+                      hover
+                      selected={selectedId === row.id}
+                      data-testid={`board-row-${row.external_id || row.id}`}
+                      data-urgency={row.urgency?.tone || 'none'}
+                      onClick={() => {
+                        setSelectedId(row.id);
+                        setSelectedRow(row);
+                      }}
+                      sx={{
+                        cursor: 'pointer',
+                        bgcolor: tone ? tone.bgcolor : undefined,
+                        boxShadow: tone ? `inset 4px 0 0 ${tone.border}` : undefined,
+                        '&:hover': {
+                          bgcolor: tone ? tone.bgcolor : undefined,
+                        },
+                        '&.Mui-selected': {
+                          bgcolor: tone ? tone.bgcolor : '#E8EEF6',
+                        },
+                        '&.Mui-selected:hover': {
+                          bgcolor: tone ? tone.bgcolor : '#E8EEF6',
+                        },
+                      }}
+                    >
+                      <TableCell sx={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.5 }}>
+                          <span>{row.order_number}</span>
+                          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }} aria-label={signalText || undefined}>
+                            <UrgencyChips urgency={row.urgency} />
+                          </Box>
+                        </Box>
+                      </TableCell>
                       <TableCell>{row.company || '—'}</TableCell>
                       <TableCell>{row.contact_name || '—'}</TableCell>
                       <TableCell>{row.originals_source_label || 'Not specified'}</TableCell>
@@ -579,10 +656,25 @@ export default function AdminBoard() {
                       <TableCell sx={{ whiteSpace: 'nowrap' }}>{row.due_display || '—'}</TableCell>
                       <TableCell>{row.process || '—'}</TableCell>
                       <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                        <IconButton aria-label={`View ${row.order_number}`} size="small" onClick={() => navigate(`/work-orders/${row.id}`)}>
+                        <IconButton
+                          aria-label={`Details for ${row.order_number}`}
+                          size="small"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedId(row.id);
+                            setSelectedRow(row);
+                          }}
+                        >
                           <VisibilityOutlinedIcon fontSize="small" />
                         </IconButton>
-                        <IconButton aria-label={`Print barcode for ${row.order_number}`} size="small" onClick={() => navigate(`/work-orders/${row.id}/print`)}>
+                        <IconButton
+                          aria-label={`Print barcode for ${row.order_number}`}
+                          size="small"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            navigate(`/work-orders/${row.id}/print`);
+                          }}
+                        >
                           <QrCode2Icon fontSize="small" />
                         </IconButton>
                         {canMove && (
@@ -590,7 +682,10 @@ export default function AdminBoard() {
                             size="small"
                             aria-label={`Move ${row.order_number}`}
                             data-testid={`move-${row.external_id || row.id}`}
-                            onClick={() => setMoveTarget(row)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setMoveTarget(row);
+                            }}
                             sx={{ textTransform: 'none', ml: 0.5 }}
                           >
                             Move to…
@@ -598,7 +693,8 @@ export default function AdminBoard() {
                         )}
                       </TableCell>
                     </TableRow>
-                  )) : (
+                    );
+                  }) : (
                     <TableRow>
                       <TableCell colSpan={10} sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
                         {tableLoading ? 'Loading work orders...' : 'No work orders match this view.'}
@@ -673,7 +769,31 @@ export default function AdminBoard() {
           </Box>
         </Box>
 
-        <Box sx={{ display: 'grid', gap: 2, alignContent: 'start' }}>
+        {selectedRow && (
+          <Box ref={detailRef} sx={{ gridColumn: { xs: '1', lg: '2' }, gridRow: { xs: 2, lg: '1 / span 2' }, minWidth: 0 }}>
+            <BoardDetailPane
+              row={selectedRow}
+              refreshKey={refreshKey}
+              timeZone={boardZone}
+              canMove={canMove}
+              onClose={() => {
+                setSelectedId(null);
+                setSelectedRow(null);
+              }}
+              onMove={(target) => setMoveTarget(target)}
+            />
+          </Box>
+        )}
+
+        <Box
+          sx={{
+            display: 'grid',
+            gap: 2,
+            alignContent: 'start',
+            gridColumn: selectedRow ? { xs: '1', lg: '1', xl: '3' } : { xs: '1', lg: '2' },
+            gridRow: selectedRow ? { xs: 3, lg: 2, xl: 1 } : { xs: 2, lg: 1 },
+          }}
+        >
           <Panel title="Department Queue Summary">
             <Box sx={{ display: 'grid', gap: 0.75 }}>
               {(summary?.queue || []).map((item) => (
