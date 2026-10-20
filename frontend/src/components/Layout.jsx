@@ -39,6 +39,7 @@ import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import FolderSharedIcon from '@mui/icons-material/FolderShared';
 import { brand } from '../brand';
+import { useDocumentTitle } from '../useDocumentTitle';
 import NotificationBell from './NotificationBell';
 import HeaderScan from './HeaderScan';
 import { REPORT_NAV } from '../reportCatalog';
@@ -119,9 +120,7 @@ export default function Layout({ user, onLogout }) {
   useEffect(() => {
     if (location.pathname.startsWith('/reports')) setReportsOpen(true);
   }, [location.pathname]);
-  useEffect(() => {
-    document.title = pageTitle(location.pathname);
-  }, [location.pathname]);
+  useDocumentTitle(pageTitle(location.pathname));
   const initials = (user?.display_name || user?.username || 'U').charAt(0).toUpperCase();
   const welcomeName = user?.display_name || user?.username || 'User';
   const items = (user?.role === 'customer' ? customerNav : staffNav)

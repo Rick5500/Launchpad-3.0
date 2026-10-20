@@ -154,7 +154,7 @@ function sheetTiming(dueDate, dueTime, status) {
 function routingStatusLabel(status) {
   const value = String(status || '').trim().toLowerCase();
   if (value === 'open') return 'Active';
-  if (value === 'in-progress') return 'In Progress';
+  if (value === 'in-progress') return 'In Production';
   if (value === 'completed' || value === 'complete') return 'Complete';
   if (value === 'on-hold') return 'On Hold';
   return status || '';
@@ -165,7 +165,7 @@ function historyStatusLabel(status) {
   const lower = value.toLowerCase();
   if (lower === 'submitted') return 'Submitted';
   if (lower === 'open') return 'Open';
-  if (lower === 'in-progress') return 'In Progress';
+  if (lower === 'in-progress') return 'In Production';
   if (lower === 'completed' || lower === 'complete') return 'Complete';
   if (lower === 'on-hold') return 'On Hold';
   return value;

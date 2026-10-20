@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Alert, Box, Button, Typography } from '@mui/material';
 import CustomerShell from '../components/CustomerShell';
+import { useDocumentTitle } from '../useDocumentTitle';
 import FilesFromAccent from '../components/FilesFromAccent';
 import LoadingState from '../components/LoadingState';
 import { useAuth } from '../context/AuthContext';
@@ -69,6 +70,7 @@ export default function OrderDetail() {
     };
   }, [id]);
 
+  useDocumentTitle(order?.order_number ? `Order ${order.order_number}` : 'Submitted Order');
   const name = user?.contact_name || user?.display_name || user?.username || '';
   const welcome = user?.company && user.company !== name ? `Welcome, ${name} (${user.company})` : `Welcome, ${name}`;
 
