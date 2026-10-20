@@ -4,6 +4,7 @@ import { authFetch } from '../api';
 import { formatClockLabel, formatFileSize, formatShopStamp, timezoneLabel } from '../brand';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
+import { useDocumentTitle } from '../useDocumentTitle';
 import './workOrderPrint.css';
 
 const SIGN_OFF = ['Prepress', 'Production', 'Finishing', 'Quality', 'Dispatch'];
@@ -442,6 +443,7 @@ export default function WorkOrderPrint() {
   const navigate = useNavigate();
   const isOrder = location.pathname.startsWith('/orders/');
   const [payload, setPayload] = useState(null);
+  useDocumentTitle('Print Work Order');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 

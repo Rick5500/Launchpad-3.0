@@ -301,7 +301,7 @@ async function main() {
       token: admin.token,
     });
     assert(printed.status === 200, `print failed: ${printed.status} ${printed.text}`);
-    assert(printed.json.work_orders[0].routing.current_status_label === 'In Progress', 'the ticket should show In Production');
+    assert(printed.json.work_orders[0].routing.current_status_label === 'In Production', 'the ticket should show In Production');
     const detail = await request({
       method: 'GET',
       path: `/api/workorders/${ticket.id}`,

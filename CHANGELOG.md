@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Changed
-- The staff sidebar, page heading, and browser title say Dashboard. The address stays `/`. The work order page shows in-progress work as In Production
+- The staff sidebar, page heading, and browser title say Dashboard. The address stays `/`. The work order page and the printed ticket show in-progress work as In Production. Create Order, the customer order pages, and the print page set their own browser title, so leaving the Dashboard does not leave that name in the tab
 
 ### Fixed
 - A customer print does not move a job. Only an admin, manager, or operator print moves an open work order, and only the print that changes `status` from `open` writes the Printed history row, the activity row, and Retrieved. A simple ticket with no line items still fits one letter page. The board calls that status In Production in the status filter and the detail pane

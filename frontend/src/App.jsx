@@ -28,6 +28,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import theme from './theme';
 import { brand } from './brand';
 import { safeAppPath } from './safePath';
+import { useDocumentTitle } from './useDocumentTitle';
 
 function returnPath(location) {
   const fromQuery = safeAppPath(new URLSearchParams(location.search).get('next'));
@@ -39,6 +40,7 @@ function returnPath(location) {
 
 function LoginScreen() {
   const { login, register, isLoggingIn, loginError, authMessage } = useAuth();
+  useDocumentTitle('Sign in');
   const [mode, setMode] = useState('sign-in');
   const [signupEnabled, setSignupEnabled] = useState(false);
   const [username, setUsername] = useState('');
