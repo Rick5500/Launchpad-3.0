@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS work_orders (
   approval_status TEXT, -- null, pending, approved, rejected
   approval_by INTEGER, -- user who approved or rejected a pending request
   approval_at DATETIME,
+  proof_status TEXT, -- null, awaiting, changes_requested, approved. Newest applicable proof.
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME,
   FOREIGN KEY(customer_id) REFERENCES users(id),
@@ -408,8 +409,46 @@ CREATE INDEX IF NOT EXISTS idx_shared_files_order ON shared_files(order_id);
 CREATE INDEX IF NOT EXISTS idx_shared_files_work_order ON shared_files(work_order_id);
 CREATE INDEX IF NOT EXISTS idx_shared_files_customer ON shared_files(customer_id);
 
+-- Customer proofs. version counts per order, or per work order when work_order_id is set.
+-- status: awaiting, changes_requested, approved. A decision is final for that version.
+CREATE TABLE IF NOT EXISTS proofs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id INTEGER NOT NULL,
+  work_order_id INTEGER,
+  customer_id INTEGER,
+  version INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  message TEXT,
+  created_by INTEGER,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  decided_by INTEGER,
+  decided_at DATETIME,
+  decision_comment TEXT,
+  FOREIGN KEY(order_id) REFERENCES orders(id),
+  FOREIGN KEY(work_order_id) REFERENCES work_orders(id),
+  FOREIGN KEY(customer_id) REFERENCES users(id),
+  FOREIGN KEY(created_by) REFERENCES users(id),
+  FOREIGN KEY(decided_by) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS proof_files (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  proof_id INTEGER NOT NULL,
+  original_name TEXT NOT NULL,
+  stored_name TEXT NOT NULL,
+  mime_type TEXT,
+  size_bytes INTEGER NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(proof_id) REFERENCES proofs(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_proofs_order ON proofs(order_id);
+CREATE INDEX IF NOT EXISTS idx_proofs_work_order ON proofs(work_order_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_proofs_scope_version ON proofs(order_id, IFNULL(work_order_id, 0), version);
+CREATE INDEX IF NOT EXISTS idx_proof_files_proof ON proof_files(proof_id);
+
 -- In-app notifications. One row per event. Read state is per user in notification_reads.
--- type: delivery_overdue, delivery_due_soon, work_order_on_hold, work_order_completed, work_order_rush, files_shared
+-- type: delivery_overdue, delivery_due_soon, work_order_on_hold, work_order_completed, work_order_rush, files_shared, proof_ready, proof_decision
 CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   type TEXT NOT NULL,

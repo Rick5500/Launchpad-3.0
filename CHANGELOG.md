@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Staff can send a proof on an order or one work order. Versions are v1, v2, and so on. The customer reviews the files, then approves or requests changes. A change request needs a comment, and that decision is final for the version. A job stays open while any covering proof's latest version is awaiting approval or changes were requested, including a job proof and an order proof together. Printing does not move that job to In Production. Approval moves an open job to In Production once, and only when every covering proof is approved. Send Proof is in the staff sidebar. Proofs is in the customer sidebar. `node scripts/verify-phase17.js` checks roles, customer isolation, download headers, a double approve, and both proof orders
+
 ### Changed
 - The staff sidebar, page heading, and browser title say Dashboard. The address stays `/`. The work order page and the printed ticket show in-progress work as In Production. Create Order, the customer order pages, and the print page set their own browser title, so leaving the Dashboard does not leave that name in the tab
 

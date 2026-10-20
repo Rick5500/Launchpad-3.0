@@ -6,6 +6,7 @@ const { code128Svg } = require('./barcodeSvg');
 const { ACTIVE_WORK_ORDER_STATUSES } = require('./statuses');
 const { loadLetterhead, DEFAULT_NAME, DEFAULT_ADDRESS, DEFAULT_PHONE, addressLines } = require('./shopProfile');
 const { displayFieldList, readFieldValues, PAYMENT_UNSPECIFIED, RETURN_UNSPECIFIED } = require('./serviceFields');
+const { isProofHeld } = require('./proofs');
 
 const SCAN_INSTRUCTIONS = [
   'Scan this barcode at each department.',
@@ -246,6 +247,9 @@ function actorLabel(viewer) {
 }
 
 async function noteProductionPrint(tx, row, viewer) {
+  const current = await tx.get('SELECT status, proof_status FROM work_orders WHERE id = ?', [row.id]);
+  const status = (current && current.status) || row.status;
+  if (isProofHeld(current && current.proof_status)) return status;
   const updated = await tx.run(
     `UPDATE work_orders
      SET status = 'in-progress', updated_at = datetime('now')

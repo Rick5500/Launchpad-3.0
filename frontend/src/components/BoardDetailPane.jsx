@@ -13,6 +13,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import { authFetch } from '../api';
 import { brand, formatShopStamp } from '../brand';
 import { UrgencyChips } from './boardUrgency';
+import ProofStatusChip from './ProofStatusChip';
 
 function textOn(hex) {
   const value = String(hex || '').replace('#', '');
@@ -159,6 +160,7 @@ export default function BoardDetailPane({ row, refreshKey, timeZone, canMove, on
             sx={{ fontWeight: 700 }}
           />
         )}
+        <ProofStatusChip status={detail?.proof_status} label={detail?.proof_status_label} testId="board-proof-status" />
         {row.department && (
           <Chip
             label={row.department}
@@ -207,7 +209,7 @@ export default function BoardDetailPane({ row, refreshKey, timeZone, canMove, on
 
       <Divider sx={{ my: 1.5 }} />
 
-      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1.25 }}>
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 1.25 }}>
         <Fact label="Contact" value={row.contact_name} />
         <Fact label="Due" value={row.due_display} />
         <Fact label="Arrived" value={row.arrived_display} />
@@ -225,6 +227,27 @@ export default function BoardDetailPane({ row, refreshKey, timeZone, canMove, on
 
       {detail && (
         <Box sx={{ display: 'grid', gap: 1.5, mt: 1.75 }}>
+          {(detail.proofs || []).some((proof) => proof.decided_at) ? (
+            <Box data-testid="board-proof-comments">
+              <Typography sx={{ color: brand.navy, fontWeight: 800, fontSize: 13, mb: 0.75 }}>PROOF COMMENTS</Typography>
+              {detail.proofs.filter((proof) => proof.decided_at).map((proof) => (
+                <Box key={`proof-${proof.id}`} sx={{ mb: 1, minWidth: 0 }}>
+                  <Typography sx={{ fontSize: 14, fontWeight: 700 }}>
+                    {proof.version_label} · {proof.status_label}
+                  </Typography>
+                  <Typography sx={{ fontSize: 13, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                    {proof.decision_comment || 'Approved with no comment.'}
+                  </Typography>
+                  <Typography sx={{ fontSize: 12, color: brand.muted }}>
+                    {proof.decided_by_name || 'Customer'}
+                    {' · '}
+                    {formatShopStamp(proof.decided_at, timeZone) || proof.decided_at}
+                  </Typography>
+                </Box>
+              ))}
+            </Box>
+          ) : null}
+
           <Box>
             <Typography sx={{ color: brand.navy, fontWeight: 800, fontSize: 13, mb: 0.75 }}>LINES</Typography>
             {lines.length ? lines.map((item) => (

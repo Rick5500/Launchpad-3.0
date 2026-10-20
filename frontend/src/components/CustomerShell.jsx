@@ -56,6 +56,9 @@ export default function CustomerShell({ title, welcome, children, onLogout, extr
           <Button color="inherit" onClick={() => navigate('/work-orders')}>
             Work Orders
           </Button>
+          <Button color="inherit" onClick={() => navigate('/proofs')}>
+            Proofs
+          </Button>
           {extra}
           <NotificationBell user={user} />
           <Button color="inherit" startIcon={<LogoutIcon />} onClick={onLogout}>

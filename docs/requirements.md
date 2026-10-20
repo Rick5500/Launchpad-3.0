@@ -15,7 +15,8 @@ High-level data model notes:
 - `services` map to a department queue and store a code, suffix mode (`sequence` or `code`), default turnaround hours, and an active flag. Archive file requests are flagged for later approval. Inactive services are hidden from new orders
 - `order_line_items` hold size, quantity, media, color, binding/finish, finishing, mount, and laminate, plus `field_values` JSON, and link to the matching service's work order. `service_fields` defines each service's inputs. Signs & Graphics includes mount and laminate options. Older Yes/No mount and laminate values stay on the row
 - `order_files` store upload metadata. Bytes live under `UPLOAD_DIR`, outside the web root
-- `work_orders` table capturing items, quantities, due dates, status, plus `order_id`, `service_id`, and `next_department`
+- `work_orders` table capturing items, quantities, due dates, status, plus `order_id`, `service_id`, `next_department`, and `proof_status` (`awaiting`, `changes_requested`, `approved`)
+- `proofs` and `proof_files` store each proof version staff send for an order or one work order. The owning customer approves or requests changes. Approval releases an open job to production
 - `production_board` records or derived from `work_orders` status
 - `barcode_events` to log scans (timestamp, operator, location, payload)
 - `production_history` starts with an "Order Created" row for printable work orders

@@ -383,6 +383,8 @@ async function seedNotificationSettings() {
     ['work_order_rush', 1, 'in_app'],
     ['customer_registered', 1, 'in_app'],
     ['files_shared', 1, 'in_app'],
+    ['proof_ready', 1, 'in_app'],
+    ['proof_decision', 1, 'in_app'],
   ];
 
   for (const event of events) {
@@ -756,6 +758,63 @@ async function ensureSharedFiles() {
   await backfillFileTransfers();
 }
 
+async function ensureProofs() {
+  await run(`CREATE TABLE IF NOT EXISTS proofs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id INTEGER NOT NULL,
+    work_order_id INTEGER,
+    customer_id INTEGER,
+    version INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    message TEXT,
+    created_by INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    decided_by INTEGER,
+    decided_at DATETIME,
+    decision_comment TEXT,
+    FOREIGN KEY(order_id) REFERENCES orders(id),
+    FOREIGN KEY(work_order_id) REFERENCES work_orders(id),
+    FOREIGN KEY(customer_id) REFERENCES users(id),
+    FOREIGN KEY(created_by) REFERENCES users(id),
+    FOREIGN KEY(decided_by) REFERENCES users(id)
+  )`);
+  await ensureColumns('proofs', [
+    { name: 'order_id', definition: 'INTEGER' },
+    { name: 'work_order_id', definition: 'INTEGER' },
+    { name: 'customer_id', definition: 'INTEGER' },
+    { name: 'version', definition: 'INTEGER' },
+    { name: 'status', definition: 'TEXT' },
+    { name: 'message', definition: 'TEXT' },
+    { name: 'created_by', definition: 'INTEGER' },
+    { name: 'created_at', definition: 'DATETIME' },
+    { name: 'decided_by', definition: 'INTEGER' },
+    { name: 'decided_at', definition: 'DATETIME' },
+    { name: 'decision_comment', definition: 'TEXT' },
+  ]);
+  await run(`CREATE TABLE IF NOT EXISTS proof_files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    proof_id INTEGER NOT NULL,
+    original_name TEXT NOT NULL,
+    stored_name TEXT NOT NULL,
+    mime_type TEXT,
+    size_bytes INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(proof_id) REFERENCES proofs(id)
+  )`);
+  await ensureColumns('proof_files', [
+    { name: 'proof_id', definition: 'INTEGER' },
+    { name: 'original_name', definition: 'TEXT' },
+    { name: 'stored_name', definition: 'TEXT' },
+    { name: 'mime_type', definition: 'TEXT' },
+    { name: 'size_bytes', definition: 'INTEGER' },
+    { name: 'created_at', definition: 'DATETIME' },
+  ]);
+  await run('CREATE INDEX IF NOT EXISTS idx_proofs_order ON proofs(order_id)');
+  await run('CREATE INDEX IF NOT EXISTS idx_proofs_work_order ON proofs(work_order_id)');
+  await run('CREATE UNIQUE INDEX IF NOT EXISTS idx_proofs_scope_version ON proofs(order_id, IFNULL(work_order_id, 0), version)');
+  await run('CREATE INDEX IF NOT EXISTS idx_proof_files_proof ON proof_files(proof_id)');
+}
+
 async function normalizeLegacyWorkOrderStatuses() {
   const result = await run(
     `UPDATE work_orders
@@ -794,6 +853,8 @@ async function seedSystemSettings() {
     ['customer_self_signup_enabled', '1'],
     // Missing means staff email the customer when files are shared. An off switch is left alone.
     ['email_customers_on_file_share', '1'],
+    // Missing means staff email the customer when a proof is sent. An off switch is left alone.
+    ['email_customers_on_proof', '1'],
   ];
   for (const [key, value] of defaults) {
     const existing = await get('SELECT key FROM system_settings WHERE key = ?', [key]);
@@ -1298,6 +1359,7 @@ async function main() {
     { name: 'approval_status', definition: 'TEXT' },
     { name: 'approval_by', definition: 'INTEGER' },
     { name: 'approval_at', definition: 'DATETIME' },
+    { name: 'proof_status', definition: 'TEXT' },
   ]);
   await ensureColumns('orders', [
     { name: 'ups_account_number', definition: 'TEXT' },
@@ -1328,6 +1390,7 @@ async function main() {
   await run('CREATE INDEX IF NOT EXISTS idx_deliveries_order_id ON deliveries(order_id)');
   await ensureNotifications();
   await ensureSharedFiles();
+  await ensureProofs();
   await seedAdmin();
   await seedCustomers();
   await seedDepartments();

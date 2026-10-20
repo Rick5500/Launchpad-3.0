@@ -35,6 +35,8 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import ExpandLess from '@mui/icons-material/ExpandLess';
 import ExpandMore from '@mui/icons-material/ExpandMore';
 import AssignmentIcon from '@mui/icons-material/Assignment';
+import FactCheckIcon from '@mui/icons-material/FactCheck';
+import RateReviewIcon from '@mui/icons-material/RateReview';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import FolderSharedIcon from '@mui/icons-material/FolderShared';
@@ -52,6 +54,7 @@ const staffNav = [
   { title: 'Scan', route: '/scan', icon: <QrCodeScannerIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Search Orders', route: '/search', icon: <SearchIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Send Files', route: '/send-files', icon: <UploadFileIcon />, roles: ['admin', 'operator', 'manager'] },
+  { title: 'Send Proof', route: '/send-proof', icon: <FactCheckIcon />, roles: ['admin', 'operator', 'manager'] },
   {
     title: 'Reports',
     route: '/reports',
@@ -73,6 +76,7 @@ const customerNav = [
   { title: 'Place Order', route: '/order', icon: <NoteAddIcon />, roles: ['customer'] },
   { title: 'Files from Accent', route: '/files', icon: <FolderSharedIcon />, roles: ['customer'] },
   { title: 'Work Orders', route: '/work-orders', icon: <AssignmentIcon />, roles: ['customer'] },
+  { title: 'Proofs', route: '/proofs', icon: <RateReviewIcon />, roles: ['customer'] },
   { title: 'Delivery', route: '/delivery', icon: <LocalShippingIcon />, roles: ['customer'] },
   { title: 'Notifications', route: '/notifications', icon: <NotificationsIcon />, roles: ['customer'] },
 ];
@@ -90,6 +94,8 @@ function pageTitle(pathname) {
     ['/search', 'Search Orders'],
     ['/send-files', 'Send Files'],
     ['/files', 'Files from Accent'],
+    ['/send-proof', 'Send Proof'],
+    ['/proofs', 'Proofs'],
     ['/reports', 'Reports'],
     ['/customers', 'Customers'],
     ['/admin/departments', 'Departments'],
