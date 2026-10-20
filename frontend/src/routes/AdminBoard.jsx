@@ -56,6 +56,8 @@ const headCellSx = {
   borderBottom: 0,
   whiteSpace: 'nowrap',
   fontSize: 13,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
 };
 // Launch Pad 2.0 did not record a refresh interval in this repo. Sixty seconds
 // keeps a shop monitor current without moving focus or clearing the table.
@@ -675,16 +677,17 @@ export default function AdminBoard() {
                 }}
               >
                 <colgroup>
-                  <col style={{ width: '22%' }} />
                   <col style={{ width: '16%' }} />
-                  <col style={{ width: '14%' }} />
-                  <col style={{ width: '15%' }} />
+                  <col style={{ width: '13%' }} />
+                  <col style={{ width: '17%' }} />
                   <col style={{ width: '18%' }} />
-                  <col style={{ width: '15%' }} />
+                  <col style={{ width: '20%' }} />
+                  <col style={{ width: '16%' }} />
                 </colgroup>
-                <TableHead sx={{ '& .MuiTableCell-root': { px: { xs: 0.75, xl: 1.5 } } }}>
+                <TableHead sx={{ '& .MuiTableCell-root': { px: { xs: 0.5, xl: 1.25 } } }}>
                   <TableRow>
-                    {['XFer Id/From', 'To', 'Arrived', 'Retrieved'].map((label) => (
+                    <TableCell sx={headCellSx} title="XFer Id/From">XFer Id/From</TableCell>
+                    {['To', 'Arrived', 'Retrieved'].map((label) => (
                       <TableCell key={label} sx={headCellSx}>{label}</TableCell>
                     ))}
                     <TableCell sx={headCellSx} sortDirection={sort.field === 'due' ? sort.direction : false}>
@@ -749,16 +752,16 @@ export default function AdminBoard() {
                           color: '#1B2838',
                           fontSize: 13,
                           py: 0.75,
-                          px: { xs: 0.75, lg: 1.25 },
+                          px: { xs: 0.5, xl: 1.25 },
                           overflow: 'hidden',
                         },
                       }}
                     >
                       <TableCell>
                         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.15, minWidth: 0 }} aria-label={signalText || undefined}>
-                          <Box component="span" sx={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.order_number}</Box>
-                          <Box component="span" sx={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.company || '—'}</Box>
-                          <Box component="span" sx={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.contact_name || '—'}</Box>
+                          <Box component="span" title={row.order_number || undefined} sx={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.order_number}</Box>
+                          <Box component="span" title={row.company || undefined} sx={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.company || '—'}</Box>
+                          <Box component="span" title={row.contact_name || undefined} sx={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.contact_name || '—'}</Box>
                           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.4, mt: 0.35 }}>
                             <UrgencyChips urgency={row.urgency} fresh={fresh} />
                           </Box>
@@ -783,10 +786,11 @@ export default function AdminBoard() {
                             borderRadius: 0.5,
                             boxSizing: 'border-box',
                           }}
+                          title={row.department || 'Unassigned'}
                         >
                           {row.department || 'Unassigned'}
                         </Box>
-                        <Typography sx={{ fontSize: 12, mt: 0.4, fontWeight: weight, color: '#1B2838', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <Typography title={row.delivery_method || undefined} sx={{ fontSize: 12, mt: 0.4, fontWeight: weight, color: '#1B2838', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {row.delivery_method || '—'}
                         </Typography>
                       </TableCell>
