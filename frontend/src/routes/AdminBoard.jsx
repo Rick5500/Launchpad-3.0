@@ -128,10 +128,10 @@ function withMonitorTabs(apiTabs, restricted) {
 
 function StackedStamp({ date, time, missing = '—' }) {
   if (!date && !time) {
-    return <Box sx={{ textAlign: 'center' }}>{missing}</Box>;
+    return <Box sx={{ textAlign: 'center', whiteSpace: 'nowrap' }}>{missing}</Box>;
   }
   return (
-    <Box sx={{ textAlign: 'center', lineHeight: 1.25 }}>
+    <Box sx={{ textAlign: 'center', lineHeight: 1.25, whiteSpace: 'nowrap' }}>
       <div>{date}</div>
       {time ? <div>{time}</div> : null}
     </Box>
@@ -665,9 +665,24 @@ export default function AdminBoard() {
             <Box sx={{ mb: 1 }}>
               <UrgencyLegend timezone={boardZone} />
             </Box>
-            <Box sx={{ overflowX: 'auto', bgcolor: '#fff', border: `1px solid ${brand.border}` }}>
-              <Table size="small" sx={{ minWidth: 760 }}>
-                <TableHead>
+            <Box data-testid="board-table-wrap" sx={{ overflowX: 'auto', bgcolor: '#fff', border: `1px solid ${brand.border}` }}>
+              <Table
+                size="small"
+                sx={{
+                  width: '100%',
+                  tableLayout: 'fixed',
+                  minWidth: { xs: 0, xl: 760 },
+                }}
+              >
+                <colgroup>
+                  <col style={{ width: '22%' }} />
+                  <col style={{ width: '16%' }} />
+                  <col style={{ width: '14%' }} />
+                  <col style={{ width: '15%' }} />
+                  <col style={{ width: '18%' }} />
+                  <col style={{ width: '15%' }} />
+                </colgroup>
+                <TableHead sx={{ '& .MuiTableCell-root': { px: { xs: 0.75, xl: 1.5 } } }}>
                   <TableRow>
                     {['XFer Id/From', 'To', 'Arrived', 'Retrieved'].map((label) => (
                       <TableCell key={label} sx={headCellSx}>{label}</TableCell>
@@ -734,14 +749,16 @@ export default function AdminBoard() {
                           color: '#1B2838',
                           fontSize: 13,
                           py: 0.75,
+                          px: { xs: 0.75, lg: 1.25 },
+                          overflow: 'hidden',
                         },
                       }}
                     >
                       <TableCell>
-                        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.15 }} aria-label={signalText || undefined}>
-                          <span>{row.order_number}</span>
-                          <span>{row.company || '—'}</span>
-                          <span>{row.contact_name || '—'}</span>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.15, minWidth: 0 }} aria-label={signalText || undefined}>
+                          <Box component="span" sx={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.order_number}</Box>
+                          <Box component="span" sx={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.company || '—'}</Box>
+                          <Box component="span" sx={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.contact_name || '—'}</Box>
                           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.4, mt: 0.35 }}>
                             <UrgencyChips urgency={row.urgency} fresh={fresh} />
                           </Box>
@@ -752,6 +769,10 @@ export default function AdminBoard() {
                           component="span"
                           sx={{
                             display: 'inline-block',
+                            maxWidth: '100%',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
                             bgcolor: row.department_color || '#90caf9',
                             color: textOn(row.department_color),
                             fontWeight: 800,
@@ -760,11 +781,12 @@ export default function AdminBoard() {
                             px: 0.9,
                             py: 0.3,
                             borderRadius: 0.5,
+                            boxSizing: 'border-box',
                           }}
                         >
                           {row.department || 'Unassigned'}
                         </Box>
-                        <Typography sx={{ fontSize: 12, mt: 0.4, fontWeight: weight, color: '#1B2838' }}>
+                        <Typography sx={{ fontSize: 12, mt: 0.4, fontWeight: weight, color: '#1B2838', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {row.delivery_method || '—'}
                         </Typography>
                       </TableCell>
@@ -777,9 +799,9 @@ export default function AdminBoard() {
                         )}
                       </TableCell>
                       <TableCell><StackedStamp date={due.date} time={due.time} /></TableCell>
-                      <TableCell>
-                        <Box>{row.status_label || 'LiveOrder'}</Box>
-                        <Box sx={{ fontSize: 12 }}>{row.files_label || '0 / 0'}</Box>
+                      <TableCell data-testid="board-process">
+                        <Box sx={{ whiteSpace: 'nowrap' }}>{row.status_label || 'LiveOrder'}</Box>
+                        <Box sx={{ fontSize: 12, whiteSpace: 'nowrap' }}>{row.files_label || '0 / 0'}</Box>
                       </TableCell>
                     </TableRow>
                     );
