@@ -103,6 +103,7 @@
 
 .wo-band-copy {
   min-width: 0;
+  overflow-wrap: break-word;
 }
 
 .wo-kicker {
@@ -113,12 +114,14 @@
 }
 
 .wo-number {
+  min-width: 0;
   margin-top: 0.02in;
   font-size: 22pt;
   font-weight: 800;
   letter-spacing: 0.3px;
   line-height: 1.15;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: break-word;
 }
 
 .wo-value.wo-customer-name {
@@ -289,8 +292,9 @@
 
 .wo-value {
   font-size: 12pt;
+  min-width: 0;
   white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .wo-note {
@@ -453,7 +457,77 @@
 
   .wo-number {
     white-space: normal;
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
+  }
+
+  .wo-field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .wo-label {
+    font-size: 10pt;
+  }
+
+  .wo-spec-table {
+    table-layout: auto;
+    font-size: 10pt;
+  }
+
+  .wo-spec-table,
+  .wo-spec-table tbody,
+  .wo-spec-table tr,
+  .wo-spec-table th,
+  .wo-spec-table td {
+    display: block;
+    width: auto;
+  }
+
+  .wo-spec-table tr {
+    display: grid;
+    grid-template-columns: minmax(5.2em, 38%) minmax(0, 1fr);
+  }
+
+  .wo-spec-table th,
+  .wo-spec-table td {
+    overflow-wrap: break-word;
+    word-break: normal;
+  }
+
+  .wo-spec-pad {
+    display: none;
+  }
+
+  .wo-table thead {
+    display: none;
+  }
+
+  .wo-table,
+  .wo-table tbody,
+  .wo-table tr,
+  .wo-table td {
+    display: block;
+    width: auto;
+  }
+
+  .wo-table tr {
+    border-bottom: 1px solid #8ea0b3;
+    padding: 0.06in 0.1in;
+  }
+
+  .wo-table td {
+    border: 0;
+    padding: 0.02in 0;
+    overflow-wrap: break-word;
+    word-break: normal;
+  }
+
+  .wo-table td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 10pt;
+    font-weight: 800;
+    color: #0a2f6e;
   }
 
   .wo-flags,

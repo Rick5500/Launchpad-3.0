@@ -8,9 +8,9 @@ import { useDocumentTitle } from '../useDocumentTitle';
 import './workOrderPrint.css';
 
 const WRITE_IN_COLUMNS = [
-  { key: 'code', label: 'Code', width: '28%' },
+  { key: 'code', label: 'Code', width: '18%' },
   { key: 'unit', label: 'Unit', width: '12%' },
-  { key: 'quantity', label: 'Quantity', width: '12%' },
+  { key: 'quantity', label: 'Quantity', width: '22%' },
   { key: 'description', label: 'Description', width: '33%' },
   { key: 'price', label: 'Price', width: '15%' },
 ];
@@ -61,6 +61,17 @@ function display(value, fallback = '—') {
   return text || fallback;
 }
 
+function softBreakText(value) {
+  const text = value == null ? '' : String(value).trim();
+  if (!text) return '—';
+  const parts = text.split(/([.@])/);
+  return parts.map((part, index) => (
+    part === '.' || part === '@'
+      ? <React.Fragment key={index}>{part}<wbr /></React.Fragment>
+      : <React.Fragment key={index}>{part}</React.Fragment>
+  ));
+}
+
 function yesNo(value) {
   return value ? 'Yes' : 'No';
 }
@@ -98,11 +109,13 @@ function Barcode({ svg, className }) {
   );
 }
 
-function Field({ label, value, prominent = false }) {
+function Field({ label, value, prominent = false, softBreaks = false }) {
   return (
     <div className="wo-field">
       <span className="wo-label">{label}</span>
-      <span className={prominent ? 'wo-value wo-customer-name' : 'wo-value'}>{display(value)}</span>
+      <span className={prominent ? 'wo-value wo-customer-name' : 'wo-value'}>
+        {softBreaks ? softBreakText(value) : display(value)}
+      </span>
     </div>
   );
 }
@@ -308,7 +321,7 @@ function WorkOrderSheet({ payload, sheet }) {
             <Field label="Company" value={sheet.contact?.company} prominent={Boolean(companyName)} />
             <Field label="Contact" value={sheet.contact?.contact_name} prominent={!companyName && Boolean(contactName)} />
             <Field label="Phone" value={sheet.contact?.phone} />
-            <Field label="Email" value={sheet.contact?.email} />
+            <Field label="Email" value={sheet.contact?.email} softBreaks />
             <AddressFields address={sheet.address} />
           </div>
         </Section>
@@ -325,7 +338,7 @@ function WorkOrderSheet({ payload, sheet }) {
               <>
                 <Field label="Bill To" value={sheet.bill_to.name} />
                 <Field label="Bill Phone" value={sheet.bill_to.phone} />
-                <Field label="Bill Email" value={sheet.bill_to.email} />
+                <Field label="Bill Email" value={sheet.bill_to.email} softBreaks />
                 <Field label="Bill Company" value={sheet.bill_to.company} />
                 <Field label="Bill Addr 1" value={sheet.bill_to.line1} />
                 {sheet.bill_to.line2 ? <Field label="Bill Addr 2" value={sheet.bill_to.line2} /> : null}
@@ -381,9 +394,9 @@ function WorkOrderSheet({ payload, sheet }) {
             <tbody>
               {sheet.files.map((file) => (
                 <tr key={file.id}>
-                  <td>{file.original_name}</td>
-                  <td>{display(shopStamp(file.uploaded_at, zone))}</td>
-                  <td>{formatFileSize(file.size_bytes)}</td>
+                  <td data-label="File Name">{file.original_name}</td>
+                  <td data-label="Uploaded">{display(shopStamp(file.uploaded_at, zone))}</td>
+                  <td data-label="Size">{formatFileSize(file.size_bytes)}</td>
                 </tr>
               ))}
             </tbody>
@@ -443,11 +456,11 @@ function WorkOrderSheet({ payload, sheet }) {
             <tbody>
               {history.map((row) => (
                 <tr key={row.id}>
-                  <td>{display(row.department)}</td>
-                  <td>{display(row.status_label || row.status)}</td>
-                  <td>{display(shopStamp(row.event_time, zone))}</td>
-                  {showStaff ? <td>{display(row.scanned_by)}</td> : null}
-                  {showStaff ? <td>{display(row.notes)}</td> : null}
+                  <td data-label="Department">{display(row.department)}</td>
+                  <td data-label="Status">{display(row.status_label || row.status)}</td>
+                  <td data-label="Date / Time">{display(shopStamp(row.event_time, zone))}</td>
+                  {showStaff ? <td data-label="Recorded By">{display(row.scanned_by)}</td> : null}
+                  {showStaff ? <td data-label="Notes">{display(row.notes)}</td> : null}
                 </tr>
               ))}
             </tbody>
