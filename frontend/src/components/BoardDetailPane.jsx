@@ -25,12 +25,20 @@ function textOn(hex) {
 
 function historyStatus(status) {
   const value = String(status || '').trim().toLowerCase();
-  if (value === 'in-progress') return 'In Progress';
+  if (value === 'in-progress') return 'In Production';
   if (value === 'completed' || value === 'complete') return 'Complete';
   if (value === 'on-hold') return 'On Hold';
   if (value === 'open') return 'Open';
   if (value === 'submitted') return 'Submitted';
   return status || '—';
+}
+
+function boardStatusName(label, status) {
+  const fromStatus = String(status || '').trim().toLowerCase();
+  const fromLabel = String(label || '').trim().toLowerCase();
+  if (fromStatus === 'in-progress' || fromLabel === 'in progress') return 'In Production';
+  if (label) return label;
+  return historyStatus(status);
 }
 
 function Fact({ label, value }) {
@@ -145,7 +153,11 @@ export default function BoardDetailPane({ row, refreshKey, timeZone, canMove, on
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 1.25 }}>
         <UrgencyChips urgency={row.urgency} />
         {detail?.routing?.current_status_label && (
-          <Chip label={detail.routing.current_status_label} size="small" sx={{ fontWeight: 700 }} />
+          <Chip
+            label={boardStatusName(detail.routing.current_status_label, detail.routing.current_status)}
+            size="small"
+            sx={{ fontWeight: 700 }}
+          />
         )}
         {row.department && (
           <Chip
@@ -246,7 +258,7 @@ export default function BoardDetailPane({ row, refreshKey, timeZone, canMove, on
             {history.length ? history.map((entry) => (
               <Box key={`h-${entry.id}`} sx={{ mb: 1 }}>
                 <Typography sx={{ fontSize: 14, fontWeight: 700 }}>
-                  {entry.department || '—'} · {entry.status_label || historyStatus(entry.status)}
+                  {entry.department || '—'} · {boardStatusName(entry.status_label, entry.status)}
                   {entry.manual ? ' · Manual' : ''}
                 </Typography>
                 <Typography sx={{ fontSize: 12, color: brand.muted }}>

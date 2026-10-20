@@ -47,7 +47,12 @@ import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
 
 const PAGE_SIZE = 8;
-const EMPTY_FILTERS = { status: '', priority: '', due_from: '', due_to: '' };
+const EMPTY_FILTERS = { status: '', priority: '', category: '', due_from: '', due_to: '' };
+const BOARD_CATEGORY_OPTIONS = [
+  { value: 'overdue', label: 'Overdue' },
+  { value: 'new', label: 'New' },
+  { value: 'in_production', label: 'In Production' },
+];
 const MONITOR_TABS = new Set(['All', 'Active', 'Search']);
 const headCellSx = {
   color: '#fff',
@@ -286,6 +291,7 @@ export default function AdminBoard() {
     if (q) params.set('q', q);
     if (filters.status) params.set('status', filters.status);
     if (filters.priority) params.set('priority', filters.priority);
+    if (filters.category) params.set('category', filters.category);
     if (filters.due_from) params.set('due_from', filters.due_from);
     if (filters.due_to) params.set('due_to', filters.due_to);
 
@@ -406,6 +412,7 @@ export default function AdminBoard() {
   const visibleAlerts = showAllAlerts ? alerts : alerts.slice(0, 4);
   const statCards = useMemo(() => {
     if (!summary?.stats) return [];
+    const categories = summary.stats.categories || {};
     const cards = [
       {
         key: 'total',
@@ -414,6 +421,30 @@ export default function AdminBoard() {
         caption: summary?.viewer?.restricted ? summary.viewer.department : 'All Departments',
         color: '#1E88E5',
         Icon: AssignmentOutlinedIcon,
+      },
+      {
+        key: 'category-overdue',
+        value: categories.overdue || 0,
+        label: 'Overdue',
+        caption: 'Category',
+        color: '#E53935',
+        Icon: ErrorOutlineIcon,
+      },
+      {
+        key: 'category-new',
+        value: categories.new || 0,
+        label: 'New',
+        caption: 'Category',
+        color: '#F9A825',
+        Icon: AssignmentOutlinedIcon,
+      },
+      {
+        key: 'category-in-production',
+        value: categories.in_production || 0,
+        label: 'In Production',
+        caption: 'Category',
+        color: '#1565C0',
+        Icon: DescriptionOutlinedIcon,
       },
     ];
     for (const departmentStat of summary.stats.departments || []) {
@@ -1011,9 +1042,21 @@ export default function AdminBoard() {
           >
             <MenuItem value="">Any</MenuItem>
             <MenuItem value="open">Open</MenuItem>
-            <MenuItem value="in-progress">In progress</MenuItem>
+            <MenuItem value="in-progress">In Production</MenuItem>
             <MenuItem value="on-hold">On hold</MenuItem>
             <MenuItem value="completed">Completed</MenuItem>
+          </TextField>
+          <TextField
+            select
+            size="small"
+            label="Category"
+            value={draftFilters.category}
+            onChange={(event) => setDraftFilters((current) => ({ ...current, category: event.target.value }))}
+          >
+            <MenuItem value="">Any</MenuItem>
+            {BOARD_CATEGORY_OPTIONS.map((option) => (
+              <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+            ))}
           </TextField>
           <TextField
             select
