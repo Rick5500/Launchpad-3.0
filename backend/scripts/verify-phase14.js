@@ -461,6 +461,50 @@ async function main() {
       signals: ['Rush'],
     }, 'on-hold rush');
     assert(!findRow(board.json, 'P13-DONE'), 'a completed job should stay off the active board');
+    const ticketRow = findRow(board.json, ticket.external_id);
+    assert(ticketRow.retrieved === false && !ticketRow.retrieved_at, 'a new job has not been retrieved');
+    assert(ticketRow.files_label === '0 / 0' && ticketRow.file_count === 0, 'a job with no files reads 0 / 0');
+    assert(ticketRow.status_label === 'LiveOrder', `an open job should read LiveOrder, got ${ticketRow.status_label}`);
+    assert(ticketRow.delivery_method === 'Will Call', `delivery method should be on the row, got ${ticketRow.delivery_method}`);
+    assert(ticketRow.process === 'Large Format', 'process should stay the service name');
+    assert(findRow(board.json, 'P13-HOLD').status_label === 'On Hold', 'an on-hold job should not read LiveOrder');
+
+    const unordered = await request({
+      method: 'GET',
+      path: '/api/admin-board/work-orders?limit=100',
+      token: admin.token,
+    });
+    assert(unordered.status === 200, unordered.text);
+    const orderIds = (unordered.json.work_orders || []).map((row) => row.external_id);
+    assert(
+      orderIds.indexOf('P13-DATE') >= 0 && orderIds.indexOf('P13-DATE') < orderIds.indexOf('P13-RUSH'),
+      `default sort should be date due ascending: ${orderIds.join(',')}`
+    );
+    assert(
+      orderIds.indexOf(ticket.external_id) < orderIds.indexOf('P13-RUSH'),
+      'a past due job should sort before a far future one'
+    );
+
+    const fileBytes = (16 * 1024 * 1024) + Math.round(0.8 * 1024 * 1024);
+    await db.run(
+      `INSERT INTO order_files (work_order_id, original_name, stored_name, size_bytes)
+       VALUES (?, 'plan.pdf', 'plan.pdf', ?)`,
+      [ticket.id, fileBytes]
+    );
+    await db.run(
+      `INSERT INTO barcode_events (scanned_value, work_order_id, location, event_time)
+       VALUES (?, ?, 'Large Format', '2026-10-20 16:06:03')`,
+      [ticket.external_id, ticket.id]
+    );
+    const picked = await request({
+      method: 'GET',
+      path: `/api/admin-board/work-orders?q=${encodeURIComponent(ticket.external_id)}`,
+      token: admin.token,
+    });
+    const pickedRow = findRow(picked.json, ticket.external_id);
+    assert(pickedRow.retrieved === true, 'the first scan should mark the job retrieved');
+    assert(String(pickedRow.retrieved_at).startsWith('2026-10-20 16:06:03'), `retrieved time should be the scan, got ${pickedRow.retrieved_at}`);
+    assert(pickedRow.file_count === 1 && pickedRow.files_label === '1 / 16.80m', `files should read 1 / 16.80m, got ${pickedRow.files_label}`);
 
     const completed = await request({
       method: 'GET',

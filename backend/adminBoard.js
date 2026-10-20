@@ -308,8 +308,25 @@ function presentActivity(row, timeZone, now) {
   };
 }
 
+function formatFilesLabel(count, bytes) {
+  const files = Number(count) || 0;
+  const size = Number(bytes) || 0;
+  if (files <= 0 || size <= 0) return '0 / 0';
+  const megabytes = size / (1024 * 1024);
+  return `${files} / ${megabytes.toFixed(2)}m`;
+}
+
+function statusLabel(status) {
+  const value = String(status || '').trim().toLowerCase();
+  if (value === 'completed' || value === 'complete') return 'Complete';
+  if (value === 'on-hold') return 'On Hold';
+  if (value === 'cancelled' || value === 'canceled') return 'Cancelled';
+  return 'LiveOrder';
+}
+
 function presentWorkOrder(row, timeZone) {
   const orderNumber = row.external_id || (row.id ? `WO-${row.id}` : null);
+  const retrievedAt = row.retrieved_at || null;
   return {
     id: row.id,
     order_number: orderNumber,
@@ -323,14 +340,21 @@ function presentWorkOrder(row, timeZone) {
     payment_method_label: row.payment_method ? String(row.payment_method) : 'Not specified',
     department: row.department || '',
     department_color: row.department_color || '#90caf9',
+    delivery_method: row.delivery_method || '',
     arrived_at: row.created_at || null,
     arrived_display: formatArrived(row.created_at, timeZone),
+    retrieved_at: retrievedAt,
+    retrieved: Boolean(retrievedAt),
     due_at: row.due_at || null,
     due_display: formatWall(row.due_at),
     process: row.process || row.department || '',
     status: row.status || null,
+    status_label: statusLabel(row.status),
     priority: row.priority || null,
     service_name: row.service_name || null,
+    file_count: Number(row.file_count) || 0,
+    file_bytes: Number(row.file_bytes) || 0,
+    files_label: formatFilesLabel(row.file_count, row.file_bytes),
   };
 }
 
@@ -423,7 +447,28 @@ const workOrderSelect = `
   ) AS contact_name,
   o.originals_source AS originals_source,
   o.payment_method AS payment_method,
+  o.delivery_method AS delivery_method,
   ${DUE_AT_SQL} AS due_at,
+  (
+    SELECT COUNT(*) FROM order_files f WHERE f.work_order_id = wo.id
+  ) AS file_count,
+  (
+    SELECT COALESCE(SUM(f.size_bytes), 0) FROM order_files f WHERE f.work_order_id = wo.id
+  ) AS file_bytes,
+  (
+    SELECT MIN(picked.event_time) FROM (
+      SELECT event_time FROM barcode_events
+      WHERE work_order_id = wo.id AND trim(coalesce(event_time, '')) != ''
+      UNION ALL
+      SELECT event_time FROM production_history
+      WHERE work_order_id = wo.id
+        AND trim(coalesce(event_time, '')) != ''
+        AND NOT (
+          lower(trim(coalesce(scanned_by, ''))) = 'system auto'
+          AND lower(trim(coalesce(notes, ''))) = 'order created'
+        )
+    ) AS picked
+  ) AS retrieved_at,
   CASE
     WHEN s.name IS NOT NULL AND trim(s.name) != '' THEN s.name
     WHEN ps.name IS NOT NULL AND trim(ps.name) != '' THEN ps.name
@@ -449,8 +494,8 @@ function workOrderFilters(query, scope) {
   const priority = parseOptionalToken(query.priority, 'priority', 20);
   const dueFrom = parseDateOnly(query.due_from, 'due_from');
   const dueTo = parseDateOnly(query.due_to, 'due_to');
-  const sort = parseOptionalToken(query.sort, 'sort', 40) || 'arrived';
-  const direction = parseOptionalToken(query.direction, 'direction', 4) || 'desc';
+  const requestedSort = parseOptionalToken(query.sort, 'sort', 40);
+  const requestedDirection = parseOptionalToken(query.direction, 'direction', 4);
 
   if (status && !['open', 'in-progress', 'completed', 'on-hold'].includes(status.toLowerCase())) {
     throw new BoardError('status must be open, in-progress, completed, or on-hold');
@@ -459,8 +504,6 @@ function workOrderFilters(query, scope) {
     throw new BoardError('priority must be Low, Normal, High, or Rush');
   }
   if (dueFrom && dueTo && dueFrom > dueTo) throw new BoardError('due_from must be before due_to');
-  if (!SORT_COLUMNS[sort]) throw new BoardError('sort must be arrived, due, order_number, company, or department');
-  if (direction !== 'asc' && direction !== 'desc') throw new BoardError('direction must be asc or desc');
 
   const clauses = [];
   const params = [];
@@ -468,6 +511,11 @@ function workOrderFilters(query, scope) {
   const statusKey = status ? status.toLowerCase() : null;
   // Complete has no active queue. Default that login to finished work this month.
   const completeDefault = locked && departmentKey === 'complete' && !statusKey;
+  // The monitor sorts by date due, earliest first. A Complete login stays newest first.
+  const sort = requestedSort || (completeDefault ? 'arrived' : 'due');
+  const direction = requestedDirection || (completeDefault ? 'desc' : 'asc');
+  if (!SORT_COLUMNS[sort]) throw new BoardError('sort must be arrived, due, order_number, company, or department');
+  if (direction !== 'asc' && direction !== 'desc') throw new BoardError('direction must be asc or desc');
   const monthWindow = completeDefault ? completionWindow() : null;
 
   if (completeDefault) {
