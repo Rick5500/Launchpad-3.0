@@ -1,16 +1,14 @@
 import React from 'react';
 import { Box, Chip, Typography } from '@mui/material';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
-import ScheduleIcon from '@mui/icons-material/Schedule';
-import TodayIcon from '@mui/icons-material/Today';
-import BoltIcon from '@mui/icons-material/Bolt';
 import FiberNewIcon from '@mui/icons-material/FiberNew';
+import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
 import { brand } from '../brand';
 
-// Row fills follow the Launch Pad 2.0 order monitor: a red-orange-yellow wash
-// for overdue, a lighter yellow for due today or due soon, pale yellow for a
-// job that has not been retrieved, and white / pale lavender otherwise.
-// The word and icon stay so colour is not the only signal.
+// The board has three categories. Overdue keeps the red-orange-yellow wash.
+// New is bold pale yellow. In Production has one blue tint. On hold, finished,
+// and cancelled rows alternate white and pale lavender. Rush is priority data,
+// not a category.
 export const URGENCY_STYLES = {
   overdue: {
     label: 'Overdue',
@@ -21,34 +19,7 @@ export const URGENCY_STYLES = {
     chipColor: '#7F1D1D',
     Icon: ErrorOutlineIcon,
   },
-  due_soon: {
-    label: 'Due soon',
-    bgcolor: '#fff4b0',
-    background: '#fff4b0',
-    border: '#C2410C',
-    chipBg: '#FDE0C4',
-    chipColor: '#7C2D12',
-    Icon: ScheduleIcon,
-  },
-  due_today: {
-    label: 'Due today',
-    bgcolor: '#fff4b0',
-    background: '#fff4b0',
-    border: '#B8860B',
-    chipBg: '#FDE9A8',
-    chipColor: '#6B4E00',
-    Icon: TodayIcon,
-  },
-  rush: {
-    label: 'Rush',
-    bgcolor: '#ffffff',
-    background: '#ffffff',
-    border: brand.navy,
-    chipBg: brand.orange,
-    chipColor: '#1B2838',
-    Icon: BoltIcon,
-  },
-  fresh: {
+  new: {
     label: 'New',
     bgcolor: '#fff8d2',
     background: '#fff8d2',
@@ -57,14 +28,21 @@ export const URGENCY_STYLES = {
     chipColor: '#6B4E00',
     Icon: FiberNewIcon,
   },
+  in_production: {
+    label: 'In Production',
+    bgcolor: '#d6ebff',
+    background: '#d6ebff',
+    border: '#1565C0',
+    chipBg: '#d6ebff',
+    chipColor: '#0D47A1',
+    Icon: BuildOutlinedIcon,
+  },
 };
 
 const SIGNAL_TONE = {
   Overdue: 'overdue',
-  'Due soon': 'due_soon',
-  'Due today': 'due_today',
-  Rush: 'rush',
-  New: 'fresh',
+  New: 'new',
+  'In Production': 'in_production',
 };
 
 const LAVENDER = '#eceaf8';
@@ -74,15 +52,10 @@ export function urgencyTone(urgency) {
 }
 
 export function rowSurface(row, index) {
-  const tone = row?.urgency?.tone;
-  const fresh = !row?.retrieved_at;
-  if (tone === 'overdue') {
-    return { background: URGENCY_STYLES.overdue.background, bold: fresh };
-  }
-  if (tone === 'due_today' || tone === 'due_soon') {
-    return { background: URGENCY_STYLES.due_today.background, bold: fresh };
-  }
-  if (fresh) return { background: URGENCY_STYLES.fresh.background, bold: true };
+  const tone = row?.urgency?.tone || row?.urgency?.category;
+  if (tone === 'overdue') return { background: URGENCY_STYLES.overdue.background, bold: false };
+  if (tone === 'new') return { background: URGENCY_STYLES.new.background, bold: true };
+  if (tone === 'in_production') return { background: URGENCY_STYLES.in_production.background, bold: false };
   return { background: index % 2 === 0 ? '#ffffff' : LAVENDER, bold: false };
 }
 
@@ -98,9 +71,8 @@ function chipSx(style) {
   };
 }
 
-export function UrgencyChips({ urgency, fresh = false }) {
-  const signals = [...(urgency?.signals || [])];
-  if (fresh && !signals.includes('New')) signals.push('New');
+export function UrgencyChips({ urgency }) {
+  const signals = (urgency?.signals || []).filter((signal) => SIGNAL_TONE[signal]);
   if (!signals.length) return null;
   return (
     <>
@@ -144,14 +116,11 @@ function Swatch({ background, label, bold = false }) {
 export function UrgencyLegend({ timezone }) {
   return (
     <Box data-testid="urgency-legend" sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, alignItems: 'center' }}>
-      <Swatch background={URGENCY_STYLES.overdue.background} label="Overdue" bold />
-      <Swatch background={URGENCY_STYLES.due_today.background} label="Due today / soon" />
-      <Swatch background={URGENCY_STYLES.fresh.background} label="New (not retrieved)" bold />
-      <Swatch background="#ffffff" label="In production" />
-      <Swatch background={LAVENDER} label="In production" />
-      <Chip size="small" icon={<BoltIcon />} label="Rush" sx={chipSx(URGENCY_STYLES.rush)} />
+      <Swatch background={URGENCY_STYLES.overdue.background} label="Overdue" />
+      <Swatch background={URGENCY_STYLES.new.background} label="New" bold />
+      <Swatch background={URGENCY_STYLES.in_production.background} label="In Production" />
       <Typography sx={{ fontSize: 12, color: brand.muted, flexBasis: { xs: '100%', lg: 'auto' } }}>
-        Shop time{timezone ? ` (${timezone})` : ''}. A job can be Rush and overdue at the same time. On hold and completed jobs are not marked overdue. New jobs are bold until they are retrieved.
+        Shop time{timezone ? ` (${timezone})` : ''}. On hold and finished jobs are not marked overdue.
       </Typography>
     </Box>
   );

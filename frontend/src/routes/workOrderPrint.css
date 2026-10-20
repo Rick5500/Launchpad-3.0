@@ -70,6 +70,7 @@
   box-sizing: border-box;
   overflow-wrap: break-word;
   color: #1a1a1a;
+  font-size: 15px;
 }
 
 .wo-band {
@@ -104,14 +105,14 @@
 }
 
 .wo-kicker {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 800;
   letter-spacing: 1.6px;
 }
 
 .wo-number {
   margin-top: 2px;
-  font-size: 22px;
+  font-size: 28px;
   font-weight: 800;
   letter-spacing: 0.3px;
   line-height: 1.05;
@@ -148,7 +149,7 @@
 
 .wo-barcode-text {
   margin-top: 4px;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 800;
   letter-spacing: 0.6px;
   line-height: 1.2;
@@ -157,7 +158,7 @@
 
 .wo-scan-note {
   margin-top: 4px;
-  font-size: 8px;
+  font-size: 12px;
   line-height: 1.2;
   color: #333;
   max-width: 3.15in;
@@ -174,7 +175,7 @@
 }
 
 .wo-fact-label {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.5px;
   text-transform: uppercase;
@@ -182,7 +183,7 @@
 }
 
 .wo-fact-value {
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 700;
   line-height: 1.3;
   overflow-wrap: anywhere;
@@ -190,13 +191,13 @@
 
 .wo-fact-due .wo-fact-value,
 .wo-fact-delivery .wo-fact-value {
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 800;
 }
 
 .wo-fact-sub {
   margin-top: 2px;
-  font-size: 11px;
+  font-size: 14px;
   line-height: 1.3;
 }
 
@@ -211,7 +212,7 @@
   border: 2px solid #111;
   background: #fff;
   color: #111;
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 800;
   letter-spacing: 1px;
   padding: 3px 8px;
@@ -241,7 +242,7 @@
   margin: 0;
   background: #fff;
   color: #0a2f6e;
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 800;
   letter-spacing: 0.7px;
   padding: 1px 6px;
@@ -251,7 +252,7 @@
 
 .wo-panel-body {
   padding: 2px 6px;
-  font-size: 11px;
+  font-size: 15px;
 }
 
 .wo-field {
@@ -273,7 +274,7 @@
 
 .wo-note {
   margin-top: 6px;
-  font-size: 11px;
+  font-size: 15px;
   line-height: 1.35;
 }
 
@@ -282,7 +283,7 @@
   flex-wrap: wrap;
   gap: 4px 12px;
   padding: 3px 6px 0;
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .wo-line {
@@ -303,11 +304,11 @@
 
 .wo-line-num {
   font-weight: 800;
-  font-size: 12px;
+  font-size: 15px;
 }
 
 .wo-summary {
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 700;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -316,7 +317,7 @@
 }
 
 .wo-line-qty {
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -325,7 +326,7 @@
   width: 100%;
   margin-top: 2px;
   border-collapse: collapse;
-  font-size: 9px;
+  font-size: 13px;
   table-layout: fixed;
 }
 
@@ -359,7 +360,7 @@
 .wo-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .wo-table th,
@@ -380,7 +381,7 @@
 
 .wo-empty {
   color: #444;
-  font-size: 11px;
+  font-size: 14px;
   padding: 4px 6px;
 }
 
@@ -402,7 +403,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 800;
   margin-bottom: 4px;
 }
@@ -419,7 +420,7 @@
 .wo-sign-line {
   margin-top: 2px;
   border-bottom: 1px solid #111;
-  font-size: 8px;
+  font-size: 11px;
   letter-spacing: 0.2px;
   color: #333;
   padding-bottom: 2px;
@@ -433,7 +434,7 @@
   justify-content: space-between;
   gap: 12px;
   align-items: flex-end;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .wo-shop-footer {
@@ -493,7 +494,7 @@
   @bottom-right {
     content: "Page " counter(page);
     font-family: "Segoe UI", Arial, sans-serif;
-    font-size: 9pt;
+    font-size: 11pt;
     color: #1a1a1a;
   }
 }
@@ -525,7 +526,7 @@
   padding: 0 2px 1px;
   border-bottom: 2px solid #f58220;
   color: #0a2f6e;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 800;
   line-height: 13px;
   overflow: hidden;

@@ -146,7 +146,7 @@ function BrandCard({ title, children }) {
         borderBottom: `1px solid ${brand.border}`,
         borderLeft: `4px solid ${brand.orange}`,
       }}>
-        <Typography sx={{ color: brand.navy, fontWeight: 800, letterSpacing: '0.06em', fontSize: 13 }}>
+        <Typography sx={{ color: brand.navy, fontWeight: 800, letterSpacing: '0.06em', fontSize: 16 }}>
           {title}
         </Typography>
       </Box>
@@ -158,8 +158,8 @@ function BrandCard({ title, children }) {
 function Fact({ label, value }) {
   return (
     <Box sx={{ minWidth: 0 }}>
-      <Typography variant="caption" color="text.secondary">{label}</Typography>
-      <Typography sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{showText(value)}</Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ fontSize: 14 }}>{label}</Typography>
+      <Typography sx={{ fontSize: 16, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{showText(value)}</Typography>
     </Box>
   );
 }
@@ -621,7 +621,16 @@ export default function WorkOrderDetail() {
   const number = workOrder.external_id || `#${workOrder.id}`;
 
   return (
-    <Box sx={{ p: { xs: 1.5, sm: 3 }, maxWidth: 1200, mx: 'auto' }}>
+    <Box sx={{
+      p: { xs: 1.5, sm: 3 },
+      maxWidth: 1200,
+      mx: 'auto',
+      fontSize: 16,
+      '& .MuiTypography-caption': { fontSize: 14, lineHeight: 1.4 },
+      '& .MuiTableCell-root': { fontSize: 15 },
+      '& .MuiChip-label': { fontSize: 14 },
+      '& .MuiTab-root': { fontSize: 15 },
+    }}>
       <Card sx={{ mb: 2, overflow: 'hidden', borderTop: `4px solid ${brand.orange}` }}>
         <CardContent sx={{ p: { xs: 2, sm: 2.5 } }}>
           <Box sx={{
@@ -635,21 +644,21 @@ export default function WorkOrderDetail() {
             <Box sx={{ minWidth: 0 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1 }}>
                 <Box component="img" src="/logo.png" alt="Accent Imaging" sx={{ height: 36, width: 'auto', display: 'block' }} />
-                <Typography sx={{ color: brand.orange, fontWeight: 800, letterSpacing: '0.08em', fontSize: 12 }}>
+                <Typography sx={{ color: brand.orange, fontWeight: 800, letterSpacing: '0.08em', fontSize: 15 }}>
                   WORK ORDER
                 </Typography>
               </Box>
               <Typography variant="h4" sx={{ color: brand.navy, fontWeight: 800, overflowWrap: 'anywhere', lineHeight: 1.1 }}>
                 {number}
               </Typography>
-              <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+              <Typography color="text.secondary" sx={{ mt: 0.5, fontSize: 16 }}>
                 {workOrder.customer_name || 'Customer not set'}
                 {workOrder.order_number ? ` · Order ${workOrder.order_number}` : ''}
               </Typography>
-              <Typography sx={{ mt: 1.25, color: brand.navy, fontWeight: 800, fontSize: 18 }}>
+              <Typography sx={{ mt: 1.25, color: brand.navy, fontWeight: 800, fontSize: 22 }}>
                 Due {formatDue(workOrder.due_date, zoneLabel)}
               </Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5, fontSize: 14 }}>
                 Created {formatStamp(workOrder.created_at, deliveryZone)} · Updated {formatStamp(workOrder.updated_at, deliveryZone)}
               </Typography>
             </Box>

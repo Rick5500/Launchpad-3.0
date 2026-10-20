@@ -208,6 +208,9 @@ function assertUrgency(row, expected, label) {
   assert(urgency.rush === expected.rush, `${label} rush should be ${expected.rush}, got ${urgency.rush}`);
   assert(urgency.tone === expected.tone, `${label} tone should be ${expected.tone}, got ${urgency.tone}`);
   assert(JSON.stringify(urgency.signals) === JSON.stringify(expected.signals), `${label} signals should be ${expected.signals.join(', ')}, got ${(urgency.signals || []).join(', ')}`);
+  if (Object.prototype.hasOwnProperty.call(expected, 'category')) {
+    assert(urgency.category === expected.category, `${label} category should be ${expected.category}, got ${urgency.category}`);
+  }
 }
 
 async function insertWorkOrder(db, fields) {
@@ -404,37 +407,37 @@ async function main() {
       due_soon: false,
       rush: true,
       tone: 'overdue',
-      signals: ['Overdue', 'Rush'],
+      category: 'overdue',
+      signals: ['Overdue'],
     }, 'past rush job');
     assertUrgency(findRow(board.json, 'P13-SOON'), {
       overdue: false,
       due_today: soonFlags.due_today,
       due_soon: true,
       rush: false,
-      tone: 'due_soon',
-      signals: ['Due soon'],
+      tone: 'new',
+      category: 'new',
+      signals: ['New'],
     }, 'due soon job');
     assert(soonFlags.due_soon === true, 'a job 20 minutes out should be inside the due-soon window');
-    const laterTone = laterFlags.overdue ? 'overdue' : (laterFlags.due_soon ? 'due_soon' : (laterFlags.due_today ? 'due_today' : null));
-    const laterSignals = [];
-    if (laterFlags.overdue) laterSignals.push('Overdue');
-    else if (laterFlags.due_soon) laterSignals.push('Due soon');
-    else if (laterFlags.due_today) laterSignals.push('Due today');
+    const laterCategory = laterFlags.overdue ? 'overdue' : 'in_production';
     assertUrgency(findRow(board.json, 'P13-LATER'), {
       overdue: laterFlags.overdue,
       due_today: laterFlags.due_today,
       due_soon: laterFlags.due_soon,
       rush: false,
-      tone: laterTone,
-      signals: laterSignals,
+      tone: laterCategory,
+      category: laterCategory,
+      signals: [laterCategory === 'overdue' ? 'Overdue' : 'In Production'],
     }, 'later job');
     assertUrgency(findRow(board.json, 'P13-TODAY'), {
       overdue: false,
       due_today: true,
       due_soon: false,
       rush: false,
-      tone: 'due_today',
-      signals: ['Due today'],
+      tone: 'new',
+      category: 'new',
+      signals: ['New'],
     }, 'date-only today');
     assertUrgency(findRow(board.json, 'P13-DATE'), {
       overdue: true,
@@ -442,6 +445,7 @@ async function main() {
       due_soon: false,
       rush: false,
       tone: 'overdue',
+      category: 'overdue',
       signals: ['Overdue'],
     }, 'date-only past');
     assertUrgency(findRow(board.json, 'P13-RUSH'), {
@@ -449,16 +453,18 @@ async function main() {
       due_today: false,
       due_soon: false,
       rush: true,
-      tone: 'rush',
-      signals: ['Rush'],
+      tone: 'new',
+      category: 'new',
+      signals: ['New'],
     }, 'future rush');
     assertUrgency(findRow(board.json, 'P13-HOLD'), {
       overdue: false,
       due_today: false,
       due_soon: false,
       rush: true,
-      tone: 'rush',
-      signals: ['Rush'],
+      tone: null,
+      category: null,
+      signals: [],
     }, 'on-hold rush');
     assert(!findRow(board.json, 'P13-DONE'), 'a completed job should stay off the active board');
     const ticketRow = findRow(board.json, ticket.external_id);
@@ -516,7 +522,7 @@ async function main() {
     const pickedRow = findRow(picked.json, ticket.external_id);
     assert(pickedRow.retrieved === true, 'the first scan should mark the job retrieved');
     assert(String(pickedRow.retrieved_at).startsWith('2026-10-20 16:06:03'), `retrieved time should be the scan, got ${pickedRow.retrieved_at}`);
-    assert(pickedRow.file_count === 1 && pickedRow.files_label === '1 / 16.80m', `files should read 1 / 16.80m, got ${pickedRow.files_label}`);
+    assert(pickedRow.file_count === 1 && pickedRow.files_label === '1 / 16.8 MB', `files should read 1 / 16.8 MB, got ${pickedRow.files_label}`);
 
     const completed = await request({
       method: 'GET',
@@ -530,6 +536,7 @@ async function main() {
       due_soon: false,
       rush: false,
       tone: null,
+      category: null,
       signals: [],
     }, 'completed job');
 

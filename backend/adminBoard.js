@@ -308,12 +308,26 @@ function presentActivity(row, timeZone, now) {
   };
 }
 
+function formatByteSize(bytes) {
+  const size = Number(bytes) || 0;
+  if (size < 1024) return `${Math.max(0, Math.round(size))} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = size / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const rounded = value >= 100 ? Math.round(value) : Math.round(value * 10) / 10;
+  const shown = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+  return `${shown} ${units[unit]}`;
+}
+
 function formatFilesLabel(count, bytes) {
   const files = Number(count) || 0;
   const size = Number(bytes) || 0;
   if (files <= 0 || size <= 0) return '0 / 0';
-  const megabytes = size / (1024 * 1024);
-  return `${files} / ${megabytes.toFixed(2)}m`;
+  return `${files} / ${formatByteSize(size)}`;
 }
 
 function statusLabel(status) {
@@ -358,13 +372,17 @@ function presentWorkOrder(row, timeZone) {
   };
 }
 
-// Time colours follow the delivery list for an active work order (open or in-progress).
-// On-hold and finished work are not overdue, matching the printable ticket.
-// A clock time uses classifyDelivery. A date with no clock uses the shop calendar day:
-// a past day is overdue, and today is due today. Due soon wins over due today when both
-// apply, so a job inside the due-soon window is labelled Due soon. Rush is the priority
-// and is reported in addition to any time signal.
+// Board categories are Overdue, New, and In Production. Overdue is an active job
+// whose due time has passed. New is still open. In Production is in progress.
+// Due today and due soon are not categories. Rush stays on the work order priority.
+// On-hold, finished, and cancelled work are not overdue.
 const TIME_ACTIVE_STATUSES = new Set(['open', 'in-progress']);
+const BOARD_CATEGORIES = new Set(['overdue', 'new', 'in_production']);
+const CATEGORY_LABELS = {
+  overdue: 'Overdue',
+  new: 'New',
+  in_production: 'In Production',
+};
 
 function shopDateKey(parts) {
   return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}`;
@@ -395,25 +413,19 @@ function boardUrgency(row, now, rules) {
     else if (dateOnly[1] === today) dueToday = true;
   }
 
-  const signals = [];
-  if (overdue) signals.push('Overdue');
-  else if (dueSoon) signals.push('Due soon');
-  else if (dueToday) signals.push('Due today');
-  if (rush) signals.push('Rush');
-
-  let tone = null;
-  if (overdue) tone = 'overdue';
-  else if (dueSoon) tone = 'due_soon';
-  else if (dueToday) tone = 'due_today';
-  else if (rush) tone = 'rush';
+  let category = null;
+  if (active && overdue) category = 'overdue';
+  else if (active && status === 'in-progress') category = 'in_production';
+  else if (active) category = 'new';
 
   return {
     overdue,
     due_today: dueToday,
     due_soon: dueSoon,
     rush,
-    tone,
-    signals,
+    category,
+    tone: category,
+    signals: category ? [CATEGORY_LABELS[category]] : [],
   };
 }
 
@@ -450,10 +462,14 @@ const workOrderSelect = `
   o.delivery_method AS delivery_method,
   ${DUE_AT_SQL} AS due_at,
   (
-    SELECT COUNT(*) FROM order_files f WHERE f.work_order_id = wo.id
+    SELECT COUNT(*) FROM order_files f
+    WHERE f.work_order_id = wo.id
+       OR (wo.order_id IS NOT NULL AND f.order_id = wo.order_id AND f.work_order_id IS NULL)
   ) AS file_count,
   (
-    SELECT COALESCE(SUM(f.size_bytes), 0) FROM order_files f WHERE f.work_order_id = wo.id
+    SELECT COALESCE(SUM(f.size_bytes), 0) FROM order_files f
+    WHERE f.work_order_id = wo.id
+       OR (wo.order_id IS NOT NULL AND f.order_id = wo.order_id AND f.work_order_id IS NULL)
   ) AS file_bytes,
   (
     SELECT MIN(picked.event_time) FROM (
@@ -594,11 +610,46 @@ function workOrderFilters(query, scope) {
   };
 }
 
+function parseCategory(value) {
+  if (value == null || value === '') return null;
+  const category = parseOptionalToken(value, 'category', 20);
+  if (!category) return null;
+  if (!BOARD_CATEGORIES.has(category)) {
+    throw new BoardError('category must be overdue, new, or in_production');
+  }
+  return category;
+}
+
 async function listWorkOrders(query, user) {
   const scope = resolveBoardScope(user, query);
   const limit = parseLimit(query.limit, DEFAULT_PAGE_SIZE);
   const offset = parseOffset(query.offset);
+  const category = parseCategory(query.category);
   const filters = workOrderFilters(query, scope);
+  const rules = getRules();
+  const now = new Date();
+  const present = (row) => ({
+    ...presentWorkOrder(row, rules.timezone),
+    urgency: boardUrgency(row, now, rules),
+  });
+
+  if (category) {
+    const matched = (await all(
+      `SELECT ${workOrderSelect} ${workOrderFrom} ${filters.where}
+       ORDER BY ${filters.orderBy}`,
+      filters.params
+    )).filter((row) => boardUrgency(row, now, rules).category === category);
+    return {
+      work_orders: matched.slice(offset, offset + limit).map(present),
+      total: matched.length,
+      limit,
+      offset,
+      timezone: rules.timezone,
+      evaluated_at: now.toISOString(),
+      viewer: presentViewer(scope),
+    };
+  }
+
   const totalRow = await get(
     `SELECT COUNT(*) AS count ${workOrderFrom} ${filters.where}`,
     filters.params
@@ -609,13 +660,8 @@ async function listWorkOrders(query, user) {
      LIMIT ? OFFSET ?`,
     [...filters.params, limit, offset]
   );
-  const rules = getRules();
-  const now = new Date();
   return {
-    work_orders: rows.map((row) => ({
-      ...presentWorkOrder(row, rules.timezone),
-      urgency: boardUrgency(row, now, rules),
-    })),
+    work_orders: rows.map(present),
     total: totalRow ? totalRow.count : 0,
     limit,
     offset,
@@ -623,6 +669,31 @@ async function listWorkOrders(query, user) {
     evaluated_at: now.toISOString(),
     viewer: presentViewer(scope),
   };
+}
+
+async function countCategories(scope, now) {
+  if (scope && scope.restricted && String(scope.department || '').trim().toLowerCase() === 'complete') {
+    return { overdue: 0, new: 0, in_production: 0 };
+  }
+  const rules = getRules();
+  const params = [];
+  let departmentSql = '';
+  if (scope && scope.restricted && scope.department && scope.department.toLowerCase() !== 'complete') {
+    departmentSql = ` AND lower(trim(coalesce(wo.department, ''))) = lower(?)`;
+    params.push(scope.department);
+  }
+  const rows = await all(
+    `SELECT wo.status, wo.priority, ${DUE_AT_SQL} AS due_at
+     ${workOrderFrom}
+     WHERE ${ACTIVE_SQL}${departmentSql}`,
+    params
+  );
+  const counts = { overdue: 0, new: 0, in_production: 0 };
+  for (const row of rows) {
+    const category = boardUrgency(row, now, rules).category;
+    if (category) counts[category] += 1;
+  }
+  return counts;
 }
 
 async function listActivity(query, preview, department) {
@@ -964,6 +1035,7 @@ async function loadSummary(user, query) {
     count: tab.count,
     color: tab.color,
   }));
+  const categories = await countCategories(scope, now);
 
   const body = {
     generated_at: now.toISOString(),
@@ -976,6 +1048,7 @@ async function loadSummary(user, query) {
       month_end: window.end,
       timezone: window.timezone,
       departments: statDepartments,
+      categories,
     },
     queue,
     activity: activity.activity,

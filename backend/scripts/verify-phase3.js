@@ -435,7 +435,7 @@ async function runApiChecks() {
       assert(sheet.due_time === '09:15', 'due time should be on the print');
       assert(sheet.special_instructions === 'Please deliver to loading dock.', 'special instructions should use the order notes');
       assert(sheet.routing.department, 'routing department should be present');
-      assert(sheet.routing.current_status_label === 'Active', 'a new work order prints as Active');
+      assert(sheet.routing.current_status_label === 'In Progress', 'printing a new work order moves it to In Production');
       assertCustomerHistory(sheet.production_history);
       decodePrinted(sheet.barcode_svg, sheet.external_id);
     }
@@ -454,10 +454,12 @@ async function runApiChecks() {
     assert(bySuffix.A.process.includes('Large Format'), 'process should include the service');
 
     const historyRows = await db.all(
-      'SELECT department, status FROM production_history WHERE work_order_id = ? ORDER BY id',
+      'SELECT department, status, notes FROM production_history WHERE work_order_id = ? ORDER BY id',
       [bySuffix.A.id]
     );
-    assert(historyRows.length === 1 && historyRows[0].department === 'Submitted' && historyRows[0].status === 'Submitted', 'print history should be the real submitted row');
+    assert(historyRows.length === 2, `printing should add one history row, got ${historyRows.length}`);
+    assert(historyRows[0].department === 'Submitted' && historyRows[0].status === 'Submitted', 'the created row should stay first');
+    assert(historyRows[1].status === 'in-progress' && historyRows[1].notes === 'Printed', 'printing should log In Production');
 
     const otherOrder = await request({ method: 'GET', path: `/api/orders/${orderId}/print`, token: other.token });
     const otherWorkOrder = await request({ method: 'GET', path: `/api/workorders/${bySuffix.A.id}/print`, token: other.token });
@@ -554,13 +556,17 @@ async function runApiChecks() {
     assert(moved.status === 201 && moved.json.department_moved === true, `quality scan should move the work order: ${moved.text}`);
     const afterMove = await request({ method: 'GET', path: `/api/workorders/${bySuffix.A.id}/print`, token: operator.token });
     const movedHistory = afterMove.json.work_orders[0].production_history;
-    assert(movedHistory.length === 2, 'a department scan should add a real history row');
-    assert(movedHistory[1].department === 'Quality', 'history department should be the scanned department');
-    assert(movedHistory[1].scanned_by === 'Operator One', 'history should name the operator who scanned');
-    assert(/Quality/.test(movedHistory[1].notes || ''), 'history notes should describe the move');
+    assert(movedHistory.length === 3, 'a department scan should add a real history row after the print row');
+    const qualityRow = movedHistory.find((row) => row.department === 'Quality');
+    assert(qualityRow, 'history department should be the scanned department');
+    assert(qualityRow.scanned_by === 'Operator One', 'history should name the operator who scanned');
+    assert(/Quality/.test(qualityRow.notes || ''), 'history notes should describe the move');
     const customerAfterMove = await request({ method: 'GET', path: `/api/workorders/${bySuffix.A.id}/print`, token: customer.token });
     assertCustomerHistory(customerAfterMove.json.work_orders[0].production_history);
-    assert(customerAfterMove.json.work_orders[0].production_history[1].department === 'Quality', 'customer should still see the department and time');
+    assert(
+      customerAfterMove.json.work_orders[0].production_history.some((row) => row.department === 'Quality'),
+      'customer should still see the department and time'
+    );
     assert(!customerAfterMove.text.includes('Operator One'), 'customer print should not include the operator name');
 
     const willCall = await request({
