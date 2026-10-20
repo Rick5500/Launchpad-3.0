@@ -98,11 +98,11 @@ function Barcode({ svg, className }) {
   );
 }
 
-function Field({ label, value }) {
+function Field({ label, value, prominent = false }) {
   return (
     <div className="wo-field">
       <span className="wo-label">{label}</span>
-      <span className="wo-value">{display(value)}</span>
+      <span className={prominent ? 'wo-value wo-customer-name' : 'wo-value'}>{display(value)}</span>
     </div>
   );
 }
@@ -234,7 +234,9 @@ function WorkOrderSheet({ payload, sheet }) {
   const due = dueLabel(sheet);
   const rush = String(sheet.priority || '').trim().toLowerCase() === 'rush';
   const overdue = Boolean(sheet.overdue) && isActiveStatus(sheet.routing?.current_status);
-  const customerName = sheet.contact?.company || sheet.contact?.contact_name || '';
+  const companyName = String(sheet.contact?.company || '').trim();
+  const contactName = String(sheet.contact?.contact_name || '').trim();
+  const customerName = companyName || contactName;
   const continuation = [sheet.barcode_value, customerName].filter((part) => String(part || '').trim()).join(' · ');
   const zone = sheet.timezone;
   const instructions = (payload.scan_instructions || []).join(' ');
@@ -300,8 +302,8 @@ function WorkOrderSheet({ payload, sheet }) {
       <div className="wo-columns">
         <Section title="CUSTOMER">
           <div className="wo-panel-body">
-            <Field label="Company" value={sheet.contact?.company} />
-            <Field label="Contact" value={sheet.contact?.contact_name} />
+            <Field label="Company" value={sheet.contact?.company} prominent={Boolean(companyName)} />
+            <Field label="Contact" value={sheet.contact?.contact_name} prominent={!companyName && Boolean(contactName)} />
             <Field label="Phone" value={sheet.contact?.phone} />
             <Field label="Email" value={sheet.contact?.email} />
             <AddressFields address={sheet.address} />
