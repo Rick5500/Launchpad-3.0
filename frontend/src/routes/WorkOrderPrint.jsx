@@ -298,7 +298,10 @@ function WorkOrderSheet({ payload, sheet }) {
           </div>
         ) : null}
       </div>
-
+            </td>
+          </tr>
+          <tr>
+            <td>
       <div className="wo-columns">
         <Section title="CUSTOMER">
           <div className="wo-panel-body">
@@ -332,7 +335,10 @@ function WorkOrderSheet({ payload, sheet }) {
           </div>
         </Section>
       </div>
-
+            </td>
+          </tr>
+          <tr>
+            <td>
       <Section title="JOB DETAILS">
         <div className="wo-meta-line">
           <span><strong>Service:</strong> {display(sheet.service_name)}</span>
@@ -352,7 +358,10 @@ function WorkOrderSheet({ payload, sheet }) {
           <div className="wo-empty">{sheet.specifications || 'No specifications recorded.'}</div>
         )}
       </Section>
-
+            </td>
+          </tr>
+          <tr>
+            <td>
       <Section title="ORIGINALS / FILES">
         <div className="wo-panel-body">
           <Field label="Originals" value={sheet.originals_source_label || 'Not specified'} />
@@ -381,7 +390,10 @@ function WorkOrderSheet({ payload, sheet }) {
           </table>
         ) : <div className="wo-empty">No files are attached.</div>}
       </Section>
-
+            </td>
+          </tr>
+          <tr>
+            <td>
       <div className="wo-columns">
         <Section title="SPECIAL INSTRUCTIONS">
           <div className="wo-panel-body">
@@ -402,13 +414,20 @@ function WorkOrderSheet({ payload, sheet }) {
             )) : <Field label="Proof" value="Not specified" />}
           </div>
         </Section>
-        <Section title="PAYMENT METHOD">
-          <div className="wo-panel-body">
-            <Field label="Payment" value={sheet.payment_method_label || 'Not specified'} />
-          </div>
-        </Section>
       </div>
-
+            </td>
+          </tr>
+          <tr>
+            <td>
+      <Section title="PAYMENT METHOD">
+        <div className="wo-panel-body">
+          <Field label="Payment" value={sheet.payment_method_label || 'Not specified'} />
+        </div>
+      </Section>
+            </td>
+          </tr>
+          <tr>
+            <td>
       <Section title="PRODUCTION HISTORY">
         {history.length ? (
           <table className="wo-table">
@@ -435,17 +454,22 @@ function WorkOrderSheet({ payload, sheet }) {
           </table>
         ) : <div className="wo-empty">No production history recorded.</div>}
       </Section>
+            </td>
+          </tr>
+          <tr>
+            <td>
+      <div className="wo-end">
+        <WriteInGrid />
 
-      <WriteInGrid />
-
-      <footer className="wo-footer">
-        <div className="wo-shop-footer">
-          {shopLines.map((line) => <div key={line}>{line}</div>)}
-        </div>
-        <div className="wo-footer-meta">
-          <div>Printed {display(shopStamp(payload.generated_at, zone))}</div>
-        </div>
-      </footer>
+        <footer className="wo-footer">
+          <div className="wo-shop-footer">
+            {shopLines.map((line) => <div key={line}>{line}</div>)}
+          </div>
+          <div className="wo-footer-meta">
+            <div>Printed {display(shopStamp(payload.generated_at, zone))}</div>
+          </div>
+        </footer>
+      </div>
             </td>
           </tr>
         </tbody>

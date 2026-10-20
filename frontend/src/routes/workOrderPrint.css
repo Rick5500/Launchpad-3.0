@@ -269,16 +269,16 @@
 }
 
 .wo-panel-body {
-  padding: 0.12in 0.14in;
+  padding: 0.1in 0.14in;
   font-size: 12pt;
   line-height: 1.5;
 }
 
 .wo-field {
   display: grid;
-  grid-template-columns: 1.35in minmax(0, 1fr);
+  grid-template-columns: 1.25in minmax(0, 1fr);
   gap: 0.08in;
-  padding: 0.02in 0;
+  padding: 0;
   line-height: 1.5;
 }
 
@@ -410,8 +410,8 @@
 }
 
 .wo-footer {
-  margin-top: 0.2in;
-  padding-top: 0.1in;
+  margin-top: 0.08in;
+  padding-top: 0.06in;
   border-top: 2px solid #0a2f6e;
   display: flex;
   justify-content: space-between;
@@ -422,7 +422,7 @@
 }
 
 .wo-shop-footer {
-  line-height: 1.5;
+  line-height: 1.4;
   font-weight: 700;
 }
 
@@ -518,7 +518,7 @@
    These follow .wo-flow so the layout table does not clear the grid borders. */
 .work-order-sheet .wo-write-grid {
   width: 100%;
-  margin-top: 0.04in;
+  margin-top: 0;
   border-collapse: collapse;
   table-layout: fixed;
   border: 1px solid #0a2f6e;
@@ -623,6 +623,12 @@
     display: table-header-group;
   }
 
+  .wo-flow > thead th {
+    font-size: 0;
+    line-height: 0;
+    padding: 0;
+  }
+
   .wo-flow > tbody > tr {
     break-inside: auto;
     page-break-inside: auto;
@@ -653,6 +659,11 @@
     margin-top: -0.32in;
     position: relative;
     z-index: 1;
+  }
+
+  .wo-end {
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 
   .work-order-sheet .wo-write-grid {
