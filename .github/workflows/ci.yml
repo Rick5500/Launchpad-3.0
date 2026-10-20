@@ -72,6 +72,9 @@ jobs:
       - name: Verify phase 17
         working-directory: backend
         run: npm run verify:phase17
+      - name: Verify phase 18
+        working-directory: backend
+        run: npm run verify:phase18
       - name: Build frontend
         working-directory: frontend
         run: |

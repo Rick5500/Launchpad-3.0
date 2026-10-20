@@ -815,6 +815,97 @@ async function ensureProofs() {
   await run('CREATE INDEX IF NOT EXISTS idx_proof_files_proof ON proof_files(proof_id)');
 }
 
+async function ensureInboundEmails() {
+  await run(`CREATE TABLE IF NOT EXISTS inbound_emails (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    graph_message_id TEXT NOT NULL UNIQUE,
+    mailbox TEXT,
+    from_address TEXT,
+    from_name TEXT,
+    subject TEXT,
+    received_at TEXT,
+    body_text TEXT,
+    status TEXT NOT NULL DEFAULT 'new',
+    suggestion_json TEXT,
+    order_id INTEGER,
+    converted_by INTEGER,
+    converted_at DATETIME,
+    dismissed_by INTEGER,
+    dismissed_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME,
+    FOREIGN KEY(order_id) REFERENCES orders(id)
+  )`);
+  await ensureColumns('inbound_emails', [
+    { name: 'graph_message_id', definition: 'TEXT' },
+    { name: 'mailbox', definition: 'TEXT' },
+    { name: 'from_address', definition: 'TEXT' },
+    { name: 'from_name', definition: 'TEXT' },
+    { name: 'subject', definition: 'TEXT' },
+    { name: 'received_at', definition: 'TEXT' },
+    { name: 'body_text', definition: 'TEXT' },
+    { name: 'status', definition: "TEXT DEFAULT 'new'" },
+    { name: 'suggestion_json', definition: 'TEXT' },
+    { name: 'order_id', definition: 'INTEGER' },
+    { name: 'converted_by', definition: 'INTEGER' },
+    { name: 'converted_at', definition: 'DATETIME' },
+    { name: 'dismissed_by', definition: 'INTEGER' },
+    { name: 'dismissed_at', definition: 'DATETIME' },
+    { name: 'created_at', definition: 'DATETIME' },
+    { name: 'updated_at', definition: 'DATETIME' },
+  ]);
+  await run(`CREATE TABLE IF NOT EXISTS inbound_email_attachments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    inbound_email_id INTEGER NOT NULL,
+    graph_attachment_id TEXT,
+    original_name TEXT NOT NULL,
+    stored_name TEXT,
+    mime_type TEXT,
+    size_bytes INTEGER,
+    skipped_reason TEXT,
+    order_file_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(inbound_email_id) REFERENCES inbound_emails(id),
+    FOREIGN KEY(order_file_id) REFERENCES order_files(id)
+  )`);
+  await ensureColumns('inbound_email_attachments', [
+    { name: 'inbound_email_id', definition: 'INTEGER' },
+    { name: 'graph_attachment_id', definition: 'TEXT' },
+    { name: 'original_name', definition: 'TEXT' },
+    { name: 'stored_name', definition: 'TEXT' },
+    { name: 'mime_type', definition: 'TEXT' },
+    { name: 'size_bytes', definition: 'INTEGER' },
+    { name: 'skipped_reason', definition: 'TEXT' },
+    { name: 'order_file_id', definition: 'INTEGER' },
+    { name: 'created_at', definition: 'DATETIME' },
+  ]);
+  await run(`CREATE TABLE IF NOT EXISTS inbound_mail_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    delta_link TEXT,
+    watermark TEXT,
+    last_attempt_at DATETIME,
+    last_success_at DATETIME,
+    last_status TEXT,
+    last_error TEXT,
+    last_imported INTEGER
+  )`);
+  await ensureColumns('inbound_mail_state', [
+    { name: 'delta_link', definition: 'TEXT' },
+    { name: 'watermark', definition: 'TEXT' },
+    { name: 'last_attempt_at', definition: 'DATETIME' },
+    { name: 'last_success_at', definition: 'DATETIME' },
+    { name: 'last_status', definition: 'TEXT' },
+    { name: 'last_error', definition: 'TEXT' },
+    { name: 'last_imported', definition: 'INTEGER' },
+  ]);
+  await run('CREATE UNIQUE INDEX IF NOT EXISTS idx_inbound_emails_graph_id ON inbound_emails(graph_message_id)');
+  await run('CREATE INDEX IF NOT EXISTS idx_inbound_emails_status ON inbound_emails(status, received_at)');
+  await run('CREATE INDEX IF NOT EXISTS idx_inbound_email_attachments_email ON inbound_email_attachments(inbound_email_id)');
+  await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_inbound_email_attachments_graph
+    ON inbound_email_attachments(inbound_email_id, graph_attachment_id)
+    WHERE graph_attachment_id IS NOT NULL`);
+}
+
 async function normalizeLegacyWorkOrderStatuses() {
   const result = await run(
     `UPDATE work_orders
@@ -855,6 +946,8 @@ async function seedSystemSettings() {
     ['email_customers_on_file_share', '1'],
     // Missing means staff email the customer when a proof is sent. An off switch is left alone.
     ['email_customers_on_proof', '1'],
+    // Missing means the orders mailbox is polled when Microsoft 365 is configured.
+    ['inbound_email_polling_enabled', '1'],
   ];
   for (const [key, value] of defaults) {
     const existing = await get('SELECT key FROM system_settings WHERE key = ?', [key]);
@@ -1391,6 +1484,7 @@ async function main() {
   await ensureNotifications();
   await ensureSharedFiles();
   await ensureProofs();
+  await ensureInboundEmails();
   await seedAdmin();
   await seedCustomers();
   await seedDepartments();

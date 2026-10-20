@@ -15,6 +15,7 @@ import {
 import SectionCard from '../components/SectionCard';
 import LoadingState from '../components/LoadingState';
 import { authFetch } from '../api';
+import { formatLocalTimestamp } from '../brand';
 
 export default function SystemSettingsPage() {
   const [settings, setSettings] = useState(null);
@@ -27,6 +28,7 @@ export default function SystemSettingsPage() {
     customer_self_signup_enabled: true,
     email_customers_on_file_share: true,
     email_customers_on_proof: true,
+    inbound_email_polling_enabled: true,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -34,6 +36,7 @@ export default function SystemSettingsPage() {
   const [notice, setNotice] = useState('');
   const [testTo, setTestTo] = useState('');
   const [testing, setTesting] = useState(false);
+  const [checkingMail, setCheckingMail] = useState(false);
 
   function apply(body) {
     setSettings(body);
@@ -46,6 +49,7 @@ export default function SystemSettingsPage() {
       customer_self_signup_enabled: body.customer_self_signup_enabled !== false,
       email_customers_on_file_share: body.email_customers_on_file_share !== false,
       email_customers_on_proof: body.email_customers_on_proof !== false,
+      inbound_email_polling_enabled: body.inbound_email_polling_enabled !== false,
     });
   }
 
@@ -77,6 +81,7 @@ export default function SystemSettingsPage() {
           customer_self_signup_enabled: form.customer_self_signup_enabled,
           email_customers_on_file_share: form.email_customers_on_file_share,
           email_customers_on_proof: form.email_customers_on_proof,
+          inbound_email_polling_enabled: form.inbound_email_polling_enabled,
         }),
       });
       const body = await response.json().catch(() => ({}));
@@ -109,7 +114,32 @@ export default function SystemSettingsPage() {
     }
   }
 
+  async function checkMailbox() {
+    setCheckingMail(true);
+    setError('');
+    setNotice('');
+    try {
+      const response = await authFetch('/api/inbound-emails/sync', { method: 'POST' });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Unable to check the mailbox');
+      const refreshed = await authFetch('/api/settings');
+      const next = await refreshed.json().catch(() => ({}));
+      if (refreshed.ok) apply(next);
+      setNotice(body.imported ? `Checked the mailbox. ${body.imported} new email${body.imported === 1 ? '' : 's'}.` : 'Checked the mailbox. No new email.');
+    } catch (err) {
+      setError(err.message || 'Unable to check the mailbox');
+      const refreshed = await authFetch('/api/settings').catch(() => null);
+      if (refreshed && refreshed.ok) {
+        const next = await refreshed.json().catch(() => ({}));
+        apply(next);
+      }
+    } finally {
+      setCheckingMail(false);
+    }
+  }
+
   const readOnly = settings?.read_only || {};
+  const inbound = settings?.inbound_mail || {};
   const rows = [
     ['Delivery timezone', readOnly.delivery_timezone],
     ['Will Call hours', readOnly.will_call_window_start ? `${readOnly.will_call_window_start} – ${readOnly.will_call_window_end}` : ''],
@@ -191,10 +221,43 @@ export default function SystemSettingsPage() {
           <Typography variant="body2" color="text.secondary">
             This is the default on Send Proof. The message links to sign in. It does not include a public download.
           </Typography>
+          <FormControlLabel
+            control={(
+              <Switch
+                checked={form.inbound_email_polling_enabled}
+                onChange={(event) => setForm({ ...form, inbound_email_polling_enabled: event.target.checked })}
+              />
+            )}
+            label="Poll the orders mailbox"
+          />
+          <Typography variant="body2" color="text.secondary">
+            When this is off, Launchpad does not check Microsoft 365 on a schedule. Check now still reads the mailbox. Mail is never marked read, moved, or deleted.
+          </Typography>
           <Box>
             <Button type="submit" variant="contained" disabled={saving || loading}>{saving ? 'Saving...' : 'Save settings'}</Button>
           </Box>
         </Box>
+      </SectionCard>
+
+      <SectionCard
+        title="Email orders"
+        subtitle={inbound.configured
+          ? `${inbound.mailbox || 'Orders mailbox'} · ${inbound.folder || 'Inbox'} · every ${inbound.poll_seconds || 180} seconds`
+          : 'Microsoft 365 is not configured. Set M365_TENANT_ID, M365_CLIENT_ID, M365_CLIENT_SECRET, and M365_MAILBOX on the server. Those values are not stored here.'}
+      >
+        <Typography sx={{ mb: 1 }}>
+          {inbound.last_success_at ? `Last successful check: ${formatLocalTimestamp(inbound.last_success_at)}` : 'No successful check yet.'}
+        </Typography>
+        {inbound.last_status === 'error' && inbound.last_error ? (
+          <Alert severity="warning" sx={{ mb: 1 }}>{inbound.last_error}</Alert>
+        ) : (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            {inbound.last_status === 'ok' ? 'The last check succeeded.' : 'Status appears after the first check.'}
+          </Typography>
+        )}
+        <Button variant="outlined" disabled={checkingMail || !inbound.configured} onClick={checkMailbox}>
+          {checkingMail ? 'Checking…' : 'Check now'}
+        </Button>
       </SectionCard>
 
       <SectionCard title="Test email" subtitle="Sends a short message with the letterhead above. Files shared with a customer use the same mail setup.">
