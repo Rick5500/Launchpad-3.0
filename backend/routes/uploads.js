@@ -1,14 +1,16 @@
 const express = require('express');
-const fs = require('fs');
 const auth = require('../auth');
 const db = require('../db');
 const {
   sanitizeOriginalName,
-  safeStoredPath,
   contentTypeFor,
   removeUploaded,
   uploadMiddleware,
+  uploadErrorStatus,
   uploadErrorMessage,
+  storageRootOfUpload,
+  openStored,
+  removeStored,
 } = require('../fileStore');
 const { maxUnattachedUploads, countUnattachedUploads } = require('../uploadMaintenance');
 
@@ -58,8 +60,7 @@ router.post('/', auth.requireAuth, uploadRoles, (req, res) => {
   uploadMiddleware()(req, res, async (err) => {
     if (err) {
       removeUploaded(req.files);
-      const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
-      return res.status(status).json({ error: uploadErrorMessage(err) });
+      return res.status(uploadErrorStatus(err)).json({ error: uploadErrorMessage(err) });
     }
 
     const files = req.files || [];
@@ -97,14 +98,14 @@ router.post('/', auth.requireAuth, uploadRoles, (req, res) => {
       const saved = [];
       for (const file of files) {
         if (!file.size) {
-          fs.unlink(file.path, () => {});
+          removeUploaded([file]);
           throw Object.assign(new Error('Empty files are not allowed'), { status: 400 });
         }
         const storedName = require('path').basename(file.filename);
         const inserted = await run(
           `INSERT INTO order_files (
-            customer_id, uploaded_by, original_name, stored_name, mime_type, size_bytes
-          ) VALUES (?,?,?,?,?,?)`,
+            customer_id, uploaded_by, original_name, stored_name, mime_type, size_bytes, storage_root
+          ) VALUES (?,?,?,?,?,?,?)`,
           [
             customerId,
             Number(req.user.userId),
@@ -112,6 +113,7 @@ router.post('/', auth.requireAuth, uploadRoles, (req, res) => {
             storedName,
             contentTypeFor(storedName) || file.mimetype || null,
             file.size,
+            storageRootOfUpload(file),
           ]
         );
         insertedIds.push(inserted.lastID);
@@ -143,27 +145,30 @@ router.get('/:id/download', auth.requireAuth, uploadRoles, async (req, res) => {
   }
   try {
     const file = await get(
-      `SELECT id, order_id, customer_id, original_name, stored_name, size_bytes
+      `SELECT id, order_id, customer_id, original_name, stored_name, size_bytes, storage_root
        FROM order_files WHERE id = ?`,
       [id]
     );
     if (!file || !(await canAccessFile(req.user, file))) {
       return res.status(404).json({ error: 'File not found' });
     }
-    const fullPath = safeStoredPath(file.stored_name);
-    if (!fullPath || !fs.existsSync(fullPath)) {
+    const opened = openStored(file.stored_name, file.storage_root);
+    if (!opened) {
       return res.status(404).json({ error: 'File not found' });
     }
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('Content-Type', contentTypeFor(file.stored_name));
     res.set('Cache-Control', 'private, no-store');
-    return res.download(fullPath, sanitizeOriginalName(file.original_name), (downloadErr) => {
+    return res.download(opened.fullPath, sanitizeOriginalName(file.original_name), (downloadErr) => {
       if (!downloadErr || downloadErr.code === 'ECONNABORTED') return;
       if (res.headersSent) return;
       console.error('DOWNLOAD ERROR:', downloadErr);
       res.status(500).json({ error: 'Failed to download file' });
     });
   } catch (err) {
+    if (err && err.status === 503) {
+      return res.status(503).json({ error: err.publicMessage || err.message });
+    }
     console.error('DOWNLOAD ERROR:', err);
     return res.status(500).json({ error: 'Failed to download file' });
   }
@@ -176,7 +181,7 @@ router.delete('/:id', auth.requireAuth, uploadRoles, async (req, res) => {
   }
   try {
     const file = await get(
-      'SELECT id, order_id, customer_id, stored_name FROM order_files WHERE id = ?',
+      'SELECT id, order_id, customer_id, stored_name, storage_root FROM order_files WHERE id = ?',
       [id]
     );
     if (!file || !(await canAccessFile(req.user, file))) {
@@ -186,8 +191,7 @@ router.delete('/:id', auth.requireAuth, uploadRoles, async (req, res) => {
       return res.status(403).json({ error: 'Files attached to an order cannot be deleted' });
     }
     await run('DELETE FROM order_files WHERE id = ?', [id]);
-    const fullPath = safeStoredPath(file.stored_name);
-    if (fullPath) fs.unlink(fullPath, () => {});
+    removeStored(file.stored_name, file.storage_root);
     return res.json({ ok: true, id });
   } catch (err) {
     console.error('UPLOAD DELETE ERROR:', err);

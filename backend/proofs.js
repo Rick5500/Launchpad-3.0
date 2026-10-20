@@ -1,4 +1,3 @@
-const fs = require('fs');
 const path = require('path');
 const activityLog = require('./activityLog');
 const { get, all, withTransaction } = require('./dbAsync');
@@ -8,6 +7,8 @@ const {
   sanitizeOriginalName,
   safeStoredPath,
   contentTypeFor,
+  storageRootOfUpload,
+  openStored,
 } = require('./fileStore');
 const { httpError } = require('./httpError');
 const mailer = require('./mailer');
@@ -477,9 +478,16 @@ async function sendProof(user, orderId, body, files) {
         const file = files[index];
         const storedName = path.basename(file.filename);
         await tx.run(
-          `INSERT INTO proof_files (proof_id, original_name, stored_name, mime_type, size_bytes)
-           VALUES (?,?,?,?,?)`,
-          [inserted.lastID, names[index], storedName, contentTypeFor(storedName), file.size]
+          `INSERT INTO proof_files (proof_id, original_name, stored_name, mime_type, size_bytes, storage_root)
+           VALUES (?,?,?,?,?,?)`,
+          [
+            inserted.lastID,
+            names[index],
+            storedName,
+            contentTypeFor(storedName),
+            file.size,
+            storageRootOfUpload(file),
+          ]
         );
       }
       const proof = {
@@ -718,7 +726,7 @@ async function requestChanges(user, id, body) {
 async function prepareFile(user, rawId) {
   const id = parseProofId(rawId);
   const file = await get(
-    `SELECT pf.id, pf.original_name, pf.stored_name, pf.proof_id,
+    `SELECT pf.id, pf.original_name, pf.stored_name, pf.storage_root, pf.proof_id,
             p.order_id, o.customer_id AS order_customer_id
      FROM proof_files pf
      JOIN proofs p ON p.id = pf.proof_id
@@ -732,10 +740,11 @@ async function prepareFile(user, rawId) {
       throw httpError(404, 'File not found');
     }
   }
-  const fullPath = safeStoredPath(file.stored_name);
-  if (!fullPath || !fs.existsSync(fullPath)) throw httpError(404, 'File not found');
+  const opened = openStored(file.stored_name, file.storage_root);
+  if (!opened) throw httpError(404, 'File not found');
   return {
-    fullPath,
+    fullPath: opened.fullPath,
+    size: opened.size,
     downloadName: sanitizeOriginalName(file.original_name),
     contentType: contentTypeFor(file.stored_name),
   };

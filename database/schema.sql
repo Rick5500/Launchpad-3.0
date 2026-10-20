@@ -203,6 +203,8 @@ CREATE TABLE IF NOT EXISTS order_files (
   stored_name TEXT NOT NULL,
   mime_type TEXT,
   size_bytes INTEGER NOT NULL,
+  storage_root TEXT,
+  storage_previous TEXT,
   uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(order_id) REFERENCES orders(id),
   FOREIGN KEY(line_item_id) REFERENCES order_line_items(id),
@@ -355,7 +357,7 @@ CREATE INDEX IF NOT EXISTS idx_deliveries_due_time ON deliveries(due_time);
 CREATE INDEX IF NOT EXISTS idx_deliveries_status ON deliveries(status);
 
 -- A send of one or more files to a customer. order_id is null when staff send files
--- with no order. Bytes still live on shared_files under UPLOAD_DIR.
+-- with no order. Bytes live under the file's storage_root, or the original upload folder.
 CREATE TABLE IF NOT EXISTS file_transfers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   customer_id INTEGER NOT NULL,
@@ -376,7 +378,7 @@ CREATE TABLE IF NOT EXISTS file_transfers (
 CREATE INDEX IF NOT EXISTS idx_file_transfers_customer ON file_transfers(customer_id);
 CREATE INDEX IF NOT EXISTS idx_file_transfers_order ON file_transfers(order_id);
 
--- Files staff send to the customer (proofs, finished files). Bytes live under UPLOAD_DIR.
+-- Files staff send to the customer (proofs, finished files). Bytes live under storage_root.
 -- deleted_at is a soft delete. customer_downloaded_at is set the first time that customer downloads.
 -- order_id is null for a standalone transfer. transfer_id groups the files from one send.
 CREATE TABLE IF NOT EXISTS shared_files (
@@ -389,6 +391,8 @@ CREATE TABLE IF NOT EXISTS shared_files (
   stored_name TEXT NOT NULL,
   mime_type TEXT,
   size_bytes INTEGER NOT NULL,
+  storage_root TEXT,
+  storage_previous TEXT,
   message TEXT,
   batch_id TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -438,6 +442,8 @@ CREATE TABLE IF NOT EXISTS proof_files (
   stored_name TEXT NOT NULL,
   mime_type TEXT,
   size_bytes INTEGER NOT NULL,
+  storage_root TEXT,
+  storage_previous TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(proof_id) REFERENCES proofs(id)
 );
@@ -472,6 +478,8 @@ CREATE TABLE IF NOT EXISTS inbound_email_attachments (
   stored_name TEXT,
   mime_type TEXT,
   size_bytes INTEGER,
+  storage_root TEXT,
+  storage_previous TEXT,
   skipped_reason TEXT,
   order_file_id INTEGER,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

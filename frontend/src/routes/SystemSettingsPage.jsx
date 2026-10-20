@@ -37,6 +37,11 @@ export default function SystemSettingsPage() {
   const [testTo, setTestTo] = useState('');
   const [testing, setTesting] = useState(false);
   const [checkingMail, setCheckingMail] = useState(false);
+  const [storagePath, setStoragePath] = useState('');
+  const [storageSaving, setStorageSaving] = useState(false);
+  const [storageMoving, setStorageMoving] = useState(false);
+  const [storageError, setStorageError] = useState('');
+  const [storageNotice, setStorageNotice] = useState('');
 
   function apply(body) {
     setSettings(body);
@@ -51,6 +56,7 @@ export default function SystemSettingsPage() {
       email_customers_on_proof: body.email_customers_on_proof !== false,
       inbound_email_polling_enabled: body.inbound_email_polling_enabled !== false,
     });
+    if (body.file_storage) setStoragePath(body.file_storage.path || '');
   }
 
   useEffect(() => {
@@ -138,7 +144,76 @@ export default function SystemSettingsPage() {
     }
   }
 
+  async function saveStorage(event) {
+    event.preventDefault();
+    setStorageSaving(true);
+    setStorageError('');
+    setStorageNotice('');
+    setError('');
+    try {
+      const response = await authFetch('/api/settings/file-storage', {
+        method: 'PUT',
+        body: JSON.stringify({ path: storagePath }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Unable to save the storage folder');
+      apply(body);
+      setStorageNotice('Storage folder saved.');
+    } catch (err) {
+      setStorageError(err.message || 'Unable to save the storage folder');
+    } finally {
+      setStorageSaving(false);
+    }
+  }
+
+  async function useEnvironmentFolder() {
+    setStorageSaving(true);
+    setStorageError('');
+    setStorageNotice('');
+    setError('');
+    try {
+      const response = await authFetch('/api/settings/file-storage', {
+        method: 'PUT',
+        body: JSON.stringify({ path: '' }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Unable to save the storage folder');
+      apply(body);
+      setStorageNotice('Storage folder now follows UPLOAD_DIR, or the default folder.');
+    } catch (err) {
+      setStorageError(err.message || 'Unable to save the storage folder');
+    } finally {
+      setStorageSaving(false);
+    }
+  }
+
+  async function moveExistingFiles() {
+    setStorageMoving(true);
+    setStorageError('');
+    setStorageNotice('');
+    setError('');
+    try {
+      const response = await authFetch('/api/settings/file-storage/move', { method: 'POST' });
+      const body = await response.json().catch(() => ({}));
+      if (body.file_storage) {
+        setSettings((current) => (current ? { ...current, file_storage: body.file_storage } : current));
+        if (body.file_storage.path) setStoragePath(body.file_storage.path);
+      }
+      if (!response.ok) throw new Error(body.error || 'Unable to move existing files');
+      const moved = body.moved || 0;
+      const already = body.already || 0;
+      const missing = body.missing || 0;
+      const failed = body.failed || 0;
+      setStorageNotice(`Moved ${moved} file${moved === 1 ? '' : 's'}. ${already} already in this folder. ${missing} missing. ${failed} failed.`);
+    } catch (err) {
+      setStorageError(err.message || 'Unable to move existing files');
+    } finally {
+      setStorageMoving(false);
+    }
+  }
+
   const readOnly = settings?.read_only || {};
+  const storage = settings?.file_storage || {};
   const inbound = settings?.inbound_mail || {};
   const rows = [
     ['Delivery timezone', readOnly.delivery_timezone],
@@ -158,11 +233,57 @@ export default function SystemSettingsPage() {
     <Box data-testid="settings-page">
       <Typography variant="h4" gutterBottom>System Settings</Typography>
       <Typography color="text.secondary" sx={{ mb: 2 }}>
-        Letterhead is used by the printable work order. Pickup hours, delivery hours, cutoffs, timezone, and upload limits come from the server environment and are read-only here.
+        Letterhead is used by the printable work order. The file storage folder can be changed here. Pickup hours, delivery hours, cutoffs, timezone, and upload limits come from the server environment and are read-only here.
       </Typography>
       {loading ? <LoadingState message="Loading settings..." /> : null}
       {error ? <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert> : null}
       {notice ? <Alert severity="success" sx={{ mb: 2 }}>{notice}</Alert> : null}
+
+      <SectionCard
+        title="File storage"
+        subtitle={'Uploads, shared files, proofs, and email attachments are stored in this folder. A mapped drive such as Z:\\launchpad or a network share such as \\\\server\\share\\launchpad is allowed. OneDrive and SharePoint are not connected.'}
+      >
+        <Box component="form" onSubmit={saveStorage} data-testid="file-storage-section" sx={{ display: 'grid', gap: 2, maxWidth: 720 }}>
+          {storage.warning ? <Alert severity="warning" data-testid="file-storage-warning">{storage.warning}</Alert> : null}
+          {storageError ? <Alert severity="error" data-testid="file-storage-error">{storageError}</Alert> : null}
+          {storageNotice ? <Alert severity="success">{storageNotice}</Alert> : null}
+          <Box>
+            <Typography variant="body2" color="text.secondary">Current folder</Typography>
+            <Typography data-testid="file-storage-path" sx={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
+              {storage.path || '—'}
+            </Typography>
+            <Typography variant="body2" color="text.secondary" data-testid="file-storage-source">
+              {storage.source === 'settings' ? 'Saved in system settings.' : storage.source === 'environment' ? 'From UPLOAD_DIR.' : 'Default folder.'}
+              {storage.driver_label ? ` Driver: ${storage.driver_label}.` : ''}
+            </Typography>
+          </Box>
+          <Typography data-testid="file-storage-free">
+            Free space: {storage.reachable ? (storage.free_label || 'Unknown') : 'Unavailable'}
+          </Typography>
+          <TextField
+            label="Storage folder"
+            value={storagePath}
+            onChange={(event) => setStoragePath(event.target.value)}
+            required
+            inputProps={{ 'data-testid': 'file-storage-input' }}
+            helperText="Absolute path only. The folder is created when it is missing, then checked by writing, reading, and deleting a test file."
+          />
+          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+            <Button type="submit" variant="contained" disabled={storageSaving || loading} data-testid="file-storage-save">
+              {storageSaving ? 'Checking...' : 'Save folder'}
+            </Button>
+            <Button type="button" variant="outlined" onClick={useEnvironmentFolder} disabled={storageSaving || loading}>
+              Use UPLOAD_DIR
+            </Button>
+            <Button type="button" variant="outlined" onClick={moveExistingFiles} disabled={storageMoving || storageSaving || !storage.reachable} data-testid="file-storage-move">
+              {storageMoving ? 'Moving...' : `Move existing files${storage.outside_current_folder ? ` (${storage.outside_current_folder})` : ''}`}
+            </Button>
+          </Box>
+          <Typography variant="body2" color="text.secondary">
+            Move copies each file into the current folder, checks the size, updates the record, and only then deletes the original. Files already there are left in place. A file saved before this setting still opens from its original folder until you move it.
+          </Typography>
+        </Box>
+      </SectionCard>
 
       <SectionCard title="Company letterhead" subtitle="Defaults match Accent Imaging, Inc., 8121 Brownleigh Drive, Raleigh, NC 27617, 919-782-3332.">
         <Box component="form" onSubmit={save} sx={{ display: 'grid', gap: 2, maxWidth: 640 }}>

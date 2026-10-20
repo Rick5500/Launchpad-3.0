@@ -5,6 +5,7 @@ const { sendError } = require('../httpError');
 const {
   removeUploaded,
   uploadMiddleware,
+  uploadErrorStatus,
   uploadErrorMessage,
 } = require('../fileStore');
 
@@ -31,8 +32,7 @@ function acceptUpload(req, res, next) {
   uploadMiddleware()(req, res, (err) => {
     if (err) {
       removeUploaded(req.files);
-      const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
-      return res.status(status).json({ error: uploadErrorMessage(err) });
+      return res.status(uploadErrorStatus(err)).json({ error: uploadErrorMessage(err) });
     }
     return next();
   });

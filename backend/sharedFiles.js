@@ -1,5 +1,4 @@
 const crypto = require('crypto');
-const fs = require('fs');
 const activityLog = require('./activityLog');
 const { get, all, run, withTransaction } = require('./dbAsync');
 const { getRules } = require('./deliveryRules');
@@ -8,6 +7,8 @@ const {
   sanitizeOriginalName,
   safeStoredPath,
   contentTypeFor,
+  storageRootOfUpload,
+  openStored,
 } = require('./fileStore');
 const { httpError } = require('./httpError');
 const mailer = require('./mailer');
@@ -64,7 +65,7 @@ function publicFile(row) {
 const FILE_SELECT = `
   SELECT f.id, f.order_id, f.work_order_id, f.original_name, f.mime_type, f.size_bytes,
          f.message, f.batch_id, f.created_at, f.customer_downloaded_at, f.replaces_id,
-         f.deleted_at, f.stored_name, f.customer_id, f.transfer_id,
+         f.deleted_at, f.stored_name, f.storage_root, f.customer_id, f.transfer_id,
          wo.external_id AS work_order_number,
          COALESCE(NULLIF(trim(u.display_name), ''), NULLIF(trim(u.username), '')) AS sender_name,
          o.customer_id AS order_customer_id, o.order_number, o.email AS order_email
@@ -269,8 +270,8 @@ async function shareFiles(user, orderId, body, files) {
       const inserted = await tx.run(
         `INSERT INTO shared_files (
           order_id, work_order_id, customer_id, uploaded_by, original_name, stored_name,
-          mime_type, size_bytes, message, batch_id, transfer_id
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+          mime_type, size_bytes, message, batch_id, transfer_id, storage_root
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           order.id,
           workOrder ? workOrder.id : null,
@@ -283,6 +284,7 @@ async function shareFiles(user, orderId, body, files) {
           note,
           batchId,
           transfer.lastID,
+          storageRootOfUpload(file),
         ]
       );
       ids.push(inserted.lastID);
@@ -399,8 +401,8 @@ async function loadVisible(user, id) {
 
 async function prepareDownload(user, id) {
   const file = await loadVisible(user, id);
-  const fullPath = safeStoredPath(file.stored_name);
-  if (!fullPath || !fs.existsSync(fullPath)) throw httpError(404, 'File not found');
+  const opened = openStored(file.stored_name, file.storage_root);
+  if (!opened) throw httpError(404, 'File not found');
   if (user.role === 'customer') {
     await run(
       `UPDATE shared_files
@@ -424,7 +426,7 @@ async function prepareDownload(user, id) {
     ).catch((err) => console.error('FILE DOWNLOAD LOG ERROR:', err.message || err));
   }
   return {
-    fullPath,
+    fullPath: opened.fullPath,
     downloadName: sanitizeOriginalName(file.original_name),
     contentType: contentTypeFor(file.stored_name),
   };
@@ -485,8 +487,8 @@ async function replaceFile(user, id, body, files) {
     const inserted = await tx.run(
       `INSERT INTO shared_files (
         order_id, work_order_id, customer_id, uploaded_by, original_name, stored_name,
-        mime_type, size_bytes, message, batch_id, replaces_id, transfer_id
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        mime_type, size_bytes, message, batch_id, replaces_id, transfer_id, storage_root
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         existing.order_id || null,
         existing.work_order_id || null,
@@ -500,6 +502,7 @@ async function replaceFile(user, id, body, files) {
         batchId,
         existing.id,
         existing.transfer_id || null,
+        storageRootOfUpload(file),
       ]
     );
     const updated = await tx.run(
@@ -731,8 +734,8 @@ async function createTransfer(user, body, files) {
       const inserted = await tx.run(
         `INSERT INTO shared_files (
           order_id, work_order_id, customer_id, uploaded_by, original_name, stored_name,
-          mime_type, size_bytes, message, batch_id, transfer_id
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+          mime_type, size_bytes, message, batch_id, transfer_id, storage_root
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           null,
           null,
@@ -745,6 +748,7 @@ async function createTransfer(user, body, files) {
           note,
           batchId,
           transfer.lastID,
+          storageRootOfUpload(file),
         ]
       );
       ids.push(inserted.lastID);

@@ -4,7 +4,12 @@ const { httpError } = require('./httpError');
 const { parseText, parseInteger } = require('./fields');
 const { getRules } = require('./deliveryRules');
 const { setDueSoonHoursOverride } = require('./runtimeSettings');
-const { maxUploadMb, maxFilesPerRequest } = require('./fileStore');
+const {
+  maxUploadMb,
+  maxFilesPerRequest,
+  validateStoragePath,
+  setConfiguredRoot,
+} = require('./fileStore');
 const { maxUnattachedUploads } = require('./uploadMaintenance');
 const {
   DEFAULT_NAME,
@@ -19,6 +24,7 @@ const SIGNUP_KEY = 'customer_self_signup_enabled';
 const FILE_SHARE_EMAIL_KEY = 'email_customers_on_file_share';
 const PROOF_EMAIL_KEY = 'email_customers_on_proof';
 const INBOUND_POLL_KEY = 'inbound_email_polling_enabled';
+const FILE_STORAGE_KEY = 'file_storage_dir';
 
 function signupEnabledFromValue(value) {
   if (value == null || String(value).trim() === '') return true;
@@ -248,21 +254,57 @@ async function updateSettings(actorId, body) {
   return getSettings();
 }
 
+async function loadFileStorageCache() {
+  const row = await get('SELECT value FROM system_settings WHERE key = ?', [FILE_STORAGE_KEY]);
+  setConfiguredRoot(row && row.value);
+}
+
+async function updateFileStorage(actorId, rawPath) {
+  if (rawPath != null && typeof rawPath !== 'string') {
+    throw httpError(400, 'Storage folder must be an absolute path. Relative paths are not allowed.');
+  }
+  const text = rawPath == null ? '' : String(rawPath).trim();
+  const current = await readMap();
+  let stored = null;
+  if (text) {
+    const validated = await validateStoragePath(text);
+    if (validated.error) throw httpError(400, validated.error);
+    stored = validated.path;
+  }
+  await withTransaction(async (tx) => {
+    if (stored == null) {
+      await tx.run('DELETE FROM system_settings WHERE key = ?', [FILE_STORAGE_KEY]);
+    } else {
+      await tx.run(
+        `INSERT INTO system_settings (key, value, updated_at) VALUES (?,?,datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+        [FILE_STORAGE_KEY, stored]
+      );
+    }
+    await activityLog.recordOn(tx, actorId, 'settings.updated', 'system_settings', null, {
+      keys: [FILE_STORAGE_KEY],
+      message: stored ? 'Updated file storage folder' : 'File storage folder now follows UPLOAD_DIR',
+      previous: { [FILE_STORAGE_KEY]: current[FILE_STORAGE_KEY] == null ? null : current[FILE_STORAGE_KEY] },
+    });
+  });
+  setConfiguredRoot(stored);
+  return getSettings();
+}
+
 async function loadRuntimeCache() {
   try {
     const row = await get(`SELECT value FROM system_settings WHERE key = 'due_soon_hours'`);
     if (!row || row.value == null || String(row.value).trim() === '') {
       setDueSoonHoursOverride(null);
-      return;
+    } else {
+      const parsed = Number(row.value);
+      if (!Number.isFinite(parsed) || parsed < 0) setDueSoonHoursOverride(null);
+      else setDueSoonHoursOverride(parsed);
     }
-    const parsed = Number(row.value);
-    if (!Number.isFinite(parsed) || parsed < 0) {
-      setDueSoonHoursOverride(null);
-      return;
-    }
-    setDueSoonHoursOverride(parsed);
+    await loadFileStorageCache();
   } catch (err) {
     setDueSoonHoursOverride(null);
+    setConfiguredRoot(null);
     if (/no such table/i.test(String(err.message || ''))) return;
     throw err;
   }
@@ -297,8 +339,10 @@ module.exports = {
   FILE_SHARE_EMAIL_KEY,
   PROOF_EMAIL_KEY,
   INBOUND_POLL_KEY,
+  FILE_STORAGE_KEY,
   getSettings,
   updateSettings,
+  updateFileStorage,
   loadRuntimeCache,
   loadLetterhead,
   customerSelfSignupEnabled,

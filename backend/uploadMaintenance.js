@@ -1,6 +1,5 @@
-const fs = require('fs');
 const db = require('./db');
-const { safeStoredPath } = require('./fileStore');
+const { removeStored } = require('./fileStore');
 
 const DEFAULT_UNATTACHED_LIMIT = 30;
 const DEFAULT_ORPHAN_HOURS = 24;
@@ -58,23 +57,19 @@ async function countUnattachedUploads(userId) {
 async function sweepOrphanUploads() {
   const hours = orphanHours();
   const rows = await all(
-    `SELECT id, stored_name
+    `SELECT id, stored_name, storage_root
      FROM order_files
      WHERE order_id IS NULL
        AND datetime(uploaded_at) <= datetime('now', ?)`,
     [`-${hours} hours`]
   );
   for (const row of rows) {
-    const deleted = await run(
+    const removed = removeStored(row.stored_name, row.storage_root);
+    if (removed === 'unavailable') continue;
+    await run(
       'DELETE FROM order_files WHERE id = ? AND order_id IS NULL',
       [row.id]
     );
-    if (!deleted.changes) continue;
-    const fullPath = safeStoredPath(row.stored_name);
-    if (!fullPath) continue;
-    fs.unlink(fullPath, (err) => {
-      if (err && err.code !== 'ENOENT') console.error('UPLOAD SWEEP ERROR:', err.message);
-    });
   }
   return rows.length;
 }

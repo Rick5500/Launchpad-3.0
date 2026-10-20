@@ -1,4 +1,3 @@
-const fs = require('fs');
 const express = require('express');
 const auth = require('../auth');
 const proofs = require('../proofs');
@@ -6,7 +5,9 @@ const { sendError } = require('../httpError');
 const {
   removeUploaded,
   uploadMiddleware,
+  uploadErrorStatus,
   uploadErrorMessage,
+  createStoredReadStream,
 } = require('../fileStore');
 
 const proofRouter = express.Router();
@@ -34,8 +35,7 @@ function acceptUpload(req, res, next) {
   uploadMiddleware()(req, res, (err) => {
     if (err) {
       removeUploaded(req.files);
-      const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
-      return res.status(status).json({ error: uploadErrorMessage(err) });
+      return res.status(uploadErrorStatus(err)).json({ error: uploadErrorMessage(err) });
     }
     return next();
   });
@@ -48,8 +48,8 @@ function sendProofFile(res, file, disposition) {
   if (disposition === 'inline') {
     const name = String(file.downloadName || 'proof').replace(/["\r\n]/g, '');
     res.set('Content-Disposition', `inline; filename="${name}"`);
-    res.set('Content-Length', fs.statSync(file.fullPath).size);
-    const stream = fs.createReadStream(file.fullPath);
+    res.set('Content-Length', file.size);
+    const stream = createStoredReadStream(file.fullPath);
     stream.on('error', (streamErr) => {
       if (res.headersSent) return;
       console.error('PROOF VIEW ERROR:', streamErr);

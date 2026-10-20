@@ -202,12 +202,6 @@ app.use('/api/activity', activityRouter);
 app.use('/api/search', searchRouter);
 app.use('/api/inbound-emails', inboundEmailRouter);
 
-try {
-  ensureUploadDir();
-} catch (err) {
-  console.error('UPLOAD DIR ERROR:', err.message);
-}
-
 // Admin placeholder
 app.get('/api/admin', auth.requireAuth, auth.requireRole('admin'), (req, res) => res.json({ message: 'admin endpoint (placeholder)', user: req.user }));
 
@@ -219,6 +213,8 @@ systemSettings.loadRuntimeCache()
     console.error('SETTINGS CACHE ERROR:', err);
   })
   .finally(() => {
+    const storageReady = ensureUploadDir();
+    if (!storageReady.ok) console.error('UPLOAD DIR ERROR:', storageReady.error);
     mailer.warnTestJsonTransport();
     app.listen(port, () => {
       console.log(`Launchpad backend listening on port ${port}`);

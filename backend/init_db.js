@@ -748,6 +748,8 @@ async function ensureSharedFiles() {
     { name: 'replaces_id', definition: 'INTEGER' },
     { name: 'customer_downloaded_at', definition: 'DATETIME' },
     { name: 'transfer_id', definition: 'INTEGER' },
+    { name: 'storage_root', definition: 'TEXT' },
+    { name: 'storage_previous', definition: 'TEXT' },
   ]);
   await relaxSharedFilesOrderId();
   await ensureFileTransfers();
@@ -807,6 +809,8 @@ async function ensureProofs() {
     { name: 'stored_name', definition: 'TEXT' },
     { name: 'mime_type', definition: 'TEXT' },
     { name: 'size_bytes', definition: 'INTEGER' },
+    { name: 'storage_root', definition: 'TEXT' },
+    { name: 'storage_previous', definition: 'TEXT' },
     { name: 'created_at', definition: 'DATETIME' },
   ]);
   await run('CREATE INDEX IF NOT EXISTS idx_proofs_order ON proofs(order_id)');
@@ -875,6 +879,8 @@ async function ensureInboundEmails() {
     { name: 'stored_name', definition: 'TEXT' },
     { name: 'mime_type', definition: 'TEXT' },
     { name: 'size_bytes', definition: 'INTEGER' },
+    { name: 'storage_root', definition: 'TEXT' },
+    { name: 'storage_previous', definition: 'TEXT' },
     { name: 'skipped_reason', definition: 'TEXT' },
     { name: 'order_file_id', definition: 'INTEGER' },
     { name: 'created_at', definition: 'DATETIME' },
@@ -1389,6 +1395,10 @@ async function clearManagerDepartments() {
 
 async function main() {
   await exec(schema);
+  await ensureColumns('order_files', [
+    { name: 'storage_root', definition: 'TEXT' },
+    { name: 'storage_previous', definition: 'TEXT' },
+  ]);
   await ensureColumns('work_orders', [
     { name: 'department', definition: "TEXT DEFAULT 'General'" },
     { name: 'specifications', definition: 'TEXT' },

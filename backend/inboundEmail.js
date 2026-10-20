@@ -1,6 +1,3 @@
-const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
 const activityLog = require('./activityLog');
 const { matchSender, parseDraft } = require('./emailDraft');
 const graphMail = require('./graphMail');
@@ -10,13 +7,14 @@ const { all, get, run } = require('./dbAsync');
 const {
   ALLOWED_EXTENSIONS,
   contentTypeFor,
-  ensureUploadDir,
   extensionOf,
   maxUploadBytes,
   maxUploadMb,
   sanitizeOriginalName,
-  safeStoredPath,
-  uploadDir,
+  openStored,
+  removeStored,
+  writeNewFile,
+  copyToCurrentRoot,
 } = require('./fileStore');
 const { createOrder } = require('./orderService');
 
@@ -280,20 +278,19 @@ async function storeAttachment(emailId, attachment) {
     await insertSkipped(emailId, attachment, `File exceeds the ${maxUploadMb()} MB limit`);
     return;
   }
-  ensureUploadDir();
-  const stored = `${crypto.randomBytes(16).toString('hex')}.${ext}`;
-  fs.writeFileSync(path.join(uploadDir(), stored), bytes);
+  const written = writeNewFile(ext, bytes);
   await run(
     `INSERT OR IGNORE INTO inbound_email_attachments (
-      inbound_email_id, graph_attachment_id, original_name, stored_name, mime_type, size_bytes
-    ) VALUES (?,?,?,?,?,?)`,
+      inbound_email_id, graph_attachment_id, original_name, stored_name, mime_type, size_bytes, storage_root
+    ) VALUES (?,?,?,?,?,?,?)`,
     [
       emailId,
       graphId,
       sanitizeOriginalName(attachment.name),
-      stored,
-      contentTypeFor(stored),
-      bytes.length,
+      written.storedName,
+      contentTypeFor(written.storedName),
+      written.size,
+      written.storageRoot,
     ]
   );
 }
@@ -472,16 +469,16 @@ async function syncStatus(user) {
 
 async function attachmentDownload(user, emailId, attachmentId) {
   const file = await get(
-    `SELECT id, original_name, stored_name, skipped_reason
+    `SELECT id, original_name, stored_name, storage_root, skipped_reason
      FROM inbound_email_attachments
      WHERE id = ? AND inbound_email_id = ?`,
     [parseId(attachmentId), parseId(emailId)]
   );
   if (!file || file.skipped_reason || !file.stored_name) return null;
-  const fullPath = safeStoredPath(file.stored_name);
-  if (!fullPath || !fs.existsSync(fullPath)) return null;
+  const opened = openStored(file.stored_name, file.storage_root);
+  if (!opened) return null;
   return {
-    path: fullPath,
+    path: opened.fullPath,
     name: sanitizeOriginalName(file.original_name),
     contentType: contentTypeFor(file.stored_name),
   };
@@ -499,14 +496,8 @@ function parseAttachmentIds(body) {
   });
 }
 
-function removeStoredCopy(storedName) {
-  const full = safeStoredPath(storedName);
-  if (!full || !fs.existsSync(full)) return;
-  try {
-    fs.unlinkSync(full);
-  } catch (err) {
-    if (err.code !== 'ENOENT') console.error('INBOUND FILE CLEANUP ERROR:', err.message);
-  }
+function removeStoredCopy(storedName, storageRoot) {
+  removeStored(storedName, storageRoot);
 }
 
 async function discardMaterialized(created) {
@@ -519,26 +510,17 @@ async function discardMaterialized(created) {
       'UPDATE inbound_email_attachments SET order_file_id = NULL WHERE id = ? AND order_file_id = ?',
       [item.attachmentId, item.orderFileId]
     );
-    if (removed.changes) removeStoredCopy(item.storedName);
+    if (removed.changes) removeStoredCopy(item.storedName, item.storageRoot);
   }
 }
 
-function copyStoredFile(storedName) {
-  const source = safeStoredPath(storedName);
-  if (!source || !fs.existsSync(source)) return null;
-  const ext = extensionOf(storedName);
-  if (!ALLOWED_EXTENSIONS.has(ext)) return null;
-  ensureUploadDir();
-  const stored = `${crypto.randomBytes(16).toString('hex')}.${ext}`;
-  const dest = safeStoredPath(stored);
-  if (!dest) return null;
-  fs.copyFileSync(source, dest);
-  return stored;
+function copyStoredFile(storedName, storageRoot) {
+  return copyToCurrentRoot(storedName, storageRoot);
 }
 
 async function materializeAttachments(user, emailId, customerId, attachmentIds) {
   const rows = await all(
-    `SELECT id, original_name, stored_name, mime_type, size_bytes, order_file_id
+    `SELECT id, original_name, stored_name, storage_root, mime_type, size_bytes, order_file_id
      FROM inbound_email_attachments
      WHERE inbound_email_id = ? AND stored_name IS NOT NULL AND skipped_reason IS NULL
      ORDER BY id`,
@@ -554,16 +536,14 @@ async function materializeAttachments(user, emailId, customerId, attachmentIds) 
     for (const row of chosen) {
       if (row.order_file_id) {
         const existing = await get(
-          'SELECT id, stored_name, order_id FROM order_files WHERE id = ?',
+          'SELECT id, stored_name, storage_root, order_id FROM order_files WHERE id = ?',
           [row.order_file_id]
         );
-        const copyPath = existing && existing.stored_name ? safeStoredPath(existing.stored_name) : null;
         const reusable = existing
           && !existing.order_id
           && existing.stored_name
           && existing.stored_name !== row.stored_name
-          && copyPath
-          && fs.existsSync(copyPath);
+          && openStored(existing.stored_name, existing.storage_root);
         if (reusable) {
           await run(
             'UPDATE order_files SET customer_id = ?, uploaded_by = ? WHERE id = ? AND order_id IS NULL',
@@ -574,13 +554,14 @@ async function materializeAttachments(user, emailId, customerId, attachmentIds) 
             orderFileId: existing.id,
             attachmentId: row.id,
             storedName: existing.stored_name,
+            storageRoot: existing.storage_root,
           });
           continue;
         }
         if (existing && !existing.order_id) {
           await run('DELETE FROM order_files WHERE id = ? AND order_id IS NULL', [existing.id]);
           if (existing.stored_name && existing.stored_name !== row.stored_name) {
-            removeStoredCopy(existing.stored_name);
+            removeStoredCopy(existing.stored_name, existing.storage_root);
           }
         }
         await run(
@@ -588,20 +569,21 @@ async function materializeAttachments(user, emailId, customerId, attachmentIds) 
           [row.id]
         );
       }
-      const copyName = copyStoredFile(row.stored_name);
-      if (!copyName) continue;
+      const copied = copyStoredFile(row.stored_name, row.storage_root);
+      if (!copied) continue;
       try {
         const inserted = await run(
           `INSERT INTO order_files (
-            customer_id, uploaded_by, original_name, stored_name, mime_type, size_bytes
-          ) VALUES (?,?,?,?,?,?)`,
+            customer_id, uploaded_by, original_name, stored_name, mime_type, size_bytes, storage_root
+          ) VALUES (?,?,?,?,?,?,?)`,
           [
             customerId,
             userId,
             row.original_name,
-            copyName,
+            copied.storedName,
             row.mime_type || contentTypeFor(row.stored_name),
-            row.size_bytes || 0,
+            copied.size,
+            copied.storageRoot,
           ]
         );
         await run(
@@ -611,11 +593,12 @@ async function materializeAttachments(user, emailId, customerId, attachmentIds) 
         created.push({
           orderFileId: inserted.lastID,
           attachmentId: row.id,
-          storedName: copyName,
+          storedName: copied.storedName,
+          storageRoot: copied.storageRoot,
         });
         ids.push(inserted.lastID);
       } catch (err) {
-        removeStoredCopy(copyName);
+        removeStoredCopy(copied.storedName, copied.storageRoot);
         throw err;
       }
     }
