@@ -633,58 +633,70 @@ async function relaxSharedFilesOrderId() {
 }
 
 // Existing order shares keep their rows. Each batch becomes one transfer so the
-// customer list can show them next to standalone sends. A second init does nothing.
+// customer list can show them next to standalone sends. The inserts and the
+// transfer_id updates commit together. A second init does nothing.
 async function backfillFileTransfers() {
   const fk = await get('PRAGMA foreign_keys');
   await exec('PRAGMA foreign_keys = OFF');
   try {
-  const rows = await all(
-    `SELECT f.id, f.order_id, f.work_order_id, f.customer_id, f.uploaded_by, f.message,
-            f.batch_id, f.created_at, o.customer_id AS order_customer_id
-     FROM shared_files f
-     LEFT JOIN orders o ON o.id = f.order_id
-     WHERE f.transfer_id IS NULL
-     ORDER BY f.id`
-  );
-  if (!rows.length) return;
-  const groups = new Map();
-  for (const row of rows) {
-    const key = row.batch_id ? `b:${row.order_id || 0}:${row.batch_id}` : `f:${row.id}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(row);
-  }
-  let created = 0;
-  for (const group of groups.values()) {
-    const first = group[0];
-    const customerId = first.customer_id || first.order_customer_id;
-    if (!customerId) continue;
-    const sameWorkOrder = group.every((row) => row.work_order_id === first.work_order_id);
-    const inserted = await run(
-      `INSERT INTO file_transfers (
-        customer_id, order_id, work_order_id, subject, message, uploaded_by, created_at
-      ) VALUES (?,?,?,?,?,?,?)`,
-      [
-        customerId,
-        first.order_id || null,
-        sameWorkOrder ? first.work_order_id || null : null,
-        null,
-        first.message || null,
-        first.uploaded_by || null,
-        first.created_at || null,
-      ]
+    const rows = await all(
+      `SELECT f.id, f.order_id, f.work_order_id, f.customer_id, f.uploaded_by, f.message,
+              f.batch_id, f.created_at, o.customer_id AS order_customer_id
+       FROM shared_files f
+       LEFT JOIN orders o ON o.id = f.order_id
+       WHERE f.transfer_id IS NULL
+       ORDER BY f.id`
     );
-    const ids = group.map((row) => row.id);
-    await run(
-      `UPDATE shared_files
-       SET transfer_id = ?, customer_id = COALESCE(customer_id, ?)
-       WHERE id IN (${ids.map(() => '?').join(', ')})`,
-      [inserted.lastID, customerId, ...ids]
-    );
-    created += 1;
-  }
-  if (created > 0) {
-    console.log(`Grouped ${created} existing file share(s) into transfers`);
-  }
+    if (!rows.length) return;
+    const groups = new Map();
+    for (const row of rows) {
+      const key = row.batch_id ? `b:${row.order_id || 0}:${row.batch_id}` : `f:${row.id}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(row);
+    }
+    await exec('BEGIN IMMEDIATE');
+    try {
+      let created = 0;
+      for (const group of groups.values()) {
+        const first = group[0];
+        const customerId = first.customer_id || first.order_customer_id;
+        if (!customerId) continue;
+        const sameWorkOrder = group.every((row) => row.work_order_id === first.work_order_id);
+        const inserted = await run(
+          `INSERT INTO file_transfers (
+            customer_id, order_id, work_order_id, subject, message, uploaded_by, created_at
+          ) VALUES (?,?,?,?,?,?,?)`,
+          [
+            customerId,
+            first.order_id || null,
+            sameWorkOrder ? first.work_order_id || null : null,
+            null,
+            first.message || null,
+            first.uploaded_by || null,
+            first.created_at || null,
+          ]
+        );
+        const ids = group.map((row) => row.id);
+        await run(
+          `UPDATE shared_files
+           SET transfer_id = ?, customer_id = COALESCE(customer_id, ?)
+           WHERE id IN (${ids.map(() => '?').join(', ')})`,
+          [inserted.lastID, customerId, ...ids]
+        );
+        created += 1;
+      }
+      await exec('COMMIT');
+      if (created > 0) {
+        console.log(`Grouped ${created} existing file share(s) into transfers`);
+      }
+    } catch (err) {
+      try {
+        await exec('ROLLBACK');
+      } catch (rollbackErr) {
+        console.error('FILE TRANSFER BACKFILL ROLLBACK ERROR:', rollbackErr);
+      }
+      throw err;
+    }
   } finally {
     if (fk && Number(fk.foreign_keys) === 1) await exec('PRAGMA foreign_keys = ON');
   }

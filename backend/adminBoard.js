@@ -308,8 +308,39 @@ function presentActivity(row, timeZone, now) {
   };
 }
 
+function formatByteSize(bytes) {
+  const size = Number(bytes) || 0;
+  if (size < 1024) return `${Math.max(0, Math.round(size))} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = size / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const rounded = value >= 100 ? Math.round(value) : Math.round(value * 10) / 10;
+  const shown = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+  return `${shown} ${units[unit]}`;
+}
+
+function formatFilesLabel(count, bytes) {
+  const files = Number(count) || 0;
+  const size = Number(bytes) || 0;
+  if (files <= 0 || size <= 0) return '0 / 0';
+  return `${files} / ${formatByteSize(size)}`;
+}
+
+function statusLabel(status) {
+  const value = String(status || '').trim().toLowerCase();
+  if (value === 'completed' || value === 'complete') return 'Complete';
+  if (value === 'on-hold') return 'On Hold';
+  if (value === 'cancelled' || value === 'canceled') return 'Cancelled';
+  return 'LiveOrder';
+}
+
 function presentWorkOrder(row, timeZone) {
   const orderNumber = row.external_id || (row.id ? `WO-${row.id}` : null);
+  const retrievedAt = row.retrieved_at || null;
   return {
     id: row.id,
     order_number: orderNumber,
@@ -323,14 +354,78 @@ function presentWorkOrder(row, timeZone) {
     payment_method_label: row.payment_method ? String(row.payment_method) : 'Not specified',
     department: row.department || '',
     department_color: row.department_color || '#90caf9',
+    delivery_method: row.delivery_method || '',
     arrived_at: row.created_at || null,
     arrived_display: formatArrived(row.created_at, timeZone),
+    retrieved_at: retrievedAt,
+    retrieved: Boolean(retrievedAt),
     due_at: row.due_at || null,
     due_display: formatWall(row.due_at),
     process: row.process || row.department || '',
     status: row.status || null,
+    status_label: statusLabel(row.status),
     priority: row.priority || null,
     service_name: row.service_name || null,
+    file_count: Number(row.file_count) || 0,
+    file_bytes: Number(row.file_bytes) || 0,
+    files_label: formatFilesLabel(row.file_count, row.file_bytes),
+  };
+}
+
+// Board categories are Overdue, New, and In Production. Overdue is an active job
+// whose due time has passed. New is still open. In Production is in progress.
+// Due today and due soon are not categories. Rush stays on the work order priority.
+// On-hold, finished, and cancelled work are not overdue.
+const TIME_ACTIVE_STATUSES = new Set(['open', 'in-progress']);
+const BOARD_CATEGORIES = new Set(['overdue', 'new', 'in_production']);
+const CATEGORY_LABELS = {
+  overdue: 'Overdue',
+  new: 'New',
+  in_production: 'In Production',
+};
+
+function shopDateKey(parts) {
+  return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}`;
+}
+
+function boardUrgency(row, now, rules) {
+  const status = String(row.status || '').trim().toLowerCase();
+  const rush = String(row.priority || '').trim().toLowerCase() === 'rush';
+  const active = TIME_ACTIVE_STATUSES.has(status);
+  const dueText = String(row.due_at || '').trim();
+  const timed = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/.exec(dueText);
+  const dateOnly = /^(\d{4}-\d{2}-\d{2})$/.exec(dueText);
+  let overdue = false;
+  let dueToday = false;
+  let dueSoon = false;
+
+  if (active && timed) {
+    const flags = classifyDelivery({
+      status: 'pending',
+      due_time: `${timed[1]} ${timed[2]}:00`,
+    }, now, rules);
+    overdue = Boolean(flags.overdue);
+    dueToday = Boolean(flags.due_today);
+    dueSoon = Boolean(flags.due_soon);
+  } else if (active && dateOnly) {
+    const today = shopDateKey(zonedParts(now, rules.timezone));
+    if (dateOnly[1] < today) overdue = true;
+    else if (dateOnly[1] === today) dueToday = true;
+  }
+
+  let category = null;
+  if (active && overdue) category = 'overdue';
+  else if (active && status === 'in-progress') category = 'in_production';
+  else if (active) category = 'new';
+
+  return {
+    overdue,
+    due_today: dueToday,
+    due_soon: dueSoon,
+    rush,
+    category,
+    tone: category,
+    signals: category ? [CATEGORY_LABELS[category]] : [],
   };
 }
 
@@ -364,7 +459,32 @@ const workOrderSelect = `
   ) AS contact_name,
   o.originals_source AS originals_source,
   o.payment_method AS payment_method,
+  o.delivery_method AS delivery_method,
   ${DUE_AT_SQL} AS due_at,
+  (
+    SELECT COUNT(*) FROM order_files f
+    WHERE f.work_order_id = wo.id
+       OR (wo.order_id IS NOT NULL AND f.order_id = wo.order_id AND f.work_order_id IS NULL)
+  ) AS file_count,
+  (
+    SELECT COALESCE(SUM(f.size_bytes), 0) FROM order_files f
+    WHERE f.work_order_id = wo.id
+       OR (wo.order_id IS NOT NULL AND f.order_id = wo.order_id AND f.work_order_id IS NULL)
+  ) AS file_bytes,
+  (
+    SELECT MIN(picked.event_time) FROM (
+      SELECT event_time FROM barcode_events
+      WHERE work_order_id = wo.id AND trim(coalesce(event_time, '')) != ''
+      UNION ALL
+      SELECT event_time FROM production_history
+      WHERE work_order_id = wo.id
+        AND trim(coalesce(event_time, '')) != ''
+        AND NOT (
+          lower(trim(coalesce(scanned_by, ''))) = 'system auto'
+          AND lower(trim(coalesce(notes, ''))) = 'order created'
+        )
+    ) AS picked
+  ) AS retrieved_at,
   CASE
     WHEN s.name IS NOT NULL AND trim(s.name) != '' THEN s.name
     WHEN ps.name IS NOT NULL AND trim(ps.name) != '' THEN ps.name
@@ -390,8 +510,8 @@ function workOrderFilters(query, scope) {
   const priority = parseOptionalToken(query.priority, 'priority', 20);
   const dueFrom = parseDateOnly(query.due_from, 'due_from');
   const dueTo = parseDateOnly(query.due_to, 'due_to');
-  const sort = parseOptionalToken(query.sort, 'sort', 40) || 'arrived';
-  const direction = parseOptionalToken(query.direction, 'direction', 4) || 'desc';
+  const requestedSort = parseOptionalToken(query.sort, 'sort', 40);
+  const requestedDirection = parseOptionalToken(query.direction, 'direction', 4);
 
   if (status && !['open', 'in-progress', 'completed', 'on-hold'].includes(status.toLowerCase())) {
     throw new BoardError('status must be open, in-progress, completed, or on-hold');
@@ -400,8 +520,6 @@ function workOrderFilters(query, scope) {
     throw new BoardError('priority must be Low, Normal, High, or Rush');
   }
   if (dueFrom && dueTo && dueFrom > dueTo) throw new BoardError('due_from must be before due_to');
-  if (!SORT_COLUMNS[sort]) throw new BoardError('sort must be arrived, due, order_number, company, or department');
-  if (direction !== 'asc' && direction !== 'desc') throw new BoardError('direction must be asc or desc');
 
   const clauses = [];
   const params = [];
@@ -409,6 +527,11 @@ function workOrderFilters(query, scope) {
   const statusKey = status ? status.toLowerCase() : null;
   // Complete has no active queue. Default that login to finished work this month.
   const completeDefault = locked && departmentKey === 'complete' && !statusKey;
+  // The monitor sorts by date due, earliest first. A Complete login stays newest first.
+  const sort = requestedSort || (completeDefault ? 'arrived' : 'due');
+  const direction = requestedDirection || (completeDefault ? 'desc' : 'asc');
+  if (!SORT_COLUMNS[sort]) throw new BoardError('sort must be arrived, due, order_number, company, or department');
+  if (direction !== 'asc' && direction !== 'desc') throw new BoardError('direction must be asc or desc');
   const monthWindow = completeDefault ? completionWindow() : null;
 
   if (completeDefault) {
@@ -477,19 +600,56 @@ function workOrderFilters(query, scope) {
   const orderColumn = completeDefault && sort === 'arrived'
     ? `datetime(coalesce(wo.updated_at, wo.created_at))`
     : SORT_COLUMNS[sort];
+  // Earliest due date first. SQLite sorts NULL before every date, so a missing
+  // due date is ordered after the dated rows when the direction is ascending.
+  const nullsLast = sort === 'due' ? `(${orderColumn} IS NULL) ASC, ` : '';
   return {
     where: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '',
     params,
-    orderBy: `${orderColumn} ${direction.toUpperCase()}, wo.id ${direction.toUpperCase()}`,
+    orderBy: `${nullsLast}${orderColumn} ${direction.toUpperCase()}, wo.id ${direction.toUpperCase()}`,
   };
+}
+
+function parseCategory(value) {
+  if (value == null || value === '') return null;
+  const category = parseOptionalToken(value, 'category', 20);
+  if (!category) return null;
+  if (!BOARD_CATEGORIES.has(category)) {
+    throw new BoardError('category must be overdue, new, or in_production');
+  }
+  return category;
 }
 
 async function listWorkOrders(query, user) {
   const scope = resolveBoardScope(user, query);
   const limit = parseLimit(query.limit, DEFAULT_PAGE_SIZE);
   const offset = parseOffset(query.offset);
+  const category = parseCategory(query.category);
   const filters = workOrderFilters(query, scope);
-  const window = completionWindow();
+  const rules = getRules();
+  const now = new Date();
+  const present = (row) => ({
+    ...presentWorkOrder(row, rules.timezone),
+    urgency: boardUrgency(row, now, rules),
+  });
+
+  if (category) {
+    const matched = (await all(
+      `SELECT ${workOrderSelect} ${workOrderFrom} ${filters.where}
+       ORDER BY ${filters.orderBy}`,
+      filters.params
+    )).filter((row) => boardUrgency(row, now, rules).category === category);
+    return {
+      work_orders: matched.slice(offset, offset + limit).map(present),
+      total: matched.length,
+      limit,
+      offset,
+      timezone: rules.timezone,
+      evaluated_at: now.toISOString(),
+      viewer: presentViewer(scope),
+    };
+  }
+
   const totalRow = await get(
     `SELECT COUNT(*) AS count ${workOrderFrom} ${filters.where}`,
     filters.params
@@ -501,12 +661,39 @@ async function listWorkOrders(query, user) {
     [...filters.params, limit, offset]
   );
   return {
-    work_orders: rows.map((row) => presentWorkOrder(row, window.timezone)),
+    work_orders: rows.map(present),
     total: totalRow ? totalRow.count : 0,
     limit,
     offset,
+    timezone: rules.timezone,
+    evaluated_at: now.toISOString(),
     viewer: presentViewer(scope),
   };
+}
+
+async function countCategories(scope, now) {
+  if (scope && scope.restricted && String(scope.department || '').trim().toLowerCase() === 'complete') {
+    return { overdue: 0, new: 0, in_production: 0 };
+  }
+  const rules = getRules();
+  const params = [];
+  let departmentSql = '';
+  if (scope && scope.restricted && scope.department && scope.department.toLowerCase() !== 'complete') {
+    departmentSql = ` AND lower(trim(coalesce(wo.department, ''))) = lower(?)`;
+    params.push(scope.department);
+  }
+  const rows = await all(
+    `SELECT wo.status, wo.priority, ${DUE_AT_SQL} AS due_at
+     ${workOrderFrom}
+     WHERE ${ACTIVE_SQL}${departmentSql}`,
+    params
+  );
+  const counts = { overdue: 0, new: 0, in_production: 0 };
+  for (const row of rows) {
+    const category = boardUrgency(row, now, rules).category;
+    if (category) counts[category] += 1;
+  }
+  return counts;
 }
 
 async function listActivity(query, preview, department) {
@@ -848,6 +1035,7 @@ async function loadSummary(user, query) {
     count: tab.count,
     color: tab.color,
   }));
+  const categories = await countCategories(scope, now);
 
   const body = {
     generated_at: now.toISOString(),
@@ -860,6 +1048,7 @@ async function loadSummary(user, query) {
       month_end: window.end,
       timezone: window.timezone,
       departments: statDepartments,
+      categories,
     },
     queue,
     activity: activity.activity,
@@ -990,4 +1179,5 @@ module.exports = {
   listApprovals,
   decideApproval,
   completionWindow,
+  boardUrgency,
 };

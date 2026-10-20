@@ -1,4 +1,5 @@
 const db = require('./db');
+const { withTransaction } = require('./dbAsync');
 const { getOrder } = require('./orderService');
 const { classifyDelivery, deliveryWindow, getRules, hoursLabel, usesWillCallHours, willCallWindow } = require('./deliveryRules');
 const { code128Svg } = require('./barcodeSvg');
@@ -232,6 +233,49 @@ async function loadDelivery(orderId, workOrderId) {
   );
 }
 
+const PRINT_MOVE_ROLES = new Set(['admin', 'manager', 'operator']);
+
+function canMarkPrinted(viewer) {
+  return Boolean(viewer && PRINT_MOVE_ROLES.has(viewer.role));
+}
+
+function actorLabel(viewer) {
+  const name = viewer && (viewer.display_name || viewer.username);
+  const text = String(name || '').trim();
+  return text || 'Staff';
+}
+
+async function noteProductionPrint(tx, row, viewer) {
+  const updated = await tx.run(
+    `UPDATE work_orders
+     SET status = 'in-progress', updated_at = datetime('now')
+     WHERE id = ? AND status = 'open'`,
+    [row.id]
+  );
+  if (!updated || updated.changes !== 1) {
+    const current = await tx.get('SELECT status FROM work_orders WHERE id = ?', [row.id]);
+    return (current && current.status) || row.status;
+  }
+  await tx.run(
+    `INSERT INTO production_history (work_order_id, department, status, scanned_by, user_id, notes)
+     VALUES (?, ?, 'in-progress', ?, ?, 'Printed')`,
+    [row.id, row.department || 'Production', actorLabel(viewer), (viewer && (viewer.userId || viewer.id)) || null]
+  );
+  await tx.run(
+    `INSERT INTO activity_log (actor_id, action, entity_type, entity_id, detail)
+     VALUES (?, 'work_order.printed', 'work_order', ?, ?)`,
+    [
+      (viewer && (viewer.userId || viewer.id)) || null,
+      row.id,
+      JSON.stringify({
+        external_id: row.external_id || null,
+        message: 'Printed and moved to In Production',
+      }),
+    ]
+  );
+  return 'in-progress';
+}
+
 async function buildSheet(workOrderId, viewer) {
   const params = [workOrderId];
   let customerClause = '';
@@ -305,6 +349,9 @@ async function buildSheet(workOrderId, viewer) {
     params
   );
   if (!row) return null;
+  if (canMarkPrinted(viewer)) {
+    row.status = await withTransaction((tx) => noteProductionPrint(tx, row, viewer));
+  }
 
   const lineItems = await all(
     `SELECT id, line_number, description, size, quantity, media, color, binding_finish,

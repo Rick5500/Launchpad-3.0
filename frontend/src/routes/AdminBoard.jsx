@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Alert,
@@ -9,7 +9,6 @@ import {
   DialogContent,
   DialogTitle,
   Snackbar,
-  IconButton,
   MenuItem,
   Pagination,
   Popover,
@@ -19,15 +18,13 @@ import {
   TableHead,
   TableRow,
   TableSortLabel,
+  Switch,
   Tab,
   Tabs,
   TextField,
   Typography,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
-import FilterListIcon from '@mui/icons-material/FilterList';
-import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined';
-import QrCode2Icon from '@mui/icons-material/QrCode2';
 import AssignmentOutlinedIcon from '@mui/icons-material/AssignmentOutlined';
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
 import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
@@ -42,13 +39,34 @@ import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import { authFetch } from '../api';
 import { BOARD_REFRESH_EVENT, requestBoardRefresh } from '../boardEvents';
 import MoveWorkOrderDialog from '../components/MoveWorkOrderDialog';
+import BoardDetailPane from '../components/BoardDetailPane';
+import { UrgencyChips, UrgencyLegend, rowSurface, splitInstant, splitWall } from '../components/boardUrgency';
 import { useAuth } from '../context/AuthContext';
 import { brand } from '../brand';
 import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
 
 const PAGE_SIZE = 8;
-const EMPTY_FILTERS = { status: '', priority: '', due_from: '', due_to: '' };
+const EMPTY_FILTERS = { status: '', priority: '', category: '', due_from: '', due_to: '' };
+const BOARD_CATEGORY_OPTIONS = [
+  { value: 'overdue', label: 'Overdue' },
+  { value: 'new', label: 'New' },
+  { value: 'in_production', label: 'In Production' },
+];
+const MONITOR_TABS = new Set(['All', 'Active', 'Search']);
+const headCellSx = {
+  color: '#fff',
+  fontWeight: 700,
+  bgcolor: brand.navy,
+  borderBottom: 0,
+  whiteSpace: 'nowrap',
+  fontSize: 13,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+};
+// Launch Pad 2.0 did not record a refresh interval in this repo. Sixty seconds
+// keeps a shop monitor current without moving focus or clearing the table.
+const BOARD_POLL_MS = 60000;
 
 const STAT_ICONS = {
   'Large Format': DescriptionOutlinedIcon,
@@ -100,6 +118,80 @@ function Panel({ title, action, children, badge }) {
   );
 }
 
+function withMonitorTabs(apiTabs, restricted) {
+  const source = apiTabs?.length ? apiTabs : [{ key: 'All', label: 'All', count: 0 }];
+  const departments = source.filter((tab) => tab.key !== 'Search' && tab.key !== 'Active');
+  const activeCount = (departments.find((tab) => tab.key === 'All') || departments[0] || {}).count ?? 0;
+  const extras = [
+    { key: 'Search', label: 'Search', count: null },
+    { key: 'Active', label: 'Active', count: activeCount },
+  ];
+  if (restricted) {
+    const own = departments.filter((tab) => tab.key !== 'All');
+    return [...(own.length ? own : departments), ...extras];
+  }
+  return [...departments, ...extras];
+}
+
+function StackedStamp({ date, time, missing = '—' }) {
+  if (!date && !time) {
+    return <Box sx={{ textAlign: 'center', whiteSpace: 'nowrap' }}>{missing}</Box>;
+  }
+  return (
+    <Box sx={{ textAlign: 'center', lineHeight: 1.25, whiteSpace: 'nowrap' }}>
+      <div>{date}</div>
+      {time ? <div>{time}</div> : null}
+    </Box>
+  );
+}
+
+function SelectTransferPrompt() {
+  return (
+    <Box
+      data-testid="board-detail-empty"
+      sx={{
+        minHeight: { xs: 220, md: 420 },
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 1.5,
+        px: 3,
+        textAlign: 'center',
+        bgcolor: '#fff',
+        border: `1px solid ${brand.border}`,
+        borderRadius: 1,
+      }}
+    >
+      <Box
+        component="svg"
+        viewBox="0 0 140 90"
+        aria-hidden="true"
+        sx={{ width: 140, height: 90 }}
+      >
+        <path
+          d="M124 18 C 78 16, 46 48, 34 62"
+          fill="none"
+          stroke="#E23B2F"
+          strokeWidth="7"
+          strokeLinecap="round"
+        />
+        <path
+          d="M18 42 L32 70 L58 54"
+          fill="none"
+          stroke="#E23B2F"
+          strokeWidth="7"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </Box>
+      <Typography sx={{ fontSize: { xs: 20, md: 26 }, color: '#1565C0', fontWeight: 500, maxWidth: 320, lineHeight: 1.25 }}>
+        Select a transfer for more info about it.
+      </Typography>
+    </Box>
+  );
+}
+
 function linkButton(label, onClick) {
   return (
     <Button size="small" onClick={onClick} sx={{ textTransform: 'none', color: brand.navy, fontWeight: 600, px: 0 }}>
@@ -120,7 +212,7 @@ export default function AdminBoard() {
   const [total, setTotal] = useState(0);
   const [tableError, setTableError] = useState('');
   const [tableLoading, setTableLoading] = useState(true);
-  const [department, setDepartment] = useState('All');
+  const [department, setDepartment] = useState('Active');
   const [viewAll, setViewAll] = useState(false);
   const [searchInput, setSearchInput] = useState('');
   const [q, setQ] = useState('');
@@ -128,7 +220,10 @@ export default function AdminBoard() {
   const [draftFilters, setDraftFilters] = useState(EMPTY_FILTERS);
   const [filterAnchor, setFilterAnchor] = useState(null);
   const [offset, setOffset] = useState(0);
-  const [sort, setSort] = useState({ field: 'arrived', direction: 'desc' });
+  const [sort, setSort] = useState({ field: 'due', direction: 'asc' });
+  const [showStats, setShowStats] = useState(false);
+  const completeSortApplied = useRef(false);
+  const searchRef = useRef(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [decisionError, setDecisionError] = useState('');
   const [decidingId, setDecidingId] = useState(null);
@@ -140,6 +235,10 @@ export default function AdminBoard() {
   const [showAllAlerts, setShowAllAlerts] = useState(false);
   const [moveTarget, setMoveTarget] = useState(null);
   const [moveNotice, setMoveNotice] = useState('');
+  const [selectedId, setSelectedId] = useState(null);
+  const [selectedRow, setSelectedRow] = useState(null);
+  const [boardZone, setBoardZone] = useState('');
+  const detailRef = useRef(null);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -188,10 +287,11 @@ export default function AdminBoard() {
     params.set('direction', sort.direction);
     const locked = Boolean(summary?.viewer?.restricted) && !viewAll;
     if (viewAll) params.set('scope', 'all');
-    if (!locked && department && department !== 'All') params.set('department', department);
+    if (!locked && department && !MONITOR_TABS.has(department)) params.set('department', department);
     if (q) params.set('q', q);
     if (filters.status) params.set('status', filters.status);
     if (filters.priority) params.set('priority', filters.priority);
+    if (filters.category) params.set('category', filters.category);
     if (filters.due_from) params.set('due_from', filters.due_from);
     if (filters.due_to) params.set('due_to', filters.due_to);
 
@@ -205,6 +305,7 @@ export default function AdminBoard() {
         if (cancelled) return;
         setRows(body.work_orders || []);
         setTotal(body.total || 0);
+        setBoardZone(body.timezone || '');
         setTableError('');
       })
       .catch((err) => {
@@ -223,14 +324,30 @@ export default function AdminBoard() {
 
   useEffect(() => {
     if (!summary?.viewer?.restricted || viewAll || !summary.viewer.department) return;
-    setDepartment((current) => (current === summary.viewer.department ? current : summary.viewer.department));
+    setDepartment((current) => {
+      if (current === 'Search' || current === 'Active') return current;
+      return summary.viewer.department;
+    });
   }, [summary, viewAll]);
 
   useEffect(() => {
-    if (!summary?.tabs || department === 'All') return;
-    if (summary?.viewer?.restricted && !viewAll) return;
+    if (completeSortApplied.current) return;
+    if (summary?.viewer?.filter !== 'completed this month') return;
+    completeSortApplied.current = true;
+    setSort({ field: 'arrived', direction: 'desc' });
+  }, [summary]);
+
+  useEffect(() => {
+    if (!summary?.tabs || MONITOR_TABS.has(department)) return;
+    if (summary?.viewer?.restricted && !viewAll) {
+      if (department !== summary.viewer.department) {
+        setDepartment(summary.viewer.department);
+        setOffset(0);
+      }
+      return;
+    }
     if (!summary.tabs.some((tab) => tab.key === department)) {
-      setDepartment('All');
+      setDepartment('Active');
       setOffset(0);
     }
   }, [summary, department, viewAll]);
@@ -242,6 +359,27 @@ export default function AdminBoard() {
     window.addEventListener(BOARD_REFRESH_EVENT, onBoardRefresh);
     return () => window.removeEventListener(BOARD_REFRESH_EVENT, onBoardRefresh);
   }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      setRefreshKey((value) => value + 1);
+    }, BOARD_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const fresh = rows.find((row) => row.id === selectedId);
+    if (fresh) setSelectedRow(fresh);
+  }, [rows, selectedId]);
+
+  useEffect(() => {
+    if (!selectedId || !detailRef.current) return;
+    if (window.innerWidth < 1200) {
+      detailRef.current.scrollIntoView({ block: 'nearest' });
+    }
+  }, [selectedId]);
 
   useEffect(() => {
     let timer = 0;
@@ -263,21 +401,18 @@ export default function AdminBoard() {
     };
   }, []);
 
-  const tabs = summary?.tabs?.length ? summary.tabs : [{ key: 'All', label: 'All', count: 0 }];
   const lockedView = Boolean(summary?.viewer?.restricted) && !viewAll;
-  const activeTab = tabs.some((tab) => tab.key === department)
-    ? department
-    : (lockedView && tabs[0] ? tabs[0].key : 'All');
+  const tabs = withMonitorTabs(summary?.tabs, lockedView);
+  const activeTab = tabs.some((tab) => tab.key === department) ? department : tabs[0].key;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const page = Math.floor(offset / PAGE_SIZE) + 1;
   const showingFrom = total === 0 ? 0 : offset + 1;
   const showingTo = total === 0 ? 0 : Math.min(offset + rows.length, total);
   const alerts = summary?.alerts || [];
   const visibleAlerts = showAllAlerts ? alerts : alerts.slice(0, 4);
-  const tableTitle = activeTab === 'Complete' ? 'Completed Work Orders' : 'Active Work Orders';
-
   const statCards = useMemo(() => {
     if (!summary?.stats) return [];
+    const categories = summary.stats.categories || {};
     const cards = [
       {
         key: 'total',
@@ -286,6 +421,30 @@ export default function AdminBoard() {
         caption: summary?.viewer?.restricted ? summary.viewer.department : 'All Departments',
         color: '#1E88E5',
         Icon: AssignmentOutlinedIcon,
+      },
+      {
+        key: 'category-overdue',
+        value: categories.overdue || 0,
+        label: 'Overdue',
+        caption: 'Category',
+        color: '#E53935',
+        Icon: ErrorOutlineIcon,
+      },
+      {
+        key: 'category-new',
+        value: categories.new || 0,
+        label: 'New',
+        caption: 'Category',
+        color: '#F9A825',
+        Icon: AssignmentOutlinedIcon,
+      },
+      {
+        key: 'category-in-production',
+        value: categories.in_production || 0,
+        label: 'In Production',
+        caption: 'Category',
+        color: '#1565C0',
+        Icon: DescriptionOutlinedIcon,
       },
     ];
     for (const departmentStat of summary.stats.departments || []) {
@@ -414,7 +573,7 @@ export default function AdminBoard() {
 
   function toggleDepartmentScope() {
     setViewAll((current) => !current);
-    setDepartment('All');
+    setDepartment('Active');
     setOffset(0);
   }
 
@@ -446,25 +605,29 @@ export default function AdminBoard() {
       <Tabs
         value={activeTab}
         onChange={(_, value) => {
-          if (lockedView) return;
+          if (lockedView && value !== 'Search' && value !== 'Active' && value !== summary?.viewer?.department) return;
           setDepartment(value);
           setOffset(0);
+          if (value === 'Search') window.setTimeout(() => searchRef.current?.focus(), 0);
         }}
         variant="scrollable"
         scrollButtons="auto"
         allowScrollButtonsMobile
         sx={{
-          minHeight: 42,
+          minHeight: 36,
+          bgcolor: '#f3f6fb',
+          borderBottom: `1px solid ${brand.border}`,
           '& .MuiTabs-indicator': { bgcolor: brand.orange, height: 3 },
-          '& .MuiTab-root': { textTransform: 'none', minHeight: 42, fontWeight: 600, color: brand.muted, px: 1.5 },
+          '& .MuiTab-root': { textTransform: 'none', minHeight: 36, fontWeight: 700, color: brand.navy, px: 1.25 },
           '& .Mui-selected': { color: brand.orange },
         }}
       >
         {tabs.map((tab) => (
-          <Tab key={tab.key} value={tab.key} label={`${tab.label} [${tab.count}]`} />
+          <Tab key={tab.key} value={tab.key} label={tab.label} />
         ))}
       </Tabs>
 
+      {showStats && (
       <Box
         sx={{
           display: 'grid',
@@ -491,116 +654,195 @@ export default function AdminBoard() {
           </Box>
         ))}
       </Box>
+      )}
 
-      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 1fr) 300px' }, gap: 2, alignItems: 'start' }}>
-        <Box sx={{ display: 'grid', gap: 2, minWidth: 0 }}>
-          <Panel
-            title={tableTitle}
-            action={(
-              <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                <TextField
-                  size="small"
-                  value={searchInput}
-                  onChange={(event) => setSearchInput(event.target.value)}
-                  placeholder="Search orders..."
-                  aria-label="Search orders"
-                  InputProps={{ startAdornment: <SearchIcon sx={{ color: brand.muted, mr: 0.5 }} fontSize="small" /> }}
-                  sx={{ width: { xs: 160, sm: 220 }, bgcolor: '#fff' }}
-                />
-                <Button
-                  variant="outlined"
-                  size="small"
-                  startIcon={<FilterListIcon />}
-                  onClick={(event) => {
-                    setDraftFilters(filters);
-                    setFilterAnchor(event.currentTarget);
-                  }}
-                  sx={{ textTransform: 'none', borderColor: brand.border, color: brand.text }}
-                >
-                  Filters
-                </Button>
-              </Box>
+      <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+        <Button
+          size="small"
+          variant="outlined"
+          data-testid="board-options"
+          onClick={(event) => {
+            setDraftFilters(filters);
+            setFilterAnchor(event.currentTarget);
+          }}
+          sx={{ textTransform: 'none', borderColor: '#9bb0c9', color: brand.navy, bgcolor: '#f7f9fc', fontWeight: 700, px: 2 }}
+        >
+          Options
+        </Button>
+      </Box>
+
+      <Box
+        sx={{
+          display: 'grid',
+          gap: 1.5,
+          alignItems: 'start',
+          gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 1fr) minmax(280px, 360px)' },
+        }}
+      >
+        <Box sx={{ display: 'grid', gap: 2, minWidth: 0, gridColumn: '1', gridRow: 1 }}>
+          <Box sx={{ minWidth: 0 }}>
+            {activeTab === 'Search' && (
+              <TextField
+                inputRef={searchRef}
+                size="small"
+                value={searchInput}
+                onChange={(event) => setSearchInput(event.target.value)}
+                placeholder="Search transfers..."
+                aria-label="Search orders"
+                data-testid="board-search"
+                InputProps={{ startAdornment: <SearchIcon sx={{ color: brand.muted, mr: 0.5 }} fontSize="small" /> }}
+                sx={{ width: { xs: '100%', sm: 360 }, bgcolor: '#fff', mb: 1 }}
+              />
             )}
-          >
             {tableError && <Alert severity="error" sx={{ mb: 1 }}>{tableError}</Alert>}
-            <Box sx={{ overflowX: 'auto' }}>
-              <Table size="small" sx={{ minWidth: 760 }}>
-                <TableHead>
+            <Box sx={{ mb: 1 }}>
+              <UrgencyLegend timezone={boardZone} />
+            </Box>
+            <Box data-testid="board-table-wrap" sx={{ overflowX: 'auto', bgcolor: '#fff', border: `1px solid ${brand.border}` }}>
+              <Table
+                size="small"
+                sx={{
+                  width: '100%',
+                  tableLayout: 'fixed',
+                  minWidth: { xs: 0, xl: 760 },
+                }}
+              >
+                <colgroup>
+                  <col style={{ width: '16%' }} />
+                  <col style={{ width: '13%' }} />
+                  <col style={{ width: '17%' }} />
+                  <col style={{ width: '18%' }} />
+                  <col style={{ width: '20%' }} />
+                  <col style={{ width: '16%' }} />
+                </colgroup>
+                <TableHead sx={{ '& .MuiTableCell-root': { px: { xs: 0.5, xl: 1.25 } } }}>
                   <TableRow>
-                    <TableCell sx={{ color: brand.navy, fontWeight: 700 }}>Order #</TableCell>
-                    <TableCell sx={{ color: brand.navy, fontWeight: 700 }}>Company</TableCell>
-                    <TableCell sx={{ color: brand.navy, fontWeight: 700 }}>Contact</TableCell>
-                    <TableCell sx={{ color: brand.navy, fontWeight: 700 }}>Originals</TableCell>
-                    <TableCell sx={{ color: brand.navy, fontWeight: 700 }}>Payment</TableCell>
-                    <TableCell sx={{ color: brand.navy, fontWeight: 700 }}>Department</TableCell>
-                    <TableCell sx={{ color: brand.navy, fontWeight: 700 }} sortDirection={sort.field === 'arrived' ? sort.direction : false}>
-                      <TableSortLabel
-                        active={sort.field === 'arrived'}
-                        direction={sort.field === 'arrived' ? sort.direction : 'asc'}
-                        onClick={() => toggleSort('arrived')}
-                      >
-                        Arrived
-                      </TableSortLabel>
-                    </TableCell>
-                    <TableCell sx={{ color: brand.navy, fontWeight: 700 }} sortDirection={sort.field === 'due' ? sort.direction : false}>
+                    <TableCell sx={headCellSx} title="XFer Id/From">XFer Id/From</TableCell>
+                    {['To', 'Arrived', 'Retrieved'].map((label) => (
+                      <TableCell key={label} sx={headCellSx}>{label}</TableCell>
+                    ))}
+                    <TableCell sx={headCellSx} sortDirection={sort.field === 'due' ? sort.direction : false}>
                       <TableSortLabel
                         active={sort.field === 'due'}
                         direction={sort.field === 'due' ? sort.direction : 'asc'}
                         onClick={() => toggleSort('due')}
+                        sx={{
+                          color: '#fff !important',
+                          '& .MuiTableSortLabel-icon': { color: '#fff !important' },
+                        }}
                       >
-                        Due
+                        Date Due
                       </TableSortLabel>
                     </TableCell>
-                    <TableCell sx={{ color: brand.navy, fontWeight: 700 }}>Process</TableCell>
-                    <TableCell sx={{ color: brand.navy, fontWeight: 700 }}>Actions</TableCell>
+                    <TableCell sx={headCellSx}>Process</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {rows.length ? rows.map((row) => (
-                    <TableRow key={row.id} hover>
-                      <TableCell sx={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{row.order_number}</TableCell>
-                      <TableCell>{row.company || '—'}</TableCell>
-                      <TableCell>{row.contact_name || '—'}</TableCell>
-                      <TableCell>{row.originals_source_label || 'Not specified'}</TableCell>
-                      <TableCell>{row.payment_method_label || 'Not specified'}</TableCell>
+                  {rows.length ? rows.map((row, index) => {
+                    const surface = rowSurface(row, index);
+                    const fresh = !row.retrieved_at;
+                    const signalText = [...(row.urgency?.signals || []), ...(fresh ? ['New'] : [])].join(', ');
+                    const arrived = splitInstant(row.arrived_at, boardZone);
+                    const retrieved = splitInstant(row.retrieved_at, boardZone, { seconds: true });
+                    const due = splitWall(row.due_at);
+                    const weight = surface.bold ? 800 : 500;
+                    return (
+                    <TableRow
+                      key={row.id}
+                      tabIndex={0}
+                      role="row"
+                      aria-selected={selectedId === row.id}
+                      selected={selectedId === row.id}
+                      data-testid={`board-row-${row.external_id || row.id}`}
+                      data-urgency={row.urgency?.tone || 'none'}
+                      data-retrieved={fresh ? 'no' : 'yes'}
+                      onClick={() => {
+                        setSelectedId(row.id);
+                        setSelectedRow(row);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'Enter' && event.key !== ' ') return;
+                        event.preventDefault();
+                        setSelectedId(row.id);
+                        setSelectedRow(row);
+                      }}
+                      sx={{
+                        cursor: 'pointer',
+                        background: surface.background,
+                        fontWeight: weight,
+                        color: '#1B2838',
+                        boxShadow: selectedId === row.id ? `inset 0 0 0 2px ${brand.navy}` : undefined,
+                        '&:hover': { filter: 'brightness(0.97)' },
+                        '&:focus-visible': {
+                          outline: `2px solid ${brand.navy}`,
+                          outlineOffset: -2,
+                        },
+                        '& .MuiTableCell-root': {
+                          borderBottom: '1px solid rgba(27,40,56,0.08)',
+                          fontWeight: weight,
+                          color: '#1B2838',
+                          fontSize: 13,
+                          py: 0.75,
+                          px: { xs: 0.5, xl: 1.25 },
+                          overflow: 'hidden',
+                        },
+                      }}
+                    >
                       <TableCell>
-                        <Chip
-                          label={row.department || 'Unassigned'}
-                          size="small"
+                        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.15, minWidth: 0 }} aria-label={signalText || undefined}>
+                          <Box component="span" title={row.order_number || undefined} sx={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.order_number}</Box>
+                          <Box component="span" title={row.company || undefined} sx={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.company || '—'}</Box>
+                          <Box component="span" title={row.contact_name || undefined} sx={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.contact_name || '—'}</Box>
+                          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.4, mt: 0.35 }}>
+                            <UrgencyChips urgency={row.urgency} fresh={fresh} />
+                          </Box>
+                        </Box>
+                      </TableCell>
+                      <TableCell>
+                        <Box
+                          component="span"
                           sx={{
+                            display: 'inline-block',
+                            maxWidth: '100%',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
                             bgcolor: row.department_color || '#90caf9',
                             color: textOn(row.department_color),
-                            fontWeight: 700,
-                            borderRadius: 1,
+                            fontWeight: 800,
+                            fontSize: 12,
+                            lineHeight: 1.3,
+                            px: 0.9,
+                            py: 0.3,
+                            borderRadius: 0.5,
+                            boxSizing: 'border-box',
                           }}
-                        />
+                          title={row.department || 'Unassigned'}
+                        >
+                          {row.department || 'Unassigned'}
+                        </Box>
+                        <Typography title={row.delivery_method || undefined} sx={{ fontSize: 12, mt: 0.4, fontWeight: weight, color: '#1B2838', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {row.delivery_method || '—'}
+                        </Typography>
                       </TableCell>
-                      <TableCell sx={{ whiteSpace: 'nowrap' }}>{row.arrived_display || '—'}</TableCell>
-                      <TableCell sx={{ whiteSpace: 'nowrap' }}>{row.due_display || '—'}</TableCell>
-                      <TableCell>{row.process || '—'}</TableCell>
-                      <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                        <IconButton aria-label={`View ${row.order_number}`} size="small" onClick={() => navigate(`/work-orders/${row.id}`)}>
-                          <VisibilityOutlinedIcon fontSize="small" />
-                        </IconButton>
-                        <IconButton aria-label={`Print barcode for ${row.order_number}`} size="small" onClick={() => navigate(`/work-orders/${row.id}/print`)}>
-                          <QrCode2Icon fontSize="small" />
-                        </IconButton>
-                        {canMove && (
-                          <Button
-                            size="small"
-                            aria-label={`Move ${row.order_number}`}
-                            data-testid={`move-${row.external_id || row.id}`}
-                            onClick={() => setMoveTarget(row)}
-                            sx={{ textTransform: 'none', ml: 0.5 }}
-                          >
-                            Move to…
-                          </Button>
+                      <TableCell><StackedStamp date={arrived.date} time={arrived.time} /></TableCell>
+                      <TableCell>
+                        {fresh ? (
+                          <Box sx={{ textAlign: 'center' }}>n/a</Box>
+                        ) : (
+                          <StackedStamp date={retrieved.date} time={retrieved.time} missing="n/a" />
                         )}
                       </TableCell>
+                      <TableCell><StackedStamp date={due.date} time={due.time} /></TableCell>
+                      <TableCell data-testid="board-process">
+                        <Box sx={{ whiteSpace: 'nowrap' }}>{row.status_label || 'LiveOrder'}</Box>
+                        <Box sx={{ fontSize: 12, whiteSpace: 'nowrap' }}>{row.files_label || '0 / 0'}</Box>
+                      </TableCell>
                     </TableRow>
-                  )) : (
+                    );
+                  }) : (
                     <TableRow>
-                      <TableCell colSpan={10} sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
+                      <TableCell colSpan={6} sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
                         {tableLoading ? 'Loading work orders...' : 'No work orders match this view.'}
                       </TableCell>
                     </TableRow>
@@ -622,8 +864,28 @@ export default function AdminBoard() {
                 />
               )}
             </Box>
-          </Panel>
+          </Box>
+        </Box>
 
+        <Box ref={detailRef} sx={{ gridColumn: { xs: '1', lg: '2' }, gridRow: { xs: 2, lg: 1 }, minWidth: 0 }}>
+          {selectedRow ? (
+            <BoardDetailPane
+              row={selectedRow}
+              refreshKey={refreshKey}
+              timeZone={boardZone}
+              canMove={canMove}
+              onClose={() => {
+                setSelectedId(null);
+                setSelectedRow(null);
+              }}
+              onMove={(target) => setMoveTarget(target)}
+            />
+          ) : (
+            <SelectTransferPrompt />
+          )}
+        </Box>
+
+        <Box sx={{ gridColumn: '1 / -1', display: 'grid', gap: 2 }}>
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>
             <Panel title="Scan Activity (Last 10 Scans)" action={linkButton('View Full Scan History', openScans)}>
               <Box sx={{ overflowX: 'auto' }}>
@@ -673,7 +935,15 @@ export default function AdminBoard() {
           </Box>
         </Box>
 
-        <Box sx={{ display: 'grid', gap: 2, alignContent: 'start' }}>
+        <Box
+          sx={{
+            display: 'grid',
+            gap: 2,
+            alignContent: 'start',
+            gridColumn: '1 / -1',
+            gridTemplateColumns: { xs: '1fr', md: '1fr 1fr 1fr' },
+          }}
+        >
           <Panel title="Department Queue Summary">
             <Box sx={{ display: 'grid', gap: 0.75 }}>
               {(summary?.queue || []).map((item) => (
@@ -755,6 +1025,14 @@ export default function AdminBoard() {
         transformOrigin={{ vertical: 'top', horizontal: 'right' }}
       >
         <Box sx={{ p: 2, width: 280, display: 'grid', gap: 1.5 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
+            <Typography sx={{ fontSize: 14, fontWeight: 700, color: brand.navy }}>Stat cards</Typography>
+            <Switch
+              checked={showStats}
+              onChange={(event) => setShowStats(event.target.checked)}
+              inputProps={{ 'aria-label': 'Show stat cards' }}
+            />
+          </Box>
           <TextField
             select
             size="small"
@@ -764,9 +1042,21 @@ export default function AdminBoard() {
           >
             <MenuItem value="">Any</MenuItem>
             <MenuItem value="open">Open</MenuItem>
-            <MenuItem value="in-progress">In progress</MenuItem>
+            <MenuItem value="in-progress">In Production</MenuItem>
             <MenuItem value="on-hold">On hold</MenuItem>
             <MenuItem value="completed">Completed</MenuItem>
+          </TextField>
+          <TextField
+            select
+            size="small"
+            label="Category"
+            value={draftFilters.category}
+            onChange={(event) => setDraftFilters((current) => ({ ...current, category: event.target.value }))}
+          >
+            <MenuItem value="">Any</MenuItem>
+            {BOARD_CATEGORY_OPTIONS.map((option) => (
+              <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+            ))}
           </TextField>
           <TextField
             select
