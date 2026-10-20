@@ -382,6 +382,7 @@ async function seedNotificationSettings() {
     ['work_order_completed', 1, 'in_app'],
     ['work_order_rush', 1, 'in_app'],
     ['customer_registered', 1, 'in_app'],
+    ['files_shared', 1, 'in_app'],
   ];
 
   for (const event of events) {
@@ -499,12 +500,14 @@ async function ensureNotifications() {
     { name: 'customer_id', definition: 'INTEGER' },
     { name: 'work_order_id', definition: 'INTEGER' },
     { name: 'delivery_id', definition: 'INTEGER' },
+    { name: 'order_id', definition: 'INTEGER' },
     { name: 'dedupe_key', definition: 'TEXT' },
     { name: 'created_at', definition: 'DATETIME' },
   ]);
   await run('CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_dedupe_key ON notifications(dedupe_key)');
   await run('CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at)');
   await run('CREATE INDEX IF NOT EXISTS idx_notifications_customer_id ON notifications(customer_id)');
+  await run('CREATE INDEX IF NOT EXISTS idx_notifications_order_id ON notifications(order_id)');
 
   await run(`CREATE TABLE IF NOT EXISTS notification_reads (
     notification_id INTEGER NOT NULL,
@@ -520,6 +523,52 @@ async function ensureNotifications() {
     { name: 'read_at', definition: 'DATETIME' },
   ]);
   await run('CREATE INDEX IF NOT EXISTS idx_notification_reads_user ON notification_reads(user_id)');
+}
+
+async function ensureSharedFiles() {
+  await run(`CREATE TABLE IF NOT EXISTS shared_files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id INTEGER NOT NULL,
+    work_order_id INTEGER,
+    customer_id INTEGER,
+    uploaded_by INTEGER,
+    original_name TEXT NOT NULL,
+    stored_name TEXT NOT NULL,
+    mime_type TEXT,
+    size_bytes INTEGER NOT NULL,
+    message TEXT,
+    batch_id TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    deleted_at DATETIME,
+    deleted_by INTEGER,
+    replaced_by_id INTEGER,
+    replaces_id INTEGER,
+    customer_downloaded_at DATETIME,
+    FOREIGN KEY(order_id) REFERENCES orders(id),
+    FOREIGN KEY(work_order_id) REFERENCES work_orders(id),
+    FOREIGN KEY(customer_id) REFERENCES users(id),
+    FOREIGN KEY(uploaded_by) REFERENCES users(id)
+  )`);
+  await ensureColumns('shared_files', [
+    { name: 'order_id', definition: 'INTEGER' },
+    { name: 'work_order_id', definition: 'INTEGER' },
+    { name: 'customer_id', definition: 'INTEGER' },
+    { name: 'uploaded_by', definition: 'INTEGER' },
+    { name: 'original_name', definition: 'TEXT' },
+    { name: 'stored_name', definition: 'TEXT' },
+    { name: 'mime_type', definition: 'TEXT' },
+    { name: 'size_bytes', definition: 'INTEGER' },
+    { name: 'message', definition: 'TEXT' },
+    { name: 'batch_id', definition: 'TEXT' },
+    { name: 'created_at', definition: 'DATETIME' },
+    { name: 'deleted_at', definition: 'DATETIME' },
+    { name: 'deleted_by', definition: 'INTEGER' },
+    { name: 'replaced_by_id', definition: 'INTEGER' },
+    { name: 'replaces_id', definition: 'INTEGER' },
+    { name: 'customer_downloaded_at', definition: 'DATETIME' },
+  ]);
+  await run('CREATE INDEX IF NOT EXISTS idx_shared_files_order ON shared_files(order_id)');
+  await run('CREATE INDEX IF NOT EXISTS idx_shared_files_work_order ON shared_files(work_order_id)');
 }
 
 async function normalizeLegacyWorkOrderStatuses() {
@@ -558,6 +607,8 @@ async function seedSystemSettings() {
     ['company_phone', '919-782-3332'],
     // Missing means customers can register. An admin's saved off switch is left alone.
     ['customer_self_signup_enabled', '1'],
+    // Missing means staff email the customer when files are shared. An off switch is left alone.
+    ['email_customers_on_file_share', '1'],
   ];
   for (const [key, value] of defaults) {
     const existing = await get('SELECT key FROM system_settings WHERE key = ?', [key]);
@@ -1091,6 +1142,7 @@ async function main() {
   await run('CREATE INDEX IF NOT EXISTS idx_work_orders_service_id ON work_orders(service_id)');
   await run('CREATE INDEX IF NOT EXISTS idx_deliveries_order_id ON deliveries(order_id)');
   await ensureNotifications();
+  await ensureSharedFiles();
   await seedAdmin();
   await seedCustomers();
   await seedDepartments();

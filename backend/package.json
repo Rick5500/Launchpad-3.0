@@ -17,7 +17,8 @@
     "verify:phase9": "node scripts/verify-phase9.js",
     "verify:phase10": "node scripts/verify-phase10.js",
     "verify:phase11": "node scripts/verify-phase11.js",
-    "verify:phase12": "node scripts/verify-phase12.js"
+    "verify:phase12": "node scripts/verify-phase12.js",
+    "verify:phase13": "node scripts/verify-phase13.js"
   },
   "dependencies": {
     "@xmldom/xmldom": "^0.9.12",
@@ -27,6 +28,7 @@
     "express": "^4.18.2",
     "jsbarcode": "^3.12.3",
     "multer": "^2.4.0",
+    "nodemailer": "^7.0.13",
     "sqlite3": "^5.1.6"
   }
 }

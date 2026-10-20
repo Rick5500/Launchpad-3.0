@@ -57,8 +57,8 @@ function writeNotifications(items, cb) {
     for (const item of items) {
       const inserted = await tx.run(
         `INSERT OR IGNORE INTO notifications
-          (type, title, body, customer_id, work_order_id, delivery_id, dedupe_key)
-         VALUES (?,?,?,?,?,?,?)`,
+          (type, title, body, customer_id, work_order_id, delivery_id, order_id, dedupe_key)
+         VALUES (?,?,?,?,?,?,?,?)`,
         [
           item.type,
           item.title,
@@ -66,6 +66,7 @@ function writeNotifications(items, cb) {
           item.customerId == null ? null : item.customerId,
           item.workOrderId == null ? null : item.workOrderId,
           item.deliveryId == null ? null : item.deliveryId,
+          item.orderId == null ? null : item.orderId,
           item.dedupeKey,
         ]
       );
@@ -78,6 +79,7 @@ function writeNotifications(items, cb) {
           customer_id: item.customerId == null ? null : item.customerId,
           work_order_id: item.workOrderId == null ? null : item.workOrderId,
           delivery_id: item.deliveryId == null ? null : item.deliveryId,
+          order_id: item.orderId == null ? null : item.orderId,
         });
       }
     }
@@ -177,6 +179,20 @@ function notifyWorkOrderUpdated(previous, current, cb) {
   insertNotifications(items, cb);
 }
 
+function notifyFilesShared(item, cb) {
+  if (!item || !item.orderId) return cb(null, []);
+  const orderNumber = item.orderNumber || item.orderId;
+  insertNotifications([{
+    type: 'files_shared',
+    title: item.title || `New files for order ${orderNumber}`,
+    body: item.body || '',
+    customerId: item.customerId,
+    workOrderId: item.workOrderId == null ? null : item.workOrderId,
+    orderId: item.orderId,
+    dedupeKey: `files_shared:${item.orderId}:${item.batchId}`,
+  }], cb);
+}
+
 function deliveryNotification(row, type) {
   const overdue = type === 'delivery_overdue';
   return {
@@ -267,6 +283,7 @@ function mapRow(row) {
     customer_id: row.customer_id,
     work_order_id: row.work_order_id,
     delivery_id: row.delivery_id,
+    order_id: row.order_id == null ? null : row.order_id,
     created_at: row.created_at,
     read: Boolean(row.is_read),
   };
@@ -301,6 +318,7 @@ function listNotifications(user, query, cb) {
          n.customer_id,
          n.work_order_id,
          n.delivery_id,
+         n.order_id,
          n.created_at,
          CASE WHEN r.user_id IS NULL THEN 0 ELSE 1 END AS is_read
        FROM notifications n
@@ -375,6 +393,7 @@ module.exports = {
   dueSoonMinutes,
   notifyWorkOrderCreated,
   notifyWorkOrderUpdated,
+  notifyFilesShared,
   checkDeliveryNotifications,
   listNotifications,
   markRead,

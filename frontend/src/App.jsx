@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { ThemeProvider, CssBaseline, Box, Typography, TextField, Button, CircularProgress, Alert } from '@mui/material';
 import AdminBoard from './routes/AdminBoard';
 import PlaceholderPage from './routes/PlaceholderPage';
@@ -27,6 +27,15 @@ import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import theme from './theme';
 import { brand } from './brand';
+import { safeAppPath } from './safePath';
+
+function returnPath(location) {
+  const fromQuery = safeAppPath(new URLSearchParams(location.search).get('next'));
+  if (fromQuery) return fromQuery;
+  const from = location.state && location.state.from;
+  if (!from || typeof from !== 'object') return '';
+  return safeAppPath(`${from.pathname || ''}${from.search || ''}${from.hash || ''}`);
+}
 
 function LoginScreen() {
   const { login, register, isLoggingIn, loginError, authMessage } = useAuth();
@@ -42,6 +51,8 @@ function LoginScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [website, setWebsite] = useState('');
   const [localError, setLocalError] = useState('');
+  const location = useLocation();
+  const nextPath = returnPath(location);
   const usernameRef = useRef(null);
   const companyRef = useRef(null);
   const registerAlertRef = useRef(null);
@@ -88,7 +99,7 @@ function LoginScreen() {
       return;
     }
 
-    await login(username.trim(), password);
+    await login(username.trim(), password, nextPath);
   }
 
   async function handleRegister(event) {
@@ -281,6 +292,15 @@ function LoginScreen() {
   );
 }
 
+function LoginGate() {
+  const { user } = useAuth();
+  const location = useLocation();
+  if (!user) return <LoginScreen />;
+  const next = safeAppPath(new URLSearchParams(location.search).get('next'));
+  if (next) return <Navigate to={next} replace />;
+  return <Navigate to={user.role === 'customer' ? '/order' : '/'} replace />;
+}
+
 function HomeOrOrder() {
   const { user } = useAuth();
   if (user?.role === 'customer') return <Navigate to="/order" replace />;
@@ -300,7 +320,7 @@ function AppRoutes() {
 
   return (
     <Routes>
-      <Route path="/login" element={user ? <Navigate to={user.role === 'customer' ? '/order' : '/'} replace /> : <LoginScreen />} />
+      <Route path="/login" element={<LoginGate />} />
       <Route path="/order" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><CustomerOrderForm /></ProtectedRoute>} />
       <Route path="/orders/:id" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><OrderDetail /></ProtectedRoute>} />
       <Route path="/orders/:id/print" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><WorkOrderPrint /></ProtectedRoute>} />

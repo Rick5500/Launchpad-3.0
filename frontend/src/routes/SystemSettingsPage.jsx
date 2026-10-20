@@ -25,11 +25,14 @@ export default function SystemSettingsPage() {
     due_soon_hours: '',
     last_backup_at: '',
     customer_self_signup_enabled: true,
+    email_customers_on_file_share: true,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [testTo, setTestTo] = useState('');
+  const [testing, setTesting] = useState(false);
 
   function apply(body) {
     setSettings(body);
@@ -40,6 +43,7 @@ export default function SystemSettingsPage() {
       due_soon_hours: body.due_soon_hours?.value == null ? '' : String(body.due_soon_hours.value),
       last_backup_at: body.last_backup_at || '',
       customer_self_signup_enabled: body.customer_self_signup_enabled !== false,
+      email_customers_on_file_share: body.email_customers_on_file_share !== false,
     });
   }
 
@@ -69,6 +73,7 @@ export default function SystemSettingsPage() {
           due_soon_hours: form.due_soon_hours === '' ? null : Number(form.due_soon_hours),
           last_backup_at: form.last_backup_at.trim() === '' ? null : form.last_backup_at.trim(),
           customer_self_signup_enabled: form.customer_self_signup_enabled,
+          email_customers_on_file_share: form.email_customers_on_file_share,
         }),
       });
       const body = await response.json().catch(() => ({}));
@@ -79,6 +84,25 @@ export default function SystemSettingsPage() {
       setError(err.message || 'Unable to save settings');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function sendTest() {
+    setTesting(true);
+    setError('');
+    setNotice('');
+    try {
+      const response = await authFetch('/api/settings/test-email', {
+        method: 'POST',
+        body: JSON.stringify({ to: testTo.trim() }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Unable to send test email');
+      setNotice(`Test email sent to ${body.to}.`);
+    } catch (err) {
+      setError(err.message || 'Unable to send test email');
+    } finally {
+      setTesting(false);
     }
   }
 
@@ -94,6 +118,7 @@ export default function SystemSettingsPage() {
     ['Max files per request', readOnly.max_upload_files],
     ['Max unattached uploads', readOnly.max_unattached_uploads],
     ['Unattached file retention', readOnly.upload_orphan_hours != null ? `${readOnly.upload_orphan_hours} hours` : ''],
+    ['Email', settings?.mail?.configured ? `Configured${settings.mail.from ? ` · ${settings.mail.from}` : ''}` : 'Not set up'],
   ];
 
   return (
@@ -139,9 +164,38 @@ export default function SystemSettingsPage() {
           <Typography variant="body2" color="text.secondary">
             When this is off, Create an account is hidden on the sign-in page. Existing customers can still sign in.
           </Typography>
+          <FormControlLabel
+            control={(
+              <Switch
+                checked={form.email_customers_on_file_share}
+                onChange={(event) => setForm({ ...form, email_customers_on_file_share: event.target.checked })}
+              />
+            )}
+            label="Email customers when files are shared"
+          />
+          <Typography variant="body2" color="text.secondary">
+            This is the default on Send files. Staff can change it for one send. If email is not set up, the files are still shared in Launchpad.
+          </Typography>
           <Box>
             <Button type="submit" variant="contained" disabled={saving || loading}>{saving ? 'Saving...' : 'Save settings'}</Button>
           </Box>
+        </Box>
+      </SectionCard>
+
+      <SectionCard title="Test email" subtitle="Sends a short message with the letterhead above. Files shared with a customer use the same mail setup.">
+        {settings?.mail?.configured ? null : (
+          <Alert severity="warning" sx={{ mb: 2 }}>Email isn't set up.</Alert>
+        )}
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+          <TextField
+            label="Send a test to"
+            value={testTo}
+            onChange={(event) => setTestTo(event.target.value)}
+            sx={{ minWidth: 280 }}
+          />
+          <Button variant="outlined" onClick={sendTest} disabled={testing || loading} data-testid="send-test-email">
+            {testing ? 'Sending...' : 'Send test email'}
+          </Button>
         </Box>
       </SectionCard>
 

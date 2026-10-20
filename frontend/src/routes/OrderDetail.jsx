@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Alert, Box, Button, Typography } from '@mui/material';
 import CustomerShell from '../components/CustomerShell';
+import FilesFromAccent from '../components/FilesFromAccent';
 import LoadingState from '../components/LoadingState';
 import { useAuth } from '../context/AuthContext';
 import { authFetch, downloadAuthorized } from '../api';
@@ -189,6 +190,8 @@ export default function OrderDetail() {
               </Typography>
             ))}
           </Box>
+
+          <FilesFromAccent orderId={order.id} canManage={user?.role === 'admin' || user?.role === 'manager' || user?.role === 'operator'} />
 
           <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2 }}>
             <Typography sx={{ fontWeight: 700, color: brand.navy, mb: 1 }}>Attached Files</Typography>

@@ -18,6 +18,7 @@ const typeLabels = {
   work_order_on_hold: 'On hold',
   work_order_completed: 'Completed',
   work_order_rush: 'Rush',
+  files_shared: 'Files',
 };
 
 function formatStamp(value) {
@@ -74,7 +75,8 @@ export default function Notifications() {
       const response = await authFetch(`/api/notifications/${item.id}/read`, { method: 'POST', cache: 'no-store' });
       if (response.ok) notifyNotificationsChanged();
     }
-    if (item.work_order_id) navigate(`/work-orders/${item.work_order_id}`);
+    if (item.type === 'files_shared' && item.order_id) navigate(`/orders/${item.order_id}#files-from-accent`);
+    else if (item.work_order_id) navigate(`/work-orders/${item.work_order_id}`);
   }
 
   async function markAllRead() {
@@ -114,7 +116,7 @@ export default function Notifications() {
               <Typography>{item.body}</Typography>
             </Box>
             <Button size="small" onClick={() => markRead(item)}>
-              {item.work_order_id ? 'Open' : item.read ? 'Read' : 'Mark read'}
+              {item.order_id || item.work_order_id ? 'Open' : item.read ? 'Read' : 'Mark read'}
             </Button>
           </Box>
         </SectionCard>
