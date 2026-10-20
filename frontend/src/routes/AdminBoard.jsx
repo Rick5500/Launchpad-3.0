@@ -368,7 +368,7 @@ export default function AdminBoard() {
 
   useEffect(() => {
     if (!selectedId || !detailRef.current) return;
-    if (window.innerWidth < 600) {
+    if (window.innerWidth < 1200) {
       detailRef.current.scrollIntoView({ block: 'nearest' });
     }
   }, [selectedId]);
@@ -643,7 +643,7 @@ export default function AdminBoard() {
           display: 'grid',
           gap: 1.5,
           alignItems: 'start',
-          gridTemplateColumns: { xs: '1fr', sm: 'minmax(0, 1fr) minmax(240px, 340px)' },
+          gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 1fr) minmax(280px, 360px)' },
         }}
       >
         <Box sx={{ display: 'grid', gap: 2, minWidth: 0, gridColumn: '1', gridRow: 1 }}>
@@ -700,11 +700,20 @@ export default function AdminBoard() {
                     return (
                     <TableRow
                       key={row.id}
+                      tabIndex={0}
+                      role="row"
+                      aria-selected={selectedId === row.id}
                       selected={selectedId === row.id}
                       data-testid={`board-row-${row.external_id || row.id}`}
                       data-urgency={row.urgency?.tone || 'none'}
                       data-retrieved={fresh ? 'no' : 'yes'}
                       onClick={() => {
+                        setSelectedId(row.id);
+                        setSelectedRow(row);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'Enter' && event.key !== ' ') return;
+                        event.preventDefault();
                         setSelectedId(row.id);
                         setSelectedRow(row);
                       }}
@@ -715,6 +724,10 @@ export default function AdminBoard() {
                         color: '#1B2838',
                         boxShadow: selectedId === row.id ? `inset 0 0 0 2px ${brand.navy}` : undefined,
                         '&:hover': { filter: 'brightness(0.97)' },
+                        '&:focus-visible': {
+                          outline: `2px solid ${brand.navy}`,
+                          outlineOffset: -2,
+                        },
                         '& .MuiTableCell-root': {
                           borderBottom: '1px solid rgba(27,40,56,0.08)',
                           fontWeight: weight,
@@ -797,7 +810,7 @@ export default function AdminBoard() {
           </Box>
         </Box>
 
-        <Box ref={detailRef} sx={{ gridColumn: { xs: '1', sm: '2' }, gridRow: { xs: 2, sm: 1 }, minWidth: 0 }}>
+        <Box ref={detailRef} sx={{ gridColumn: { xs: '1', lg: '2' }, gridRow: { xs: 2, lg: 1 }, minWidth: 0 }}>
           {selectedRow ? (
             <BoardDetailPane
               row={selectedRow}

@@ -584,10 +584,13 @@ function workOrderFilters(query, scope) {
   const orderColumn = completeDefault && sort === 'arrived'
     ? `datetime(coalesce(wo.updated_at, wo.created_at))`
     : SORT_COLUMNS[sort];
+  // Earliest due date first. SQLite sorts NULL before every date, so a missing
+  // due date is ordered after the dated rows when the direction is ascending.
+  const nullsLast = sort === 'due' ? `(${orderColumn} IS NULL) ASC, ` : '';
   return {
     where: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '',
     params,
-    orderBy: `${orderColumn} ${direction.toUpperCase()}, wo.id ${direction.toUpperCase()}`,
+    orderBy: `${nullsLast}${orderColumn} ${direction.toUpperCase()}, wo.id ${direction.toUpperCase()}`,
   };
 }
 

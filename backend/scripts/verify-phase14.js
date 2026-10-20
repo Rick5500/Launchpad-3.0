@@ -469,6 +469,14 @@ async function main() {
     assert(ticketRow.process === 'Large Format', 'process should stay the service name');
     assert(findRow(board.json, 'P13-HOLD').status_label === 'On Hold', 'an on-hold job should not read LiveOrder');
 
+    await insertWorkOrder(db, {
+      externalId: 'P13-NODUE',
+      customerId: created.json.id,
+      status: 'open',
+      department: 'Small Format',
+      priority: 'Normal',
+      due: null,
+    });
     const unordered = await request({
       method: 'GET',
       path: '/api/admin-board/work-orders?limit=100',
@@ -483,6 +491,10 @@ async function main() {
     assert(
       orderIds.indexOf(ticket.external_id) < orderIds.indexOf('P13-RUSH'),
       'a past due job should sort before a far future one'
+    );
+    assert(
+      orderIds.indexOf('P13-RUSH') >= 0 && orderIds.indexOf('P13-RUSH') < orderIds.indexOf('P13-NODUE'),
+      `a missing due date should sort after dated jobs: ${orderIds.join(',')}`
     );
 
     const fileBytes = (16 * 1024 * 1024) + Math.round(0.8 * 1024 * 1024);

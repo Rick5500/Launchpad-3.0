@@ -15,7 +15,7 @@ export const URGENCY_STYLES = {
   overdue: {
     label: 'Overdue',
     bgcolor: '#ff7a1a',
-    background: 'linear-gradient(90deg, #ff3b2f 0%, #ff7a1a 34%, #ffc14d 70%, #ffe98a 100%)',
+    background: 'linear-gradient(90deg, #ff5e54 0%, #ff7a1a 34%, #ffc14d 70%, #ffe98a 100%)',
     border: '#C62828',
     chipBg: '#F8D0D0',
     chipColor: '#7F1D1D',
