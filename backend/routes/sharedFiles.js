@@ -109,7 +109,38 @@ fileRouter.post('/:id/replace', auth.requireAuth, staff, acceptUpload, async (re
   }
 });
 
+const transferRouter = express.Router();
+
+transferRouter.get('/', auth.requireAuth, readers, async (req, res) => {
+  try {
+    res.json(await shared.listTransfers(req.user, req.query || {}));
+  } catch (err) {
+    fail(res, err, 'FILE TRANSFER LIST ERROR:', 'Failed to load files');
+  }
+});
+
+transferRouter.get('/:id', auth.requireAuth, readers, async (req, res) => {
+  const id = parseId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'id must be a positive integer' });
+  try {
+    res.json(await shared.getTransfer(req.user, id));
+  } catch (err) {
+    fail(res, err, 'FILE TRANSFER ERROR:', 'Failed to load files');
+  }
+});
+
+transferRouter.post('/', auth.requireAuth, staff, acceptUpload, async (req, res) => {
+  try {
+    const result = await shared.createTransfer(req.user, req.body || {}, req.files || []);
+    return res.status(201).json(result);
+  } catch (err) {
+    if (!err.filesCommitted) removeUploaded(req.files);
+    return fail(res, err, 'FILE TRANSFER SEND ERROR:', 'Failed to send files');
+  }
+});
+
 module.exports = {
   mount,
   fileRouter,
+  transferRouter,
 };

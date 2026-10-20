@@ -22,6 +22,8 @@ import OrderDetail from './routes/OrderDetail';
 import WorkOrderPrint from './routes/WorkOrderPrint';
 import Reports from './routes/Reports';
 import Notifications from './routes/Notifications';
+import SendFiles from './routes/SendFiles';
+import CustomerFiles from './routes/CustomerFiles';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -338,6 +340,9 @@ function AppRoutes() {
         <Route path="reports" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><Reports /></ProtectedRoute>} />
         <Route path="reports/:reportId" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><Reports /></ProtectedRoute>} />
         <Route path="notifications" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><Notifications /></ProtectedRoute>} />
+        <Route path="send-files" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><SendFiles /></ProtectedRoute>} />
+        <Route path="files" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><CustomerFiles /></ProtectedRoute>} />
+        <Route path="files/:id" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><CustomerFiles /></ProtectedRoute>} />
         <Route path="search" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><SearchOrders /></ProtectedRoute>} />
         <Route path="services" element={<ProtectedRoute roles={['admin']}><ServicesPage /></ProtectedRoute>} />
         <Route path="users" element={<ProtectedRoute roles={['admin']}><UsersPage /></ProtectedRoute>} />

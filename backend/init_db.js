@@ -501,6 +501,7 @@ async function ensureNotifications() {
     { name: 'work_order_id', definition: 'INTEGER' },
     { name: 'delivery_id', definition: 'INTEGER' },
     { name: 'order_id', definition: 'INTEGER' },
+    { name: 'transfer_id', definition: 'INTEGER' },
     { name: 'dedupe_key', definition: 'TEXT' },
     { name: 'created_at', definition: 'DATETIME' },
   ]);
@@ -508,6 +509,7 @@ async function ensureNotifications() {
   await run('CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at)');
   await run('CREATE INDEX IF NOT EXISTS idx_notifications_customer_id ON notifications(customer_id)');
   await run('CREATE INDEX IF NOT EXISTS idx_notifications_order_id ON notifications(order_id)');
+  await run('CREATE INDEX IF NOT EXISTS idx_notifications_transfer_id ON notifications(transfer_id)');
 
   await run(`CREATE TABLE IF NOT EXISTS notification_reads (
     notification_id INTEGER NOT NULL,
@@ -525,10 +527,185 @@ async function ensureNotifications() {
   await run('CREATE INDEX IF NOT EXISTS idx_notification_reads_user ON notification_reads(user_id)');
 }
 
+async function ensureFileTransfers() {
+  await run(`CREATE TABLE IF NOT EXISTS file_transfers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER NOT NULL,
+    order_id INTEGER,
+    work_order_id INTEGER,
+    subject TEXT,
+    message TEXT,
+    uploaded_by INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    deleted_at DATETIME,
+    deleted_by INTEGER,
+    FOREIGN KEY(customer_id) REFERENCES users(id),
+    FOREIGN KEY(order_id) REFERENCES orders(id),
+    FOREIGN KEY(work_order_id) REFERENCES work_orders(id),
+    FOREIGN KEY(uploaded_by) REFERENCES users(id)
+  )`);
+  await ensureColumns('file_transfers', [
+    { name: 'customer_id', definition: 'INTEGER' },
+    { name: 'order_id', definition: 'INTEGER' },
+    { name: 'work_order_id', definition: 'INTEGER' },
+    { name: 'subject', definition: 'TEXT' },
+    { name: 'message', definition: 'TEXT' },
+    { name: 'uploaded_by', definition: 'INTEGER' },
+    { name: 'created_at', definition: 'DATETIME' },
+    { name: 'deleted_at', definition: 'DATETIME' },
+    { name: 'deleted_by', definition: 'INTEGER' },
+  ]);
+  await run('CREATE INDEX IF NOT EXISTS idx_file_transfers_customer ON file_transfers(customer_id)');
+  await run('CREATE INDEX IF NOT EXISTS idx_file_transfers_order ON file_transfers(order_id)');
+}
+
+function sharedFilesCreateRequiresOrder(sql) {
+  return /order_id\s+INTEGER\s+NOT\s+NULL/i.test(String(sql || ''));
+}
+
+function renameSharedFilesCreateSql(sql) {
+  const match = /^(\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?)(?:"shared_files"|`shared_files`|\[shared_files\]|shared_files)(\s*\()/i.exec(sql);
+  if (!match) throw new Error('shared_files CREATE TABLE statement was not recognized');
+  return `${match[1]}"shared_files__order_rebuild"${match[2]}${sql.slice(match[0].length)}`;
+}
+
+// Older databases required shared_files.order_id. A standalone send has no order.
+// Rebuilding copies every column, including ones added with ALTER TABLE.
+async function relaxSharedFilesOrderId() {
+  const table = await get(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'shared_files'`);
+  if (!table || !sharedFilesCreateRequiresOrder(table.sql)) return;
+
+  let createSql = renameSharedFilesCreateSql(
+    String(table.sql).replace(/order_id\s+INTEGER\s+NOT\s+NULL/i, 'order_id INTEGER')
+  );
+  if (sharedFilesCreateRequiresOrder(createSql)) {
+    throw new Error('shared_files rebuild left order_id required');
+  }
+  if (!/shared_files__order_rebuild/i.test(createSql)) {
+    throw new Error('shared_files CREATE TABLE statement was not recognized');
+  }
+
+  const columns = await all('PRAGMA table_info(shared_files)');
+  const explicitIndexes = await all(
+    `SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'shared_files' AND sql IS NOT NULL`
+  );
+  const triggers = await all(
+    `SELECT sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'shared_files' AND sql IS NOT NULL`
+  );
+  const names = columns.map((column) => quoteIdent(column.name)).join(', ');
+
+  await exec('PRAGMA foreign_keys = OFF');
+  try {
+    await exec('BEGIN IMMEDIATE');
+    await run('DROP TABLE IF EXISTS shared_files__order_rebuild');
+    await run(createSql);
+    const rebuildCols = await all('PRAGMA table_info(shared_files__order_rebuild)');
+    const rebuildNames = new Set(rebuildCols.map((column) => column.name));
+    for (const column of columns) {
+      if (rebuildNames.has(column.name)) continue;
+      const type = String(column.type || 'TEXT').trim() || 'TEXT';
+      if (!/^[A-Za-z][A-Za-z0-9_ ]*$/.test(type)) {
+        throw new Error(`Unexpected column type on shared_files.${column.name}`);
+      }
+      await run(`ALTER TABLE shared_files__order_rebuild ADD COLUMN ${quoteIdent(column.name)} ${type}`);
+    }
+    await run(`INSERT INTO shared_files__order_rebuild (${names}) SELECT ${names} FROM shared_files`);
+    await run('DROP TABLE shared_files');
+    await run('ALTER TABLE shared_files__order_rebuild RENAME TO shared_files');
+    for (const index of explicitIndexes) {
+      if (index.sql) await run(index.sql);
+    }
+    for (const trigger of triggers) {
+      if (trigger.sql) await run(trigger.sql);
+    }
+    await exec('COMMIT');
+  } catch (err) {
+    try {
+      await exec('ROLLBACK');
+    } catch (rollbackErr) {
+      console.error('SHARED FILES REBUILD ROLLBACK ERROR:', rollbackErr);
+    }
+    throw err;
+  } finally {
+    await exec('PRAGMA foreign_keys = ON');
+  }
+  console.log('Relaxed shared_files.order_id so a file can be sent without an order');
+}
+
+// Existing order shares keep their rows. Each batch becomes one transfer so the
+// customer list can show them next to standalone sends. The inserts and the
+// transfer_id updates commit together. A second init does nothing.
+async function backfillFileTransfers() {
+  const fk = await get('PRAGMA foreign_keys');
+  await exec('PRAGMA foreign_keys = OFF');
+  try {
+    const rows = await all(
+      `SELECT f.id, f.order_id, f.work_order_id, f.customer_id, f.uploaded_by, f.message,
+              f.batch_id, f.created_at, o.customer_id AS order_customer_id
+       FROM shared_files f
+       LEFT JOIN orders o ON o.id = f.order_id
+       WHERE f.transfer_id IS NULL
+       ORDER BY f.id`
+    );
+    if (!rows.length) return;
+    const groups = new Map();
+    for (const row of rows) {
+      const key = row.batch_id ? `b:${row.order_id || 0}:${row.batch_id}` : `f:${row.id}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(row);
+    }
+    await exec('BEGIN IMMEDIATE');
+    try {
+      let created = 0;
+      for (const group of groups.values()) {
+        const first = group[0];
+        const customerId = first.customer_id || first.order_customer_id;
+        if (!customerId) continue;
+        const sameWorkOrder = group.every((row) => row.work_order_id === first.work_order_id);
+        const inserted = await run(
+          `INSERT INTO file_transfers (
+            customer_id, order_id, work_order_id, subject, message, uploaded_by, created_at
+          ) VALUES (?,?,?,?,?,?,?)`,
+          [
+            customerId,
+            first.order_id || null,
+            sameWorkOrder ? first.work_order_id || null : null,
+            null,
+            first.message || null,
+            first.uploaded_by || null,
+            first.created_at || null,
+          ]
+        );
+        const ids = group.map((row) => row.id);
+        await run(
+          `UPDATE shared_files
+           SET transfer_id = ?, customer_id = COALESCE(customer_id, ?)
+           WHERE id IN (${ids.map(() => '?').join(', ')})`,
+          [inserted.lastID, customerId, ...ids]
+        );
+        created += 1;
+      }
+      await exec('COMMIT');
+      if (created > 0) {
+        console.log(`Grouped ${created} existing file share(s) into transfers`);
+      }
+    } catch (err) {
+      try {
+        await exec('ROLLBACK');
+      } catch (rollbackErr) {
+        console.error('FILE TRANSFER BACKFILL ROLLBACK ERROR:', rollbackErr);
+      }
+      throw err;
+    }
+  } finally {
+    if (fk && Number(fk.foreign_keys) === 1) await exec('PRAGMA foreign_keys = ON');
+  }
+}
+
 async function ensureSharedFiles() {
   await run(`CREATE TABLE IF NOT EXISTS shared_files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    order_id INTEGER NOT NULL,
+    order_id INTEGER,
     work_order_id INTEGER,
     customer_id INTEGER,
     uploaded_by INTEGER,
@@ -544,10 +721,12 @@ async function ensureSharedFiles() {
     replaced_by_id INTEGER,
     replaces_id INTEGER,
     customer_downloaded_at DATETIME,
+    transfer_id INTEGER,
     FOREIGN KEY(order_id) REFERENCES orders(id),
     FOREIGN KEY(work_order_id) REFERENCES work_orders(id),
     FOREIGN KEY(customer_id) REFERENCES users(id),
-    FOREIGN KEY(uploaded_by) REFERENCES users(id)
+    FOREIGN KEY(uploaded_by) REFERENCES users(id),
+    FOREIGN KEY(transfer_id) REFERENCES file_transfers(id)
   )`);
   await ensureColumns('shared_files', [
     { name: 'order_id', definition: 'INTEGER' },
@@ -566,9 +745,15 @@ async function ensureSharedFiles() {
     { name: 'replaced_by_id', definition: 'INTEGER' },
     { name: 'replaces_id', definition: 'INTEGER' },
     { name: 'customer_downloaded_at', definition: 'DATETIME' },
+    { name: 'transfer_id', definition: 'INTEGER' },
   ]);
+  await relaxSharedFilesOrderId();
+  await ensureFileTransfers();
   await run('CREATE INDEX IF NOT EXISTS idx_shared_files_order ON shared_files(order_id)');
   await run('CREATE INDEX IF NOT EXISTS idx_shared_files_work_order ON shared_files(work_order_id)');
+  await run('CREATE INDEX IF NOT EXISTS idx_shared_files_customer ON shared_files(customer_id)');
+  await run('CREATE INDEX IF NOT EXISTS idx_shared_files_transfer ON shared_files(transfer_id)');
+  await backfillFileTransfers();
 }
 
 async function normalizeLegacyWorkOrderStatuses() {
