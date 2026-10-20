@@ -34,7 +34,7 @@ function isSystemDepartment(name) {
 }
 
 function systemDepartmentMessage(name) {
-  return `${name} is a system department and cannot be renamed. The Admin Board and barcode scans use that name.`;
+  return `${name} is a system department and cannot be renamed. The Dashboard and barcode scans use that name.`;
 }
 
 async function countRows(tx, sql, params) {

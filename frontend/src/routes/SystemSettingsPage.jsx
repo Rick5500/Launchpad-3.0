@@ -150,7 +150,7 @@ export default function SystemSettingsPage() {
             value={form.last_backup_at}
             onChange={(event) => setForm({ ...form, last_backup_at: event.target.value })}
             placeholder="YYYY-MM-DD HH:MM:SS"
-            helperText="Leave blank if no backup has been recorded. The Admin Board shows this timestamp."
+            helperText="Leave blank if no backup has been recorded. The Dashboard shows this timestamp."
           />
           <FormControlLabel
             control={(
