@@ -261,7 +261,8 @@ export default function BoardDetailPane({ row, refreshKey, timeZone, canMove, on
               <Typography sx={{ fontSize: 14, color: brand.muted }}>No production history yet.</Typography>
             )}
             {activity.length > 0 && (
-              <Box sx={{ mt: 1 }}>
+              <Box sx={{ mt: 1.25 }}>
+                <Typography sx={{ color: brand.navy, fontWeight: 800, fontSize: 13, mb: 0.75 }}>ACTIVITY</Typography>
                 {activity.map((entry) => (
                   <Box key={`a-${entry.id}`} sx={{ mb: 0.75 }}>
                     <Typography sx={{ fontSize: 13 }}>
