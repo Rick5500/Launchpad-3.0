@@ -62,7 +62,7 @@ export default function NotificationSettings() {
       </SectionCard>
       <SectionCard title="Email" subtitle={settings?.email_label || 'Email delivery is off. No mail is sent.'}>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-          Email stubs stay off. There is no mail server, and these switches cannot be enabled.
+          These notification emails stay off and cannot be enabled. Mail for files shared with a customer is set up on System Settings.
         </Typography>
         {(settings?.email || []).map((event) => (
           <FormControlLabel

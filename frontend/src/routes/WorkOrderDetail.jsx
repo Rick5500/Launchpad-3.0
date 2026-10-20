@@ -22,6 +22,7 @@ import {
 } from '@mui/material';
 import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
+import FilesFromAccent from '../components/FilesFromAccent';
 import MoveWorkOrderDialog from '../components/MoveWorkOrderDialog';
 import { authFetch, downloadAuthorized } from '../api';
 import { requestBoardRefresh } from '../boardEvents';
@@ -687,6 +688,12 @@ export default function WorkOrderDetail() {
           </Box>
         </CardContent>
       </Card>
+
+      {workOrder.order_id ? (
+        <Box sx={{ mb: 2 }}>
+          <FilesFromAccent orderId={workOrder.order_id} workOrderId={workOrder.id} canManage={canManageOrders} />
+        </Box>
+      ) : null}
 
       <Card>
         <CardContent sx={{ p: { xs: 1.5, sm: 2 } }}>

@@ -16,6 +16,7 @@ const {
 
 const LETTERHEAD_KEYS = ['company_name', 'company_address', 'company_phone'];
 const SIGNUP_KEY = 'customer_self_signup_enabled';
+const FILE_SHARE_EMAIL_KEY = 'email_customers_on_file_share';
 
 function signupEnabledFromValue(value) {
   if (value == null || String(value).trim() === '') return true;
@@ -24,10 +25,14 @@ function signupEnabledFromValue(value) {
   return true;
 }
 
-function parseSignupFlag(value) {
+function parseFlag(value, key) {
   if (value === true || value === 1 || value === '1' || value === 'true') return { value: '1' };
   if (value === false || value === 0 || value === '0' || value === 'false') return { value: '0' };
-  return { error: 'customer_self_signup_enabled must be true or false' };
+  return { error: `${key} must be true or false` };
+}
+
+function parseSignupFlag(value) {
+  return parseFlag(value, SIGNUP_KEY);
 }
 
 function environmentDueSoonHours() {
@@ -130,6 +135,7 @@ function present(map) {
       ? null
       : String(map.last_backup_at),
     customer_self_signup_enabled: signupEnabledFromValue(map[SIGNUP_KEY]),
+    email_customers_on_file_share: signupEnabledFromValue(map[FILE_SHARE_EMAIL_KEY]),
     read_only: {
       delivery_timezone: rules.timezone,
       delivery_timezone_configured: timezoneConfigured,
@@ -158,7 +164,7 @@ function hasOwn(body, key) {
 
 async function updateSettings(actorId, body) {
   const source = body || {};
-  const allowed = new Set([...LETTERHEAD_KEYS, 'due_soon_hours', 'last_backup_at', SIGNUP_KEY]);
+  const allowed = new Set([...LETTERHEAD_KEYS, 'due_soon_hours', 'last_backup_at', SIGNUP_KEY, FILE_SHARE_EMAIL_KEY]);
   const unknown = Object.keys(source).filter((key) => !allowed.has(key));
   if (unknown.length) throw httpError(400, `Unknown setting: ${unknown[0]}`);
 
@@ -194,6 +200,11 @@ async function updateSettings(actorId, body) {
     const parsed = parseSignupFlag(source[SIGNUP_KEY]);
     if (parsed.error) throw httpError(400, parsed.error);
     changes.push([SIGNUP_KEY, parsed.value]);
+  }
+  if (hasOwn(source, FILE_SHARE_EMAIL_KEY)) {
+    const parsed = parseFlag(source[FILE_SHARE_EMAIL_KEY], FILE_SHARE_EMAIL_KEY);
+    if (parsed.error) throw httpError(400, parsed.error);
+    changes.push([FILE_SHARE_EMAIL_KEY, parsed.value]);
   }
   if (!changes.length) throw httpError(400, 'No settings to update');
 
@@ -249,12 +260,20 @@ async function customerSelfSignupEnabled() {
   return signupEnabledFromValue(row.value);
 }
 
+async function emailCustomersOnFileShare() {
+  const row = await get('SELECT value FROM system_settings WHERE key = ?', [FILE_SHARE_EMAIL_KEY]);
+  if (!row) return true;
+  return signupEnabledFromValue(row.value);
+}
+
 module.exports = {
   SIGNUP_KEY,
+  FILE_SHARE_EMAIL_KEY,
   getSettings,
   updateSettings,
   loadRuntimeCache,
   loadLetterhead,
   customerSelfSignupEnabled,
+  emailCustomersOnFileShare,
   signupEnabledFromValue,
 };
