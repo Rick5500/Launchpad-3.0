@@ -44,6 +44,15 @@ export default function CustomerShell({ title, welcome, children, onLogout, extr
           )}
         </Box>
         <Box sx={{ display: 'flex', justifyContent: { xs: 'center', md: 'flex-end' }, gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+          {user?.role === 'customer' ? (
+            <Button color="inherit" onClick={() => navigate('/files')}>
+              Files from Accent
+            </Button>
+          ) : (
+            <Button color="inherit" onClick={() => navigate('/send-files')}>
+              Send Files
+            </Button>
+          )}
           <Button color="inherit" onClick={() => navigate('/work-orders')}>
             Work Orders
           </Button>

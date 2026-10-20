@@ -38,7 +38,10 @@ import AssignmentIcon from '@mui/icons-material/Assignment';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
 import RateReviewIcon from '@mui/icons-material/RateReview';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
+import FolderSharedIcon from '@mui/icons-material/FolderShared';
 import { brand } from '../brand';
+import { useDocumentTitle } from '../useDocumentTitle';
 import NotificationBell from './NotificationBell';
 import HeaderScan from './HeaderScan';
 import { REPORT_NAV } from '../reportCatalog';
@@ -46,10 +49,11 @@ import { REPORT_NAV } from '../reportCatalog';
 const drawerWidth = 280;
 
 const staffNav = [
-  { title: 'Admin Board', route: '/', icon: <DashboardIcon />, roles: ['admin', 'operator', 'manager'] },
+  { title: 'Dashboard', route: '/', icon: <DashboardIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Create Order', route: '/order', icon: <NoteAddIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Scan', route: '/scan', icon: <QrCodeScannerIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Search Orders', route: '/search', icon: <SearchIcon />, roles: ['admin', 'operator', 'manager'] },
+  { title: 'Send Files', route: '/send-files', icon: <UploadFileIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Send Proof', route: '/send-proof', icon: <FactCheckIcon />, roles: ['admin', 'operator', 'manager'] },
   {
     title: 'Reports',
@@ -70,6 +74,7 @@ const staffNav = [
 
 const customerNav = [
   { title: 'Place Order', route: '/order', icon: <NoteAddIcon />, roles: ['customer'] },
+  { title: 'Files from Accent', route: '/files', icon: <FolderSharedIcon />, roles: ['customer'] },
   { title: 'Work Orders', route: '/work-orders', icon: <AssignmentIcon />, roles: ['customer'] },
   { title: 'Proofs', route: '/proofs', icon: <RateReviewIcon />, roles: ['customer'] },
   { title: 'Delivery', route: '/delivery', icon: <LocalShippingIcon />, roles: ['customer'] },
@@ -82,11 +87,13 @@ function isActive(route, pathname) {
 }
 
 function pageTitle(pathname) {
-  if (pathname === '/') return 'Admin Board';
+  if (pathname === '/') return 'Dashboard';
   if (/^\/work-orders\/[^/]+\/print$/.test(pathname)) return 'Print Work Order';
   const titles = [
     ['/order', 'Create Order'],
     ['/search', 'Search Orders'],
+    ['/send-files', 'Send Files'],
+    ['/files', 'Files from Accent'],
     ['/send-proof', 'Send Proof'],
     ['/proofs', 'Proofs'],
     ['/reports', 'Reports'],
@@ -119,6 +126,7 @@ export default function Layout({ user, onLogout }) {
   useEffect(() => {
     if (location.pathname.startsWith('/reports')) setReportsOpen(true);
   }, [location.pathname]);
+  useDocumentTitle(pageTitle(location.pathname));
   const initials = (user?.display_name || user?.username || 'U').charAt(0).toUpperCase();
   const welcomeName = user?.display_name || user?.username || 'User';
   const items = (user?.role === 'customer' ? customerNav : staffNav)

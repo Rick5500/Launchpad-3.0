@@ -473,7 +473,7 @@ async function runApiChecks() {
     assert(staffPrint.json.staff_history === true, 'staff print includes history notes');
     assert(staffPrint.json.work_orders.length === 1, 'work order print returns that one sheet');
     const staffSheet = staffPrint.json.work_orders[0];
-    assert(staffSheet.routing.current_status_label === 'In Progress', 'a staff print moves an open job to In Production');
+    assert(staffSheet.routing.current_status_label === 'In Production', 'a staff print moves an open job to In Production');
     assert(staffSheet.production_history[0].scanned_by === 'System Auto', 'staff history should keep who recorded the step');
     assert(staffSheet.production_history[0].notes === 'Order Created', 'staff history should keep the real note');
     const printedHistory = await db.all(

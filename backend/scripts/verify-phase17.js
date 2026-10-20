@@ -595,6 +595,98 @@ async function main() {
     assert(await historyCount(db, whole.workA.id, 'Proof approved') === 1, 'each job should log one release');
     assert(await historyCount(db, whole.workB.id, 'Proof approved') === 1, 'the second job should log one release');
 
+    const laterOnLive = await sendProof(operator.token, whole.order.id, {
+      message: 'One more look after production started',
+      work_order_id: String(whole.workA.id),
+      send_email: 'false',
+    }, [pdfFile('already-live.pdf', 'later')]);
+    assert(laterOnLive.status === 201, laterOnLive.text);
+    const stillLive = await db.get(`SELECT status, proof_status FROM work_orders WHERE id = ?`, [whole.workA.id]);
+    assert(stillLive.status === 'in-progress' && stillLive.proof_status === 'awaiting', `a new proof on a live job should wait without leaving In Production, got ${JSON.stringify(stillLive)}`);
+    assert(await releaseCount(db, whole.workA.id) === 1, 'sending a later proof should not release the job again');
+
+    const jobFirst = await placeOrder(customer.token, byName, { project_name: 'Job proof then order proof' });
+    const jobProof = await sendProof(admin.token, jobFirst.order.id, {
+      message: 'Job proof first',
+      work_order_id: String(jobFirst.workA.id),
+      send_email: 'false',
+    }, [pdfFile('job-first.pdf', 'job')]);
+    assert(jobProof.status === 201, jobProof.text);
+    const orderAfterJob = await sendProof(admin.token, jobFirst.order.id, {
+      message: 'Order proof second',
+      send_email: 'false',
+    }, [pdfFile('order-second.pdf', 'order')]);
+    assert(orderAfterJob.status === 201, orderAfterJob.text);
+    const covered = await db.get(`SELECT status, proof_status FROM work_orders WHERE id = ?`, [jobFirst.workA.id]);
+    assert(covered.status === 'open' && covered.proof_status === 'awaiting', `both proofs should hold the job, got ${JSON.stringify(covered)}`);
+    const approveOrderFirst = await request({
+      method: 'POST',
+      path: `/api/proofs/${orderAfterJob.json.proof.id}/approve`,
+      token: customer.token,
+    });
+    assert(approveOrderFirst.status === 200, approveOrderFirst.text);
+    const stillJob = await db.get(`SELECT status, proof_status FROM work_orders WHERE id = ?`, [jobFirst.workA.id]);
+    assert(stillJob.status === 'open' && stillJob.proof_status === 'awaiting', `approving the order proof should leave the awaiting job proof holding the job, got ${JSON.stringify(stillJob)}`);
+    assert(!(approveOrderFirst.json.released_work_order_ids || []).includes(jobFirst.workA.id), 'the job with an awaiting job proof should not be released');
+    const siblingReleased = await db.get(`SELECT status, proof_status FROM work_orders WHERE id = ?`, [jobFirst.workB.id]);
+    assert(siblingReleased.status === 'in-progress' && siblingReleased.proof_status === 'approved', `the sibling covered only by the order proof should enter In Production, got ${JSON.stringify(siblingReleased)}`);
+    const heldPrintAfterOrder = await request({ method: 'GET', path: `/api/workorders/${jobFirst.workA.id}/print`, token: admin.token });
+    assert(heldPrintAfterOrder.json.work_orders[0].routing.current_status === 'open', 'printing should not move a job that still has an awaiting job proof');
+    const approveOlderJob = await request({
+      method: 'POST',
+      path: `/api/proofs/${jobProof.json.proof.id}/approve`,
+      token: customer.token,
+    });
+    assert(approveOlderJob.status === 200, `the older job proof should still be approvable, got ${approveOlderJob.status} ${approveOlderJob.text}`);
+    const jobReleased = await db.get(`SELECT status, proof_status FROM work_orders WHERE id = ?`, [jobFirst.workA.id]);
+    assert(jobReleased.status === 'in-progress' && jobReleased.proof_status === 'approved', `approving the remaining proof should move the job to In Production, got ${JSON.stringify(jobReleased)}`);
+    assert(await releaseCount(db, jobFirst.workA.id) === 1, 'the job should be released once');
+    assert(await historyCount(db, jobFirst.workA.id, 'Proof approved') === 1, 'the job should log one release');
+
+    const orderFirst = await placeOrder(customer.token, byName, { project_name: 'Order proof then job proof' });
+    const orderProofFirst = await sendProof(manager.token, orderFirst.order.id, {
+      message: 'Order proof first',
+      send_email: 'false',
+    }, [pdfFile('order-first.pdf', 'order')]);
+    assert(orderProofFirst.status === 201, orderProofFirst.text);
+    const jobAfterOrder = await sendProof(manager.token, orderFirst.order.id, {
+      message: 'Job proof second',
+      work_order_id: String(orderFirst.workA.id),
+      send_email: 'false',
+    }, [pdfFile('job-second.pdf', 'job')]);
+    assert(jobAfterOrder.status === 201, jobAfterOrder.text);
+    const bothAwaiting = await db.all(
+      `SELECT id, status, proof_status FROM work_orders WHERE order_id = ? ORDER BY id`,
+      [orderFirst.order.id]
+    );
+    assert(bothAwaiting.every((row) => row.status === 'open' && row.proof_status === 'awaiting'), `the newer job proof should not clear the order hold, got ${JSON.stringify(bothAwaiting)}`);
+    const approveNewerJob = await request({
+      method: 'POST',
+      path: `/api/proofs/${jobAfterOrder.json.proof.id}/approve`,
+      token: customer.token,
+    });
+    assert(approveNewerJob.status === 200, approveNewerJob.text);
+    const heldByOrder = await db.get(`SELECT status, proof_status FROM work_orders WHERE id = ?`, [orderFirst.workA.id]);
+    assert(heldByOrder.status === 'open' && heldByOrder.proof_status === 'awaiting', `approving the job proof should leave the awaiting order proof holding the job, got ${JSON.stringify(heldByOrder)}`);
+    assert((approveNewerJob.json.released_work_order_ids || []).length === 0, 'a newer job proof should not release a job the order proof still holds');
+    const siblingStill = await db.get(`SELECT status, proof_status FROM work_orders WHERE id = ?`, [orderFirst.workB.id]);
+    assert(siblingStill.status === 'open' && siblingStill.proof_status === 'awaiting', 'the sibling should stay held by the order proof');
+    const approveOlderOrder = await request({
+      method: 'POST',
+      path: `/api/proofs/${orderProofFirst.json.proof.id}/approve`,
+      token: customer.token,
+    });
+    assert(approveOlderOrder.status === 200, `the older order proof should still be approvable, got ${approveOlderOrder.status} ${approveOlderOrder.text}`);
+    const bothLiveAfter = await db.all(
+      `SELECT id, status, proof_status FROM work_orders WHERE order_id = ? ORDER BY id`,
+      [orderFirst.order.id]
+    );
+    assert(bothLiveAfter.every((row) => row.status === 'in-progress' && row.proof_status === 'approved'), `both jobs should enter In Production once every covering proof is approved, got ${JSON.stringify(bothLiveAfter)}`);
+    assert(await releaseCount(db, orderFirst.workA.id) === 1, 'the job proofed twice should be released once');
+    assert(await releaseCount(db, orderFirst.workB.id) === 1, 'the sibling should be released once');
+    assert(await historyCount(db, orderFirst.workA.id, 'Proof approved') === 1, 'the twice-proofed job should log one release');
+    assert(await historyCount(db, orderFirst.workB.id, 'Proof approved') === 1, 'the sibling should log one release');
+
     const quiet = await request({
       method: 'PUT',
       path: '/api/notifications/settings',

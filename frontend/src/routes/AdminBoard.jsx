@@ -257,7 +257,7 @@ export default function AdminBoard() {
     authFetch(summaryPath, { cache: 'no-store' })
       .then(async (response) => {
         const body = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(body.error || 'Unable to load the admin board');
+        if (!response.ok) throw new Error(body.error || 'Unable to load the dashboard');
         return body;
       })
       .then((body) => {
@@ -267,7 +267,7 @@ export default function AdminBoard() {
       })
       .catch((err) => {
         if (cancelled) return;
-        setSummaryError(err.message || 'Unable to load the admin board');
+        setSummaryError(err.message || 'Unable to load the dashboard');
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -568,7 +568,7 @@ export default function AdminBoard() {
     );
   }
 
-  if (loading && !summary) return <LoadingState message="Loading the admin board..." />;
+  if (loading && !summary) return <LoadingState message="Loading the dashboard..." />;
   if (summaryError && !summary) return <ErrorState message={summaryError} />;
 
   function toggleDepartmentScope() {

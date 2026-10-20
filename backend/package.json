@@ -20,6 +20,7 @@
     "verify:phase12": "node scripts/verify-phase12.js",
     "verify:phase13": "node scripts/verify-phase13.js",
     "verify:phase14": "node scripts/verify-phase14.js",
+    "verify:phase15": "node scripts/verify-phase15.js",
     "verify:phase16": "node scripts/verify-phase16.js",
     "verify:phase17": "node scripts/verify-phase17.js"
   },

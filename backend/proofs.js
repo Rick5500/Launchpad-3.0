@@ -188,16 +188,39 @@ async function workOrdersFor(tx, orderId, workOrderId) {
   );
 }
 
-async function governingStatus(tx, workOrderId, orderId) {
-  const row = await tx.get(
+async function latestCoveringStatuses(tx, workOrderId, orderId) {
+  const job = await tx.get(
     `SELECT status
      FROM proofs
-     WHERE work_order_id = ? OR (order_id = ? AND work_order_id IS NULL)
-     ORDER BY id DESC
+     WHERE work_order_id = ?
+     ORDER BY version DESC, id DESC
      LIMIT 1`,
-    [workOrderId, orderId || 0]
+    [workOrderId]
   );
-  return row ? row.status : null;
+  const orderWide = await tx.get(
+    `SELECT status
+     FROM proofs
+     WHERE order_id = ? AND work_order_id IS NULL
+     ORDER BY version DESC, id DESC
+     LIMIT 1`,
+    [orderId || 0]
+  );
+  return [job, orderWide].filter(Boolean).map((row) => row.status);
+}
+
+function combinedProofStatus(statuses) {
+  if (!statuses.length) return null;
+  if (statuses.includes('awaiting')) return 'awaiting';
+  if (statuses.includes('changes_requested')) return 'changes_requested';
+  if (statuses.every((status) => status === 'approved')) return 'approved';
+  return null;
+}
+
+// A job is covered by its own proof series and by proofs sent for the whole order.
+// The latest version of each series counts. Any awaiting or changes-requested
+// series holds the job. It is approved only when every series is approved.
+async function governingStatus(tx, workOrderId, orderId) {
+  return combinedProofStatus(await latestCoveringStatuses(tx, workOrderId, orderId));
 }
 
 async function applyProofStatus(tx, workOrder) {

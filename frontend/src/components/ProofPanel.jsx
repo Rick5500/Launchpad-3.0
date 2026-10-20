@@ -47,9 +47,18 @@ function noticeFor(email) {
   return 'Proof sent in Launchpad. No email was sent.';
 }
 
+function holdMessage(proofStatus, jobStatus) {
+  if (!isProofHeld(proofStatus)) return '';
+  if (String(jobStatus || '').trim().toLowerCase() === 'in-progress') {
+    return 'This job is already In Production.';
+  }
+  return 'This job stays out of production until the proof is approved.';
+}
+
 export default function ProofPanel({
   orderId,
   workOrderId = null,
+  jobStatus = null,
   canSend = false,
   canDecide = false,
   onChanged,
@@ -111,6 +120,7 @@ export default function ProofPanel({
   const scopedStatus = workOrderId
     ? (workOrders.find((row) => Number(row.id) === Number(workOrderId)) || {}).proof_status
     : null;
+  const holdNote = holdMessage(scopedStatus, jobStatus);
   const commentsHistory = proofs.filter((proof) => proof.decided_at);
   const timeZone = payload?.timezone;
   const mail = payload?.mail;
@@ -237,8 +247,8 @@ export default function ProofPanel({
         </Box>
       </Box>
       <Box sx={{ p: { xs: 1.5, sm: 2 }, display: 'grid', gap: 1.5 }}>
-        {isProofHeld(scopedStatus) ? (
-          <Alert severity="info">This job stays out of production until the proof is approved.</Alert>
+        {holdNote ? (
+          <Alert severity="info">{holdNote}</Alert>
         ) : null}
         {loading ? <Typography color="text.secondary">Loading proofs...</Typography> : null}
         {error ? <Alert severity="error">{error}</Alert> : null}

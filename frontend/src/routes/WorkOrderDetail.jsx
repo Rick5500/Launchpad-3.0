@@ -69,6 +69,13 @@ function textOn(hex) {
   return (0.299 * red + 0.587 * green + 0.114 * blue) / 255 > 0.62 ? '#1B2838' : '#fff';
 }
 
+function productionStatusLabel(status, label) {
+  const value = String(status || '').trim().toLowerCase();
+  const fromLabel = String(label || '').trim().toLowerCase();
+  if (value === 'in-progress' || fromLabel === 'in progress' || fromLabel === 'in-progress') return 'In Production';
+  return label || status || '—';
+}
+
 function statusChipSx(status) {
   const value = canonicalWorkOrderStatus(status);
   if (value === 'completed') return { bgcolor: '#2E7D32', color: '#fff' };
@@ -285,7 +292,7 @@ function RoutingPanel({ workOrder, hideInternal, timeZone }) {
         </Grid>
         <Grid item xs={12} sm={4}>
           <Typography variant="caption" color="text.secondary">Current Status</Typography>
-          <Typography>{routing.current_status_label || canonicalWorkOrderStatus(workOrder.status) || '—'}</Typography>
+          <Typography>{productionStatusLabel(workOrder.status, routing.current_status_label || canonicalWorkOrderStatus(workOrder.status))}</Typography>
         </Grid>
         <Grid item xs={12} sm={4}>
           <Typography variant="caption" color="text.secondary">Next Department</Typography>
@@ -311,7 +318,7 @@ function RoutingPanel({ workOrder, hideInternal, timeZone }) {
               {history.map((row) => (
                 <TableRow key={row.id}>
                   <TableCell sx={cellSx}>{row.department || '—'}</TableCell>
-                  <TableCell sx={cellSx}>{row.status || '—'}</TableCell>
+                  <TableCell sx={cellSx}>{productionStatusLabel(row.status)}</TableCell>
                   <TableCell sx={cellSx}>{formatStamp(row.event_time, timeZone)}</TableCell>
                   {!hideInternal && <TableCell sx={cellSx}>{row.scanned_by || '—'}</TableCell>}
                   {!hideInternal && (
@@ -614,7 +621,7 @@ export default function WorkOrderDetail() {
   if (error) return <ErrorState message={error} />;
   if (!workOrder) return <ErrorState message="Work order record is missing." />;
 
-  const statusLabel = workOrder.routing?.current_status_label || canonicalWorkOrderStatus(workOrder.status) || '—';
+  const statusLabel = productionStatusLabel(workOrder.status, workOrder.routing?.current_status_label || canonicalWorkOrderStatus(workOrder.status));
   const zoneLabel = timezoneLabel(deliveryZone, workOrder.due_date);
   const rush = String(workOrder.priority || '').trim().toLowerCase() === 'rush';
   const overdue = Boolean(deliveryZone)
@@ -704,11 +711,16 @@ export default function WorkOrderDetail() {
       {workOrder.order_id ? (
         <Box sx={{ mb: 2, display: 'grid', gap: 2 }}>
           {isProofHeld(workOrder.proof_status) ? (
-            <Alert severity="info">Printing will not move this job into production until the proof is approved.</Alert>
+            <Alert severity="info">
+              {String(workOrder.status || '').trim().toLowerCase() === 'in-progress'
+                ? 'This job is already In Production.'
+                : 'Printing will not move this job into production until the proof is approved.'}
+            </Alert>
           ) : null}
           <ProofPanel
             orderId={workOrder.order_id}
             workOrderId={workOrder.id}
+            jobStatus={workOrder.status}
             canSend={canManageOrders}
             canDecide={user?.role === 'customer'}
             onChanged={() => setReloadKey((value) => value + 1)}

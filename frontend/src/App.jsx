@@ -24,12 +24,15 @@ import OrderDetail from './routes/OrderDetail';
 import WorkOrderPrint from './routes/WorkOrderPrint';
 import Reports from './routes/Reports';
 import Notifications from './routes/Notifications';
+import SendFiles from './routes/SendFiles';
+import CustomerFiles from './routes/CustomerFiles';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import theme from './theme';
 import { brand } from './brand';
 import { safeAppPath } from './safePath';
+import { useDocumentTitle } from './useDocumentTitle';
 
 function returnPath(location) {
   const fromQuery = safeAppPath(new URLSearchParams(location.search).get('next'));
@@ -41,6 +44,7 @@ function returnPath(location) {
 
 function LoginScreen() {
   const { login, register, isLoggingIn, loginError, authMessage } = useAuth();
+  useDocumentTitle('Sign in');
   const [mode, setMode] = useState('sign-in');
   const [signupEnabled, setSignupEnabled] = useState(false);
   const [username, setUsername] = useState('');
@@ -340,6 +344,9 @@ function AppRoutes() {
         <Route path="reports" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><Reports /></ProtectedRoute>} />
         <Route path="reports/:reportId" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><Reports /></ProtectedRoute>} />
         <Route path="notifications" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><Notifications /></ProtectedRoute>} />
+        <Route path="send-files" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><SendFiles /></ProtectedRoute>} />
+        <Route path="files" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><CustomerFiles /></ProtectedRoute>} />
+        <Route path="files/:id" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><CustomerFiles /></ProtectedRoute>} />
         <Route path="search" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><SearchOrders /></ProtectedRoute>} />
         <Route path="send-proof" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><SendProofPage /></ProtectedRoute>} />
         <Route path="proofs" element={<ProtectedRoute roles={['customer']}><CustomerProofsPage /></ProtectedRoute>} />

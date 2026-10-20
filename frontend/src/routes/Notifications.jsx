@@ -77,7 +77,8 @@ export default function Notifications() {
       const response = await authFetch(`/api/notifications/${item.id}/read`, { method: 'POST', cache: 'no-store' });
       if (response.ok) notifyNotificationsChanged();
     }
-    if (item.type === 'files_shared' && item.order_id) navigate(`/orders/${item.order_id}#files-from-accent`);
+    if (item.type === 'files_shared' && item.transfer_id) navigate(`/files/${item.transfer_id}`);
+    else if (item.type === 'files_shared' && item.order_id) navigate(`/orders/${item.order_id}#files-from-accent`);
     else if (item.type === 'proof_ready' && item.order_id) navigate(`/orders/${item.order_id}#proofs`);
     else if (item.type === 'proof_decision' && item.work_order_id) navigate(`/work-orders/${item.work_order_id}`);
     else if (item.type === 'proof_decision' && item.order_id) navigate(`/orders/${item.order_id}#proofs`);

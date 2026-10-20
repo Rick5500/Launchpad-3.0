@@ -301,7 +301,14 @@ async function main() {
       token: admin.token,
     });
     assert(printed.status === 200, `print failed: ${printed.status} ${printed.text}`);
-    assert(printed.json.work_orders[0].routing.current_status_label === 'In Progress', 'the ticket should show In Production');
+    assert(printed.json.work_orders[0].routing.current_status_label === 'In Production', 'the ticket should show In Production');
+    const detail = await request({
+      method: 'GET',
+      path: `/api/workorders/${ticket.id}`,
+      token: admin.token,
+    });
+    assert(detail.status === 200, `work order detail failed: ${detail.status} ${detail.text}`);
+    assert(detail.json.routing.current_status_label === 'In Production', 'the work order page should call in-progress In Production');
     const after = await db.get(`SELECT status FROM work_orders WHERE id = ?`, [ticket.id]);
     assert(after.status === 'in-progress', `printing should move an open job to in-progress, got ${after.status}`);
     const history = await db.all(

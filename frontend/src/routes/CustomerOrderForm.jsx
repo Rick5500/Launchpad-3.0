@@ -28,6 +28,7 @@ import LocalShippingOutlinedIcon from '@mui/icons-material/LocalShippingOutlined
 import BrushOutlinedIcon from '@mui/icons-material/BrushOutlined';
 import CloseIcon from '@mui/icons-material/Close';
 import CustomerShell from '../components/CustomerShell';
+import { useDocumentTitle } from '../useDocumentTitle';
 import { useAuth } from '../context/AuthContext';
 import { authFetch } from '../api';
 import { brand, formatClockLabel, formatFileSize } from '../brand';
@@ -484,6 +485,7 @@ export default function CustomerOrderForm() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const isStaff = user?.role === 'admin' || user?.role === 'manager' || user?.role === 'operator';
+  useDocumentTitle(isStaff ? 'Create Order' : 'Customer Order Form');
 
   const [options, setOptions] = useState({ services: [], delivery_methods: [], due_window: null, payment_methods: PAYMENT_METHODS });
   const [customers, setCustomers] = useState([]);
@@ -1061,7 +1063,7 @@ export default function CustomerOrderForm() {
       title={isStaff ? 'Create Order' : 'Customer Order Form'}
       welcome={welcomeText(user)}
       onLogout={logout}
-      extra={isStaff ? <Button color="inherit" onClick={() => navigate('/')}>Admin Board</Button> : null}
+      extra={isStaff ? <Button color="inherit" onClick={() => navigate('/')}>Dashboard</Button> : null}
     >
       <GlobalStyles styles={{
         html: { scrollPaddingTop: `${SCROLL_TOP}px`, scrollPaddingBottom: `${SCROLL_BOTTOM}px` },

@@ -103,6 +103,15 @@ function orderFilesLink(orderId) {
   return `${base}/login?next=${encodeURIComponent(next)}`;
 }
 
+// Login next path for one transfer. The frontend safeAppPath accepts this path.
+function transferFilesLink(transferId) {
+  const id = Number(transferId);
+  const next = `/files/${id}`;
+  const base = publicAppUrl();
+  if (!base) return next;
+  return `${base}/login?next=${encodeURIComponent(next)}`;
+}
+
 function appLink(nextPath) {
   const next = String(nextPath || '').startsWith('/') ? String(nextPath) : `/${nextPath || ''}`;
   const base = publicAppUrl();
@@ -266,6 +275,65 @@ function renderShareEmail({ letterhead, orderNumber, message, fileNames, link })
 
   return {
     subject: safeSubject(`New files for order ${orderLabel}`),
+    text,
+    html,
+  };
+}
+
+function renderTransferEmail({ letterhead, subject, message, fileNames, link }) {
+  const name = letterhead && letterhead.name ? letterhead.name : 'Accent Imaging';
+  const heading = subject ? safeSubject(subject) : 'New files from Accent';
+  const names = fileNames || [];
+  const footer = footerLines(letterhead);
+  const safeLink = escapeHtml(link);
+  const href = String(link || '').replace(/"/g, '%22');
+  const messageHtml = message ? `<p style="margin:0 0 16px;line-height:1.5;">${escapeHtml(message).replace(/\n/g, '<br>')}</p>` : '';
+  const filesHtml = names.map((file) => `<li>${escapeHtml(file)}</li>`).join('');
+  const text = [
+    name,
+    '',
+    heading,
+    message ? `\n${message}\n` : '',
+    'Files:',
+    ...names.map((file) => `- ${file}`),
+    '',
+    'Sign in to open these files:',
+    link,
+    '',
+    'This link opens Launchpad. You need to sign in. Files are not available from a public link.',
+    '',
+    footer.join('\n'),
+  ].join('\n').replace(/\n{3,}/g, '\n\n');
+
+  const html = `<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#F4F7FB;font-family:Arial,Helvetica,sans-serif;color:#1B2838;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F7FB;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#ffffff;border:1px solid #E2E8F0;">
+        <tr><td style="background:#0A2F6E;padding:18px 24px;border-bottom:4px solid #F58220;">
+          <div style="color:#ffffff;font-size:18px;font-weight:700;">${escapeHtml(name)}</div>
+        </td></tr>
+        <tr><td style="padding:24px;">
+          <h1 style="margin:0 0 12px;font-size:20px;color:#0A2F6E;">${escapeHtml(heading)}</h1>
+          ${messageHtml}
+          <p style="margin:0 0 8px;font-weight:700;color:#0A2F6E;">Files</p>
+          <ul style="margin:0 0 20px;padding-left:18px;">${filesHtml}</ul>
+          <p style="margin:0 0 16px;"><a href="${href}" style="display:inline-block;background:#F58220;color:#111111;text-decoration:none;font-weight:700;padding:10px 16px;">Sign in to view files</a></p>
+          <p style="margin:0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>
+          <p style="margin:16px 0 0;font-size:13px;color:#5E6A78;">You need to sign in. These files are not available from a public download link.</p>
+        </td></tr>
+        <tr><td style="padding:16px 24px;background:#F4F7FB;border-top:1px solid #E2E8F0;font-size:13px;color:#5E6A78;line-height:1.5;">
+          ${footer.map((line) => escapeHtml(line)).join('<br>')}
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  return {
+    subject: safeSubject(subject || `New files from ${name}`),
     text,
     html,
   };
@@ -517,6 +585,7 @@ module.exports = {
   publicFrom,
   publicAppUrl,
   orderFilesLink,
+  transferFilesLink,
   orderProofLink,
   proofReviewLink,
   escapeHtml,
@@ -525,6 +594,7 @@ module.exports = {
   consumeRate,
   warnTestJsonTransport,
   renderShareEmail,
+  renderTransferEmail,
   renderProofEmail,
   renderProofChangesEmail,
   renderTestEmail,
