@@ -26,6 +26,7 @@ export default function SystemSettingsPage() {
     last_backup_at: '',
     customer_self_signup_enabled: true,
     email_customers_on_file_share: true,
+    email_customers_on_proof: true,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -44,6 +45,7 @@ export default function SystemSettingsPage() {
       last_backup_at: body.last_backup_at || '',
       customer_self_signup_enabled: body.customer_self_signup_enabled !== false,
       email_customers_on_file_share: body.email_customers_on_file_share !== false,
+      email_customers_on_proof: body.email_customers_on_proof !== false,
     });
   }
 
@@ -74,6 +76,7 @@ export default function SystemSettingsPage() {
           last_backup_at: form.last_backup_at.trim() === '' ? null : form.last_backup_at.trim(),
           customer_self_signup_enabled: form.customer_self_signup_enabled,
           email_customers_on_file_share: form.email_customers_on_file_share,
+          email_customers_on_proof: form.email_customers_on_proof,
         }),
       });
       const body = await response.json().catch(() => ({}));
@@ -175,6 +178,18 @@ export default function SystemSettingsPage() {
           />
           <Typography variant="body2" color="text.secondary">
             This is the default on Send files. Staff can change it for one send. If email is not set up, the files are still shared in Launchpad.
+          </Typography>
+          <FormControlLabel
+            control={(
+              <Switch
+                checked={form.email_customers_on_proof}
+                onChange={(event) => setForm({ ...form, email_customers_on_proof: event.target.checked })}
+              />
+            )}
+            label="Email customers when a proof is sent"
+          />
+          <Typography variant="body2" color="text.secondary">
+            This is the default on Send Proof. The message links to sign in. It does not include a public download.
           </Typography>
           <Box>
             <Button type="submit" variant="contained" disabled={saving || loading}>{saving ? 'Saving...' : 'Save settings'}</Button>

@@ -23,6 +23,8 @@ import {
 import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
 import FilesFromAccent from '../components/FilesFromAccent';
+import ProofPanel from '../components/ProofPanel';
+import ProofStatusChip, { isProofHeld } from '../components/ProofStatusChip';
 import MoveWorkOrderDialog from '../components/MoveWorkOrderDialog';
 import { authFetch, downloadAuthorized } from '../api';
 import { requestBoardRefresh } from '../boardEvents';
@@ -692,6 +694,7 @@ export default function WorkOrderDetail() {
               sx={{ borderColor: brand.navy, color: brand.navy, fontWeight: 700 }}
             />
             <Chip label={`Qty: ${workOrder.quantity ?? '—'}`} size="small" variant="outlined" />
+            <ProofStatusChip status={workOrder.proof_status} label={workOrder.proof_status_label} />
             {rush ? <Chip label="RUSH" size="small" sx={{ bgcolor: brand.orange, color: '#111', fontWeight: 800 }} /> : null}
             {overdue ? <Chip label="OVERDUE" size="small" sx={{ bgcolor: '#fff', color: '#111', border: '2px solid #111', fontWeight: 800 }} /> : null}
           </Box>
@@ -699,7 +702,17 @@ export default function WorkOrderDetail() {
       </Card>
 
       {workOrder.order_id ? (
-        <Box sx={{ mb: 2 }}>
+        <Box sx={{ mb: 2, display: 'grid', gap: 2 }}>
+          {isProofHeld(workOrder.proof_status) ? (
+            <Alert severity="info">Printing will not move this job into production until the proof is approved.</Alert>
+          ) : null}
+          <ProofPanel
+            orderId={workOrder.order_id}
+            workOrderId={workOrder.id}
+            canSend={canManageOrders}
+            canDecide={user?.role === 'customer'}
+            onChanged={() => setReloadKey((value) => value + 1)}
+          />
           <FilesFromAccent orderId={workOrder.order_id} workOrderId={workOrder.id} canManage={canManageOrders} />
         </Box>
       ) : null}

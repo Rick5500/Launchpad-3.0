@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Staff can send a proof on an order or one work order. Versions are v1, v2, and so on. The customer reviews the files, then approves or requests changes. A change request needs a comment, and that decision is final for the version. While a proof is awaiting approval or changes were requested, printing does not move the job to In Production. Approval moves an open job to in-progress once. Send Proof is in the staff sidebar. Proofs is in the customer sidebar. `node scripts/verify-phase17.js` checks roles, customer isolation, download headers, and a double approve
+
 ### Fixed
 - A customer print does not move a job. Only an admin, manager, or operator print moves an open work order, and only the print that changes `status` from `open` writes the Printed history row, the activity row, and Retrieved. A simple ticket with no line items still fits one letter page. The board calls that status In Production in the status filter and the detail pane
 - Create Order uses the browser's required and email checks again. Submitting an incomplete order stays on the page, focuses the first invalid field, and shows the message on that field. A select such as customer or due time focuses the visible control. An empty service focuses its Add line button. The focused field stays clear of the step rail and the submit bar

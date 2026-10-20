@@ -10,6 +10,8 @@ import SystemSettingsPage from './routes/SystemSettingsPage';
 import ActivityLogPage from './routes/ActivityLogPage';
 import BarcodeSettingsPage from './routes/BarcodeSettingsPage';
 import WorkOrdersList from './routes/WorkOrdersList';
+import SendProofPage from './routes/SendProofPage';
+import CustomerProofsPage from './routes/CustomerProofsPage';
 import WorkOrderDetail from './routes/WorkOrderDetail';
 import WorkOrderForm from './routes/WorkOrderForm';
 import DepartmentsAdmin from './routes/DepartmentsAdmin';
@@ -339,6 +341,8 @@ function AppRoutes() {
         <Route path="reports/:reportId" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><Reports /></ProtectedRoute>} />
         <Route path="notifications" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><Notifications /></ProtectedRoute>} />
         <Route path="search" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><SearchOrders /></ProtectedRoute>} />
+        <Route path="send-proof" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><SendProofPage /></ProtectedRoute>} />
+        <Route path="proofs" element={<ProtectedRoute roles={['customer']}><CustomerProofsPage /></ProtectedRoute>} />
         <Route path="services" element={<ProtectedRoute roles={['admin']}><ServicesPage /></ProtectedRoute>} />
         <Route path="users" element={<ProtectedRoute roles={['admin']}><UsersPage /></ProtectedRoute>} />
         <Route path="settings" element={<ProtectedRoute roles={['admin']}><SystemSettingsPage /></ProtectedRoute>} />

@@ -179,6 +179,33 @@ function notifyWorkOrderUpdated(previous, current, cb) {
   insertNotifications(items, cb);
 }
 
+function notifyProofReady(item, cb) {
+  if (!item || !item.orderId || !item.proofId) return cb(null, []);
+  const orderNumber = item.orderNumber || item.orderId;
+  insertNotifications([{
+    type: 'proof_ready',
+    title: item.title || `New proof for order ${orderNumber}`,
+    body: item.body || '',
+    customerId: item.customerId,
+    workOrderId: item.workOrderId == null ? null : item.workOrderId,
+    orderId: item.orderId,
+    dedupeKey: `proof_ready:${item.proofId}`,
+  }], cb);
+}
+
+function notifyProofDecision(item, cb) {
+  if (!item || !item.proofId) return cb(null, []);
+  insertNotifications([{
+    type: 'proof_decision',
+    title: item.title || 'Proof decision',
+    body: item.body || '',
+    customerId: null,
+    workOrderId: item.workOrderId == null ? null : item.workOrderId,
+    orderId: item.orderId == null ? null : item.orderId,
+    dedupeKey: `proof_decision:${item.proofId}:${item.status || 'decision'}`,
+  }], cb);
+}
+
 function notifyFilesShared(item, cb) {
   if (!item || !item.orderId) return cb(null, []);
   const orderNumber = item.orderNumber || item.orderId;
@@ -394,6 +421,8 @@ module.exports = {
   notifyWorkOrderCreated,
   notifyWorkOrderUpdated,
   notifyFilesShared,
+  notifyProofReady,
+  notifyProofDecision,
   checkDeliveryNotifications,
   listNotifications,
   markRead,

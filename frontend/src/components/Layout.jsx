@@ -35,6 +35,8 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import ExpandLess from '@mui/icons-material/ExpandLess';
 import ExpandMore from '@mui/icons-material/ExpandMore';
 import AssignmentIcon from '@mui/icons-material/Assignment';
+import FactCheckIcon from '@mui/icons-material/FactCheck';
+import RateReviewIcon from '@mui/icons-material/RateReview';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import { brand } from '../brand';
 import NotificationBell from './NotificationBell';
@@ -48,6 +50,7 @@ const staffNav = [
   { title: 'Create Order', route: '/order', icon: <NoteAddIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Scan', route: '/scan', icon: <QrCodeScannerIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Search Orders', route: '/search', icon: <SearchIcon />, roles: ['admin', 'operator', 'manager'] },
+  { title: 'Send Proof', route: '/send-proof', icon: <FactCheckIcon />, roles: ['admin', 'operator', 'manager'] },
   {
     title: 'Reports',
     route: '/reports',
@@ -68,6 +71,7 @@ const staffNav = [
 const customerNav = [
   { title: 'Place Order', route: '/order', icon: <NoteAddIcon />, roles: ['customer'] },
   { title: 'Work Orders', route: '/work-orders', icon: <AssignmentIcon />, roles: ['customer'] },
+  { title: 'Proofs', route: '/proofs', icon: <RateReviewIcon />, roles: ['customer'] },
   { title: 'Delivery', route: '/delivery', icon: <LocalShippingIcon />, roles: ['customer'] },
   { title: 'Notifications', route: '/notifications', icon: <NotificationsIcon />, roles: ['customer'] },
 ];
@@ -83,6 +87,8 @@ function pageTitle(pathname) {
   const titles = [
     ['/order', 'Create Order'],
     ['/search', 'Search Orders'],
+    ['/send-proof', 'Send Proof'],
+    ['/proofs', 'Proofs'],
     ['/reports', 'Reports'],
     ['/customers', 'Customers'],
     ['/admin/departments', 'Departments'],

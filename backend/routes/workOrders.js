@@ -6,6 +6,7 @@ const barcodeEvents = require('../barcodeEvents');
 const users = require('../userAdmin');
 const { loadWorkOrderContext } = require('../orderService');
 const { printForWorkOrder } = require('../printWorkOrder');
+const proofs = require('../proofs');
 const { isPrintableBarcode } = require('../barcodeSvg');
 const notifications = require('../notifications');
 const activityLog = require('../activityLog');
@@ -56,6 +57,7 @@ const workOrderFieldList = `
   wo.next_department,
   wo.requires_approval,
   wo.approval_status,
+  wo.proof_status,
   wo.created_at,
   wo.updated_at,
   wo.customer_id,
@@ -209,7 +211,8 @@ router.get('/:id', auth.requireAuth, (req, res) => {
       }
 
       loadWorkOrderContext(row, req.user)
-        .then((detailed) => res.json(detailed))
+        .then((detailed) => proofs.presentForWorkOrder(detailed.id, detailed.order_id)
+          .then((proof) => res.json({ ...detailed, ...proof })))
         .catch((contextErr) => {
           console.error('WORK ORDER DETAIL ERROR:', contextErr);
           return res.status(500).json({ error: 'Failed to load work order' });

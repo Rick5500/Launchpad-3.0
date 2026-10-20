@@ -10,6 +10,8 @@ const IN_APP_EVENTS = [
   { event_key: 'work_order_rush', label: 'Rush work order', description: 'A rush-priority work order was created.' },
   { event_key: 'customer_registered', label: 'New customer account', description: 'A customer created their own account from the sign-in page.' },
   { event_key: 'files_shared', label: 'Files from Accent', description: 'Files were shared with a customer for an order.' },
+  { event_key: 'proof_ready', label: 'Proof ready', description: 'A proof was sent for the customer to approve.' },
+  { event_key: 'proof_decision', label: 'Proof decision', description: 'A customer approved a proof or requested changes.' },
 ];
 
 const EMAIL_EVENTS = [

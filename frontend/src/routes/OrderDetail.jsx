@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Alert, Box, Button, Typography } from '@mui/material';
 import CustomerShell from '../components/CustomerShell';
 import FilesFromAccent from '../components/FilesFromAccent';
+import ProofPanel from '../components/ProofPanel';
 import LoadingState from '../components/LoadingState';
 import { useAuth } from '../context/AuthContext';
 import { authFetch, downloadAuthorized } from '../api';
@@ -190,6 +191,12 @@ export default function OrderDetail() {
               </Typography>
             ))}
           </Box>
+
+          <ProofPanel
+            orderId={order.id}
+            canSend={user?.role === 'admin' || user?.role === 'manager' || user?.role === 'operator'}
+            canDecide={user?.role === 'customer'}
+          />
 
           <FilesFromAccent orderId={order.id} canManage={user?.role === 'admin' || user?.role === 'manager' || user?.role === 'operator'} />
 
