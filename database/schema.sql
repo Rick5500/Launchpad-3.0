@@ -442,6 +442,60 @@ CREATE TABLE IF NOT EXISTS proof_files (
   FOREIGN KEY(proof_id) REFERENCES proofs(id)
 );
 
+-- Inbound orders mailbox. Graph is read-only; these rows are the local copy.
+CREATE TABLE IF NOT EXISTS inbound_emails (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  graph_message_id TEXT NOT NULL UNIQUE,
+  mailbox TEXT,
+  from_address TEXT,
+  from_name TEXT,
+  subject TEXT,
+  received_at TEXT,
+  body_text TEXT,
+  status TEXT NOT NULL DEFAULT 'new',
+  suggestion_json TEXT,
+  order_id INTEGER,
+  converted_by INTEGER,
+  converted_at DATETIME,
+  dismissed_by INTEGER,
+  dismissed_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME,
+  FOREIGN KEY(order_id) REFERENCES orders(id)
+);
+
+CREATE TABLE IF NOT EXISTS inbound_email_attachments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  inbound_email_id INTEGER NOT NULL,
+  graph_attachment_id TEXT,
+  original_name TEXT NOT NULL,
+  stored_name TEXT,
+  mime_type TEXT,
+  size_bytes INTEGER,
+  skipped_reason TEXT,
+  order_file_id INTEGER,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(inbound_email_id) REFERENCES inbound_emails(id),
+  FOREIGN KEY(order_file_id) REFERENCES order_files(id)
+);
+
+CREATE TABLE IF NOT EXISTS inbound_mail_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  delta_link TEXT,
+  watermark TEXT,
+  last_attempt_at DATETIME,
+  last_success_at DATETIME,
+  last_status TEXT,
+  last_error TEXT,
+  last_imported INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_inbound_emails_status ON inbound_emails(status, received_at);
+CREATE INDEX IF NOT EXISTS idx_inbound_email_attachments_email ON inbound_email_attachments(inbound_email_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_inbound_email_attachments_graph
+  ON inbound_email_attachments(inbound_email_id, graph_attachment_id)
+  WHERE graph_attachment_id IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_proofs_order ON proofs(order_id);
 CREATE INDEX IF NOT EXISTS idx_proofs_work_order ON proofs(work_order_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_proofs_scope_version ON proofs(order_id, IFNULL(work_order_id, 0), version);

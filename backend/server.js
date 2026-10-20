@@ -52,6 +52,8 @@ const usersRouter = require('./routes/users');
 const settingsRouter = require('./routes/settings');
 const activityRouter = require('./routes/activity');
 const searchRouter = require('./routes/search');
+const inboundEmailRouter = require('./routes/inboundEmails');
+const inboundEmailPoller = require('./inboundEmailPoller');
 const systemSettings = require('./systemSettings');
 const mailer = require('./mailer');
 const userAdmin = require('./userAdmin');
@@ -198,6 +200,7 @@ app.use('/api/users', usersRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/activity', activityRouter);
 app.use('/api/search', searchRouter);
+app.use('/api/inbound-emails', inboundEmailRouter);
 
 try {
   ensureUploadDir();
@@ -221,5 +224,6 @@ systemSettings.loadRuntimeCache()
       console.log(`Launchpad backend listening on port ${port}`);
       notificationScheduler.start();
       startOrphanSweep();
+      inboundEmailPoller.start();
     });
   });

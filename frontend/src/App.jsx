@@ -25,6 +25,7 @@ import WorkOrderPrint from './routes/WorkOrderPrint';
 import Reports from './routes/Reports';
 import Notifications from './routes/Notifications';
 import SendFiles from './routes/SendFiles';
+import EmailOrders from './routes/EmailOrders';
 import CustomerFiles from './routes/CustomerFiles';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -349,6 +350,8 @@ function AppRoutes() {
         <Route path="files/:id" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><CustomerFiles /></ProtectedRoute>} />
         <Route path="search" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><SearchOrders /></ProtectedRoute>} />
         <Route path="send-proof" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><SendProofPage /></ProtectedRoute>} />
+        <Route path="email-orders" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><EmailOrders /></ProtectedRoute>} />
+        <Route path="email-orders/:id" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><EmailOrders /></ProtectedRoute>} />
         <Route path="proofs" element={<ProtectedRoute roles={['customer']}><CustomerProofsPage /></ProtectedRoute>} />
         <Route path="services" element={<ProtectedRoute roles={['admin']}><ServicesPage /></ProtectedRoute>} />
         <Route path="users" element={<ProtectedRoute roles={['admin']}><UsersPage /></ProtectedRoute>} />

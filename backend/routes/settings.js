@@ -1,13 +1,21 @@
 const express = require('express');
 const auth = require('../auth');
 const activityLog = require('../activityLog');
+const graphMail = require('../graphMail');
+const inboundEmail = require('../inboundEmail');
 const mailer = require('../mailer');
 const settings = require('../systemSettings');
 const { sendError } = require('../httpError');
 
 const router = express.Router();
 
-function withMail(body) {
+async function withMail(body) {
+  let mailbox = null;
+  try {
+    mailbox = await inboundEmail.syncStatus({ role: 'admin' });
+  } catch (err) {
+    mailbox = null;
+  }
   return {
     ...body,
     mail: {
@@ -15,12 +23,24 @@ function withMail(body) {
       from: mailer.publicFrom(),
       public_url_set: Boolean(mailer.publicAppUrl()),
     },
+    inbound_mail: {
+      configured: graphMail.isConfigured(),
+      mailbox: graphMail.isConfigured() ? graphMail.mailbox() : null,
+      folder: graphMail.folderName(),
+      poll_seconds: graphMail.pollSeconds(),
+      polling_enabled: body.inbound_email_polling_enabled !== false,
+      last_attempt_at: mailbox ? mailbox.last_attempt_at : null,
+      last_success_at: mailbox ? mailbox.last_success_at : null,
+      last_status: mailbox ? mailbox.last_status : null,
+      last_error: mailbox ? mailbox.last_error : null,
+      last_imported: mailbox ? mailbox.last_imported : null,
+    },
   };
 }
 
 router.get('/', auth.requireAuth, auth.requireRole('admin'), async (req, res) => {
   try {
-    res.json(withMail(await settings.getSettings()));
+    res.json(await withMail(await settings.getSettings()));
   } catch (err) {
     sendError(res, err, 'SETTINGS GET ERROR:', 'Failed to load settings');
   }
@@ -28,7 +48,7 @@ router.get('/', auth.requireAuth, auth.requireRole('admin'), async (req, res) =>
 
 router.put('/', auth.requireAuth, auth.requireRole('admin'), async (req, res) => {
   try {
-    res.json(withMail(await settings.updateSettings(req.user.userId, req.body)));
+    res.json(await withMail(await settings.updateSettings(req.user.userId, req.body)));
   } catch (err) {
     sendError(res, err, 'SETTINGS UPDATE ERROR:', 'Failed to update settings');
   }

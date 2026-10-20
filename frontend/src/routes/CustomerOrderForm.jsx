@@ -481,11 +481,12 @@ function FieldInput({ id, field, value, disabled, onChange }) {
   );
 }
 
-export default function CustomerOrderForm() {
+export default function CustomerOrderForm({ inboundEmail = null }) {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const isStaff = user?.role === 'admin' || user?.role === 'manager' || user?.role === 'operator';
-  useDocumentTitle(isStaff ? 'Create Order' : 'Customer Order Form');
+  useDocumentTitle(inboundEmail ? 'Email order' : (isStaff ? 'Create Order' : 'Customer Order Form'));
+  const draftApplied = useRef(false);
 
   const [options, setOptions] = useState({ services: [], delivery_methods: [], due_window: null, payment_methods: PAYMENT_METHODS });
   const [customers, setCustomers] = useState([]);
@@ -545,6 +546,39 @@ export default function CustomerOrderForm() {
     if (!user || isStaff) return;
     applyProfile(user, true);
   }, [user, isStaff]);
+
+  useEffect(() => {
+    if (!inboundEmail || draftApplied.current) return;
+    const suggestion = inboundEmail.suggestion || {};
+    if (suggestion.customer_id) setCustomerId(String(suggestion.customer_id));
+    if (suggestion.company) setCompany(suggestion.company);
+    if (suggestion.contact_name) setContactName(suggestion.contact_name);
+    if (suggestion.phone) setPhone(suggestion.phone);
+    if (suggestion.email) setEmail(suggestion.email);
+    if (suggestion.address_line1) setAddress1(suggestion.address_line1);
+    if (suggestion.address_line2) setAddress2(suggestion.address_line2);
+    if (suggestion.city) setCity(suggestion.city);
+    if (suggestion.state) setStateName(suggestion.state);
+    if (suggestion.zip) setZip(suggestion.zip);
+    if (suggestion.po_number) setPoNumber(suggestion.po_number);
+    if (suggestion.project_name) setProjectName(suggestion.project_name);
+    if (suggestion.notes) setNotes(suggestion.notes);
+    if (suggestion.due_date) setDueDate(suggestion.due_date);
+    const kept = (inboundEmail.attachments || []).filter((file) => file.stored && !file.skipped_reason);
+    if (kept.length) {
+      setOriginalsSource(ORIGINALS_FILES);
+      setLooseFiles(kept.map((file) => ({
+        key: `inbound-${file.id}`,
+        inbound: true,
+        attachment_id: file.id,
+        original_name: file.original_name,
+        size_bytes: file.size_bytes,
+        status: 'uploaded',
+        id: null,
+      })));
+    }
+    draftApplied.current = true;
+  }, [inboundEmail]);
 
   useEffect(() => {
     let cancelled = false;
@@ -668,7 +702,7 @@ export default function CustomerOrderForm() {
       if (line.file?.id) files.push(line.file);
     });
     looseFiles.forEach((file) => {
-      if (file.id) files.push(file);
+      if (file.id || file.inbound) files.push(file);
     });
     return files;
   }, [lines, looseFiles]);
@@ -719,6 +753,7 @@ export default function CustomerOrderForm() {
   }
 
   async function removeStoredFile(file) {
+    if (file?.inbound) return;
     if (file?.id) await authFetch(`/api/uploads/${file.id}`, { method: 'DELETE' });
   }
 
@@ -847,7 +882,7 @@ export default function CustomerOrderForm() {
       return;
     }
     const attachedCount = filesAttached
-      ? [...lines.map((line) => line.file), ...looseFiles].filter((file) => file && file.id && file.status === 'uploaded').length
+      ? [...lines.map((line) => line.file), ...looseFiles].filter((file) => file && file.status === 'uploaded' && (file.id || file.inbound)).length
       : 0;
     if (filesAttached && attachedCount === 0) {
       showFieldError('order-upload', 'Attach at least one file when originals source is Files attached below.');
@@ -898,15 +933,18 @@ export default function CustomerOrderForm() {
         file_ids: originalsSource === ORIGINALS_FILES && line.file?.id ? [line.file.id] : [],
       })),
       file_ids: originalsSource === ORIGINALS_FILES
-        ? looseFiles.filter((file) => file.id).map((file) => file.id)
+        ? looseFiles.filter((file) => file.id && !file.inbound).map((file) => file.id)
         : [],
     };
+    if (inboundEmail) {
+      payload.attachment_ids = looseFiles.filter((file) => file.inbound).map((file) => file.attachment_id);
+    }
     if (!seeShipLines) payload.delivery_method = deliveryMethod;
     if (isStaff) payload.customer_id = Number(customerId);
 
     setSubmitting(true);
     try {
-      const response = await authFetch('/api/orders', {
+      const response = await authFetch(inboundEmail ? `/api/inbound-emails/${inboundEmail.id}/convert` : '/api/orders', {
         method: 'POST',
         body: JSON.stringify(payload),
       });
@@ -1058,13 +1096,8 @@ export default function CustomerOrderForm() {
   }
 
 
-  return (
-    <CustomerShell
-      title={isStaff ? 'Create Order' : 'Customer Order Form'}
-      welcome={welcomeText(user)}
-      onLogout={logout}
-      extra={isStaff ? <Button color="inherit" onClick={() => navigate('/')}>Dashboard</Button> : null}
-    >
+  const content = (
+    <>
       <GlobalStyles styles={{
         html: { scrollPaddingTop: `${SCROLL_TOP}px`, scrollPaddingBottom: `${SCROLL_BOTTOM}px` },
         '#order-form :is(input, textarea, select, [role="combobox"], [role="checkbox"], .order-scroll-target)': {
@@ -1097,7 +1130,7 @@ export default function CustomerOrderForm() {
             <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
               <CheckCircleIcon sx={{ color: brand.green, fontSize: 42 }} />
               <Box sx={{ minWidth: 0 }}>
-                <Typography sx={{ color: brand.green, fontWeight: 800, fontSize: { xs: 20, sm: 24 }, lineHeight: 1.2 }}>Order Submitted Successfully!</Typography>
+                <Typography sx={{ color: brand.green, fontWeight: 800, fontSize: { xs: 20, sm: 24 }, lineHeight: 1.2 }}>{inboundEmail ? 'Order created from the email' : 'Order Submitted Successfully!'}</Typography>
                 <Typography data-testid="order-number" sx={{ mt: 0.5, fontWeight: 700, fontSize: 18 }}>Order #: {result.order_number}</Typography>
               </Box>
             </Box>
@@ -1114,7 +1147,11 @@ export default function CustomerOrderForm() {
             <Box className="no-print" sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 2 }}>
               <Button variant="contained" onClick={() => navigate(`/orders/${result.order.id}`)} sx={{ bgcolor: brand.navy, fontWeight: 700, textTransform: 'none', ...focusRing }}>View Submitted Order</Button>
               <Button variant="outlined" onClick={() => window.print()} sx={{ borderColor: brand.navy, color: brand.navy, fontWeight: 700, textTransform: 'none', ...focusRing }}>Print Confirmation</Button>
-              <Button variant="outlined" onClick={resetForm} sx={{ borderColor: brand.navy, color: brand.navy, fontWeight: 700, textTransform: 'none', ...focusRing }}>Create Another Order</Button>
+              {inboundEmail ? (
+                <Button variant="outlined" onClick={() => navigate('/email-orders')} sx={{ borderColor: brand.navy, color: brand.navy, fontWeight: 700, textTransform: 'none', ...focusRing }}>Back to Email Orders</Button>
+              ) : (
+                <Button variant="outlined" onClick={resetForm} sx={{ borderColor: brand.navy, color: brand.navy, fontWeight: 700, textTransform: 'none', ...focusRing }}>Create Another Order</Button>
+              )}
             </Box>
           </Box>
         ) : null}
@@ -1127,12 +1164,14 @@ export default function CustomerOrderForm() {
               </Typography>
             </Box>
             <Typography variant="h4" component="h1" sx={{ color: brand.navy, fontWeight: 800, fontSize: { xs: 26, sm: 32 }, lineHeight: 1.15 }}>
-              {isStaff ? 'Create Order' : 'Place an order'}
+              {inboundEmail ? 'Create order from this email' : (isStaff ? 'Create Order' : 'Place an order')}
             </Typography>
             <Typography sx={{ mt: 1, color: brand.muted, maxWidth: 760 }}>
-              {isStaff
-                ? 'Create an order for a customer. Each step stays open, so required fields are on this page. Review the work orders, then submit.'
-                : 'Place an order with Accent Imaging. Company, contact, phone, and email start from your account. Fill anything still blank, then review and submit.'}
+              {inboundEmail
+                ? 'This is a draft. Review the customer, the job, and the files from the email, then create the order. Nothing is created until you submit.'
+                : isStaff
+                  ? 'Create an order for a customer. Each step stays open, so required fields are on this page. Review the work orders, then submit.'
+                  : 'Place an order with Accent Imaging. Company, contact, phone, and email start from your account. Fill anything still blank, then review and submit.'}
             </Typography>
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1.5 }}>
               <Chip size="small" label={isStaff ? 'Staff' : 'Your account'} sx={{ bgcolor: brand.navy, color: '#fff', fontWeight: 700 }} />
@@ -1574,7 +1613,7 @@ export default function CustomerOrderForm() {
                         onClick={async () => {
                           await removeStoredFile(file);
                           setLines((rows) => rows.map((row) => (row.file && (row.file.id === file.id || row.file.key === file.key) ? { ...row, file: null } : row)));
-                          setLooseFiles((rows) => rows.filter((item) => item.id !== file.id && item.key !== file.key));
+                          setLooseFiles((rows) => rows.filter((item) => item.key !== file.key));
                         }}
                       >
                         <CloseIcon fontSize="small" />
@@ -1715,7 +1754,7 @@ export default function CustomerOrderForm() {
                 '&:focus-visible, &.Mui-focusVisible': { outline: `3px solid ${brand.navy}`, outlineOffset: 2 },
               }}
             >
-              {submitting ? 'Submitting…' : result ? 'Submitted' : 'Submit Order'}
+              {submitting ? 'Submitting…' : result ? 'Submitted' : inboundEmail ? 'Create order' : 'Submit Order'}
             </Button>
           </Box>
         </Box>
@@ -1802,6 +1841,17 @@ export default function CustomerOrderForm() {
           <li>Thank you for your business!</li>
         </Box>
       </Box>
+    </>
+  );
+  if (inboundEmail) return content;
+  return (
+    <CustomerShell
+      title={isStaff ? 'Create Order' : 'Customer Order Form'}
+      welcome={welcomeText(user)}
+      onLogout={logout}
+      extra={isStaff ? <Button color="inherit" onClick={() => navigate('/')}>Dashboard</Button> : null}
+    >
+      {content}
     </CustomerShell>
   );
 }

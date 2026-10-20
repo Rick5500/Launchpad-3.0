@@ -18,6 +18,7 @@ const LETTERHEAD_KEYS = ['company_name', 'company_address', 'company_phone'];
 const SIGNUP_KEY = 'customer_self_signup_enabled';
 const FILE_SHARE_EMAIL_KEY = 'email_customers_on_file_share';
 const PROOF_EMAIL_KEY = 'email_customers_on_proof';
+const INBOUND_POLL_KEY = 'inbound_email_polling_enabled';
 
 function signupEnabledFromValue(value) {
   if (value == null || String(value).trim() === '') return true;
@@ -138,6 +139,7 @@ function present(map) {
     customer_self_signup_enabled: signupEnabledFromValue(map[SIGNUP_KEY]),
     email_customers_on_file_share: signupEnabledFromValue(map[FILE_SHARE_EMAIL_KEY]),
     email_customers_on_proof: signupEnabledFromValue(map[PROOF_EMAIL_KEY]),
+    inbound_email_polling_enabled: signupEnabledFromValue(map[INBOUND_POLL_KEY]),
     read_only: {
       delivery_timezone: rules.timezone,
       delivery_timezone_configured: timezoneConfigured,
@@ -166,7 +168,7 @@ function hasOwn(body, key) {
 
 async function updateSettings(actorId, body) {
   const source = body || {};
-  const allowed = new Set([...LETTERHEAD_KEYS, 'due_soon_hours', 'last_backup_at', SIGNUP_KEY, FILE_SHARE_EMAIL_KEY, PROOF_EMAIL_KEY]);
+  const allowed = new Set([...LETTERHEAD_KEYS, 'due_soon_hours', 'last_backup_at', SIGNUP_KEY, FILE_SHARE_EMAIL_KEY, PROOF_EMAIL_KEY, INBOUND_POLL_KEY]);
   const unknown = Object.keys(source).filter((key) => !allowed.has(key));
   if (unknown.length) throw httpError(400, `Unknown setting: ${unknown[0]}`);
 
@@ -212,6 +214,11 @@ async function updateSettings(actorId, body) {
     const parsed = parseFlag(source[PROOF_EMAIL_KEY], PROOF_EMAIL_KEY);
     if (parsed.error) throw httpError(400, parsed.error);
     changes.push([PROOF_EMAIL_KEY, parsed.value]);
+  }
+  if (hasOwn(source, INBOUND_POLL_KEY)) {
+    const parsed = parseFlag(source[INBOUND_POLL_KEY], INBOUND_POLL_KEY);
+    if (parsed.error) throw httpError(400, parsed.error);
+    changes.push([INBOUND_POLL_KEY, parsed.value]);
   }
   if (!changes.length) throw httpError(400, 'No settings to update');
 
@@ -279,10 +286,17 @@ async function emailCustomersOnProof() {
   return signupEnabledFromValue(row.value);
 }
 
+async function inboundEmailPollingEnabled() {
+  const row = await get('SELECT value FROM system_settings WHERE key = ?', [INBOUND_POLL_KEY]);
+  if (!row) return true;
+  return signupEnabledFromValue(row.value);
+}
+
 module.exports = {
   SIGNUP_KEY,
   FILE_SHARE_EMAIL_KEY,
   PROOF_EMAIL_KEY,
+  INBOUND_POLL_KEY,
   getSettings,
   updateSettings,
   loadRuntimeCache,
@@ -290,5 +304,6 @@ module.exports = {
   customerSelfSignupEnabled,
   emailCustomersOnFileShare,
   emailCustomersOnProof,
+  inboundEmailPollingEnabled,
   signupEnabledFromValue,
 };

@@ -40,6 +40,7 @@ import RateReviewIcon from '@mui/icons-material/RateReview';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import FolderSharedIcon from '@mui/icons-material/FolderShared';
+import MarkEmailUnreadIcon from '@mui/icons-material/MarkEmailUnread';
 import { brand } from '../brand';
 import { useDocumentTitle } from '../useDocumentTitle';
 import NotificationBell from './NotificationBell';
@@ -55,6 +56,7 @@ const staffNav = [
   { title: 'Search Orders', route: '/search', icon: <SearchIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Send Files', route: '/send-files', icon: <UploadFileIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Send Proof', route: '/send-proof', icon: <FactCheckIcon />, roles: ['admin', 'operator', 'manager'] },
+  { title: 'Email Orders', route: '/email-orders', icon: <MarkEmailUnreadIcon />, roles: ['admin', 'operator', 'manager'] },
   {
     title: 'Reports',
     route: '/reports',
@@ -95,6 +97,7 @@ function pageTitle(pathname) {
     ['/send-files', 'Send Files'],
     ['/files', 'Files from Accent'],
     ['/send-proof', 'Send Proof'],
+    ['/email-orders', 'Email Orders'],
     ['/proofs', 'Proofs'],
     ['/reports', 'Reports'],
     ['/customers', 'Customers'],

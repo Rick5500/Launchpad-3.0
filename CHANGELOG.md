@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Staff can turn mail in the orders mailbox into a draft order. Email Orders lists each message as New, Converted, or Dismissed. Opening one shows the message as text, the attachments, and the order form filled from a suggestion. Confirming creates one real order and keeps the email's files on it. Dismiss does not. The mailbox is read with Microsoft Graph application permission Mail.Read and is never marked read, moved, or deleted. Polling stays off until `M365_TENANT_ID`, `M365_CLIENT_ID`, `M365_CLIENT_SECRET`, and `M365_MAILBOX` are set. An admin can turn the schedule off and can check now. Customers cannot open the inbox. `node scripts/verify-phase18.js` checks this against a mock Graph server
 - Staff can send a proof on an order or one work order. Versions are v1, v2, and so on. The customer reviews the files, then approves or requests changes. A change request needs a comment, and that decision is final for the version. A job stays open while any covering proof's latest version is awaiting approval or changes were requested, including a job proof and an order proof together. Printing does not move that job to In Production. Approval moves an open job to In Production once, and only when every covering proof is approved. Send Proof is in the staff sidebar. Proofs is in the customer sidebar. `node scripts/verify-phase17.js` checks roles, customer isolation, download headers, a double approve, and both proof orders
 
 ### Changed
