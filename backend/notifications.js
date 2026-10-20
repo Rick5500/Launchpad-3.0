@@ -57,8 +57,8 @@ function writeNotifications(items, cb) {
     for (const item of items) {
       const inserted = await tx.run(
         `INSERT OR IGNORE INTO notifications
-          (type, title, body, customer_id, work_order_id, delivery_id, order_id, dedupe_key)
-         VALUES (?,?,?,?,?,?,?,?)`,
+          (type, title, body, customer_id, work_order_id, delivery_id, order_id, transfer_id, dedupe_key)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
         [
           item.type,
           item.title,
@@ -67,6 +67,7 @@ function writeNotifications(items, cb) {
           item.workOrderId == null ? null : item.workOrderId,
           item.deliveryId == null ? null : item.deliveryId,
           item.orderId == null ? null : item.orderId,
+          item.transferId == null ? null : item.transferId,
           item.dedupeKey,
         ]
       );
@@ -80,6 +81,7 @@ function writeNotifications(items, cb) {
           work_order_id: item.workOrderId == null ? null : item.workOrderId,
           delivery_id: item.deliveryId == null ? null : item.deliveryId,
           order_id: item.orderId == null ? null : item.orderId,
+          transfer_id: item.transferId == null ? null : item.transferId,
         });
       }
     }
@@ -180,16 +182,23 @@ function notifyWorkOrderUpdated(previous, current, cb) {
 }
 
 function notifyFilesShared(item, cb) {
-  if (!item || !item.orderId) return cb(null, []);
+  if (!item || (!item.orderId && !item.transferId)) return cb(null, []);
   const orderNumber = item.orderNumber || item.orderId;
+  const title = item.title || (item.orderId
+    ? `New files for order ${orderNumber}`
+    : 'New files from Accent');
+  const dedupeKey = item.orderId
+    ? `files_shared:${item.orderId}:${item.batchId}`
+    : `files_shared:transfer:${item.transferId}`;
   insertNotifications([{
     type: 'files_shared',
-    title: item.title || `New files for order ${orderNumber}`,
+    title,
     body: item.body || '',
     customerId: item.customerId,
     workOrderId: item.workOrderId == null ? null : item.workOrderId,
-    orderId: item.orderId,
-    dedupeKey: `files_shared:${item.orderId}:${item.batchId}`,
+    orderId: item.orderId || null,
+    transferId: item.transferId || null,
+    dedupeKey,
   }], cb);
 }
 
@@ -284,6 +293,7 @@ function mapRow(row) {
     work_order_id: row.work_order_id,
     delivery_id: row.delivery_id,
     order_id: row.order_id == null ? null : row.order_id,
+    transfer_id: row.transfer_id == null ? null : row.transfer_id,
     created_at: row.created_at,
     read: Boolean(row.is_read),
   };
@@ -319,6 +329,7 @@ function listNotifications(user, query, cb) {
          n.work_order_id,
          n.delivery_id,
          n.order_id,
+         n.transfer_id,
          n.created_at,
          CASE WHEN r.user_id IS NULL THEN 0 ELSE 1 END AS is_read
        FROM notifications n

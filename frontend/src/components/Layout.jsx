@@ -36,6 +36,8 @@ import ExpandLess from '@mui/icons-material/ExpandLess';
 import ExpandMore from '@mui/icons-material/ExpandMore';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
+import FolderSharedIcon from '@mui/icons-material/FolderShared';
 import { brand } from '../brand';
 import NotificationBell from './NotificationBell';
 import HeaderScan from './HeaderScan';
@@ -48,6 +50,7 @@ const staffNav = [
   { title: 'Create Order', route: '/order', icon: <NoteAddIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Scan', route: '/scan', icon: <QrCodeScannerIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Search Orders', route: '/search', icon: <SearchIcon />, roles: ['admin', 'operator', 'manager'] },
+  { title: 'Send Files', route: '/send-files', icon: <UploadFileIcon />, roles: ['admin', 'operator', 'manager'] },
   {
     title: 'Reports',
     route: '/reports',
@@ -67,6 +70,7 @@ const staffNav = [
 
 const customerNav = [
   { title: 'Place Order', route: '/order', icon: <NoteAddIcon />, roles: ['customer'] },
+  { title: 'Files from Accent', route: '/files', icon: <FolderSharedIcon />, roles: ['customer'] },
   { title: 'Work Orders', route: '/work-orders', icon: <AssignmentIcon />, roles: ['customer'] },
   { title: 'Delivery', route: '/delivery', icon: <LocalShippingIcon />, roles: ['customer'] },
   { title: 'Notifications', route: '/notifications', icon: <NotificationsIcon />, roles: ['customer'] },
@@ -83,6 +87,8 @@ function pageTitle(pathname) {
   const titles = [
     ['/order', 'Create Order'],
     ['/search', 'Search Orders'],
+    ['/send-files', 'Send Files'],
+    ['/files', 'Files from Accent'],
     ['/reports', 'Reports'],
     ['/customers', 'Customers'],
     ['/admin/departments', 'Departments'],

@@ -353,11 +353,34 @@ CREATE INDEX IF NOT EXISTS idx_deliveries_work_order ON deliveries(work_order_id
 CREATE INDEX IF NOT EXISTS idx_deliveries_due_time ON deliveries(due_time);
 CREATE INDEX IF NOT EXISTS idx_deliveries_status ON deliveries(status);
 
+-- A send of one or more files to a customer. order_id is null when staff send files
+-- with no order. Bytes still live on shared_files under UPLOAD_DIR.
+CREATE TABLE IF NOT EXISTS file_transfers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL,
+  order_id INTEGER,
+  work_order_id INTEGER,
+  subject TEXT,
+  message TEXT,
+  uploaded_by INTEGER,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  deleted_at DATETIME,
+  deleted_by INTEGER,
+  FOREIGN KEY(customer_id) REFERENCES users(id),
+  FOREIGN KEY(order_id) REFERENCES orders(id),
+  FOREIGN KEY(work_order_id) REFERENCES work_orders(id),
+  FOREIGN KEY(uploaded_by) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_file_transfers_customer ON file_transfers(customer_id);
+CREATE INDEX IF NOT EXISTS idx_file_transfers_order ON file_transfers(order_id);
+
 -- Files staff send to the customer (proofs, finished files). Bytes live under UPLOAD_DIR.
 -- deleted_at is a soft delete. customer_downloaded_at is set the first time that customer downloads.
+-- order_id is null for a standalone transfer. transfer_id groups the files from one send.
 CREATE TABLE IF NOT EXISTS shared_files (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  order_id INTEGER NOT NULL,
+  order_id INTEGER,
   work_order_id INTEGER,
   customer_id INTEGER,
   uploaded_by INTEGER,
@@ -373,14 +396,17 @@ CREATE TABLE IF NOT EXISTS shared_files (
   replaced_by_id INTEGER,
   replaces_id INTEGER,
   customer_downloaded_at DATETIME,
+  transfer_id INTEGER,
   FOREIGN KEY(order_id) REFERENCES orders(id),
   FOREIGN KEY(work_order_id) REFERENCES work_orders(id),
   FOREIGN KEY(customer_id) REFERENCES users(id),
-  FOREIGN KEY(uploaded_by) REFERENCES users(id)
+  FOREIGN KEY(uploaded_by) REFERENCES users(id),
+  FOREIGN KEY(transfer_id) REFERENCES file_transfers(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_shared_files_order ON shared_files(order_id);
 CREATE INDEX IF NOT EXISTS idx_shared_files_work_order ON shared_files(work_order_id);
+CREATE INDEX IF NOT EXISTS idx_shared_files_customer ON shared_files(customer_id);
 
 -- In-app notifications. One row per event. Read state is per user in notification_reads.
 -- type: delivery_overdue, delivery_due_soon, work_order_on_hold, work_order_completed, work_order_rush, files_shared
@@ -393,12 +419,14 @@ CREATE TABLE IF NOT EXISTS notifications (
   work_order_id INTEGER,
   delivery_id INTEGER,
   order_id INTEGER,
+  transfer_id INTEGER,
   dedupe_key TEXT NOT NULL UNIQUE,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(customer_id) REFERENCES users(id),
   FOREIGN KEY(work_order_id) REFERENCES work_orders(id),
   FOREIGN KEY(delivery_id) REFERENCES deliveries(id),
-  FOREIGN KEY(order_id) REFERENCES orders(id)
+  FOREIGN KEY(order_id) REFERENCES orders(id),
+  FOREIGN KEY(transfer_id) REFERENCES file_transfers(id)
 );
 
 CREATE TABLE IF NOT EXISTS notification_reads (

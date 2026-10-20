@@ -185,6 +185,7 @@ app.use('/api/departments', departmentsRouter);
 app.use('/api/orders', ordersRouter);
 app.use('/api/uploads', uploadsRouter);
 app.use('/api/shared-files', sharedFileRoutes.fileRouter);
+app.use('/api/file-transfers', sharedFileRoutes.transferRouter);
 app.use('/api/admin-board', adminBoardRouter);
 app.use('/api/reports', reportsRouter);
 app.use('/api/notifications', notificationsRouter);
