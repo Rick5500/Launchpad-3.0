@@ -415,6 +415,7 @@
 @media screen and (max-width: 820px) {
   .wo-band,
   .wo-columns,
+  .wo-columns:has(> :nth-child(3)),
   .wo-facts,
   .wo-footer {
     grid-template-columns: 1fr;
@@ -531,6 +532,14 @@
 .work-order-sheet .wo-write-grid td {
   height: 0.35in;
   color: #1a1a1a;
+}
+
+@media screen and (max-width: 820px) {
+  .work-order-sheet .wo-write-grid th {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    letter-spacing: 0;
+  }
 }
 
 @media print {
