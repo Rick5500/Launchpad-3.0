@@ -1061,7 +1061,7 @@ export default function CustomerOrderForm() {
       title={isStaff ? 'Create Order' : 'Customer Order Form'}
       welcome={welcomeText(user)}
       onLogout={logout}
-      extra={isStaff ? <Button color="inherit" onClick={() => navigate('/')}>Admin Board</Button> : null}
+      extra={isStaff ? <Button color="inherit" onClick={() => navigate('/')}>Dashboard</Button> : null}
     >
       <GlobalStyles styles={{
         html: { scrollPaddingTop: `${SCROLL_TOP}px`, scrollPaddingBottom: `${SCROLL_BOTTOM}px` },

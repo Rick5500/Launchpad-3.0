@@ -25,7 +25,7 @@ router.get('/', async (req, res) => {
     const access = await users.loadAccess(req.user.userId);
     sendBoard(res, await adminBoard.loadSummary(access, req.query));
   } catch (err) {
-    sendError(res, err, 'ADMIN BOARD ERROR:', 'Failed to load the admin board');
+    sendError(res, err, 'ADMIN BOARD ERROR:', 'Failed to load the dashboard');
   }
 });
 

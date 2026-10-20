@@ -1272,7 +1272,7 @@ async function previewOrder(query, now = new Date()) {
 function routingStatusLabel(status) {
   const value = String(status || '').trim().toLowerCase();
   if (value === 'open') return 'Active';
-  if (value === 'in-progress') return 'In Progress';
+  if (value === 'in-progress') return 'In Production';
   if (value === 'completed' || value === 'complete') return 'Complete';
   if (value === 'on-hold') return 'On Hold';
   return status || null;

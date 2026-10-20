@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- The staff sidebar, page heading, and browser title say Dashboard. The address stays `/`. The work order page shows in-progress work as In Production
+
 ### Fixed
 - A customer print does not move a job. Only an admin, manager, or operator print moves an open work order, and only the print that changes `status` from `open` writes the Printed history row, the activity row, and Retrieved. A simple ticket with no line items still fits one letter page. The board calls that status In Production in the status filter and the detail pane
 - Create Order uses the browser's required and email checks again. Submitting an incomplete order stays on the page, focuses the first invalid field, and shows the message on that field. A select such as customer or due time focuses the visible control. An empty service focuses its Add line button. The focused field stays clear of the step rail and the submit bar

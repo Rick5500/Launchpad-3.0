@@ -44,7 +44,7 @@ import { REPORT_NAV } from '../reportCatalog';
 const drawerWidth = 280;
 
 const staffNav = [
-  { title: 'Admin Board', route: '/', icon: <DashboardIcon />, roles: ['admin', 'operator', 'manager'] },
+  { title: 'Dashboard', route: '/', icon: <DashboardIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Create Order', route: '/order', icon: <NoteAddIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Scan', route: '/scan', icon: <QrCodeScannerIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Search Orders', route: '/search', icon: <SearchIcon />, roles: ['admin', 'operator', 'manager'] },
@@ -78,7 +78,7 @@ function isActive(route, pathname) {
 }
 
 function pageTitle(pathname) {
-  if (pathname === '/') return 'Admin Board';
+  if (pathname === '/') return 'Dashboard';
   if (/^\/work-orders\/[^/]+\/print$/.test(pathname)) return 'Print Work Order';
   const titles = [
     ['/order', 'Create Order'],
@@ -112,6 +112,9 @@ export default function Layout({ user, onLogout }) {
 
   useEffect(() => {
     if (location.pathname.startsWith('/reports')) setReportsOpen(true);
+  }, [location.pathname]);
+  useEffect(() => {
+    document.title = pageTitle(location.pathname);
   }, [location.pathname]);
   const initials = (user?.display_name || user?.username || 'U').charAt(0).toUpperCase();
   const welcomeName = user?.display_name || user?.username || 'User';
