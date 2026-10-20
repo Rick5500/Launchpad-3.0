@@ -7,7 +7,14 @@ import LoadingState from '../components/LoadingState';
 import { useDocumentTitle } from '../useDocumentTitle';
 import './workOrderPrint.css';
 
-const SIGN_OFF = ['Prepress', 'Production', 'Finishing', 'Quality', 'Dispatch'];
+const WRITE_IN_COLUMNS = [
+  { key: 'code', label: 'Code', width: '28%' },
+  { key: 'unit', label: 'Unit', width: '12%' },
+  { key: 'quantity', label: 'Quantity', width: '12%' },
+  { key: 'description', label: 'Description', width: '33%' },
+  { key: 'price', label: 'Price', width: '15%' },
+];
+const WRITE_IN_ROWS = 6;
 
 function formatStamp(value) {
   if (!value) return '';
@@ -191,22 +198,31 @@ function LineBlock({ item }) {
   );
 }
 
-function SignOff() {
+function WriteInGrid() {
   return (
-    <Section title="PRODUCTION SIGN-OFF" keep>
-      <div className="wo-sign-grid">
-        {SIGN_OFF.map((stage) => (
-          <div className="wo-sign-cell" key={stage}>
-            <div className="wo-sign-stage">
-              <span className="wo-check" aria-hidden="true" />
-              <span>{stage}</span>
-            </div>
-            <div className="wo-sign-line">Initials</div>
-            <div className="wo-sign-line">Date</div>
-          </div>
+    <table className="wo-write-grid">
+      <colgroup>
+        {WRITE_IN_COLUMNS.map((column) => (
+          <col key={column.key} style={{ width: column.width }} />
         ))}
-      </div>
-    </Section>
+      </colgroup>
+      <thead>
+        <tr>
+          {WRITE_IN_COLUMNS.map((column) => (
+            <th key={column.key} scope="col">{column.label}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {Array.from({ length: WRITE_IN_ROWS }, (_, row) => (
+          <tr key={row}>
+            {WRITE_IN_COLUMNS.map((column) => (
+              <td key={column.key}>&nbsp;</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -384,15 +400,12 @@ function WorkOrderSheet({ payload, sheet }) {
             )) : <Field label="Proof" value="Not specified" />}
           </div>
         </Section>
+        <Section title="PAYMENT METHOD">
+          <div className="wo-panel-body">
+            <Field label="Payment" value={sheet.payment_method_label || 'Not specified'} />
+          </div>
+        </Section>
       </div>
-
-      <Section title="PAYMENT METHOD">
-        <div className="wo-panel-body">
-          <Field label="Payment" value={sheet.payment_method_label || 'Not specified'} />
-        </div>
-      </Section>
-
-      <SignOff />
 
       <Section title="PRODUCTION HISTORY">
         {history.length ? (
@@ -420,6 +433,8 @@ function WorkOrderSheet({ payload, sheet }) {
           </table>
         ) : <div className="wo-empty">No production history recorded.</div>}
       </Section>
+
+      <WriteInGrid />
 
       <footer className="wo-footer">
         <div className="wo-shop-footer">
