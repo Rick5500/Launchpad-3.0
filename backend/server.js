@@ -51,6 +51,7 @@ const settingsRouter = require('./routes/settings');
 const activityRouter = require('./routes/activity');
 const searchRouter = require('./routes/search');
 const systemSettings = require('./systemSettings');
+const mailer = require('./mailer');
 const userAdmin = require('./userAdmin');
 const registerLimit = require('./registerLimit');
 const { sendError } = require('./httpError');
@@ -210,6 +211,7 @@ systemSettings.loadRuntimeCache()
     console.error('SETTINGS CACHE ERROR:', err);
   })
   .finally(() => {
+    mailer.warnTestJsonTransport();
     app.listen(port, () => {
       console.log(`Launchpad backend listening on port ${port}`);
       notificationScheduler.start();

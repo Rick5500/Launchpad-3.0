@@ -110,6 +110,12 @@ function transportMode() {
   return 'smtp';
 }
 
+function smtpTimeoutMs() {
+  const parsed = Number(process.env.SMTP_TIMEOUT_MS);
+  if (!Number.isInteger(parsed) || parsed < 1000 || parsed > 120000) return 12000;
+  return parsed;
+}
+
 function createTransport() {
   const mode = transportMode();
   if (mode === 'json') return nodemailer.createTransport({ jsonTransport: true });
@@ -117,13 +123,25 @@ function createTransport() {
     return nodemailer.createTransport({ streamTransport: true, newline: 'unix', buffer: true });
   }
   const smtp = smtpSettings();
+  const timeout = smtpTimeoutMs();
   const options = {
     host: smtp.host,
     port: smtp.port,
     secure: smtp.secure,
+    connectionTimeout: timeout,
+    greetingTimeout: timeout,
+    socketTimeout: timeout,
   };
   if (smtp.user) options.auth = { user: smtp.user, pass: smtp.pass };
   return nodemailer.createTransport(options);
+}
+
+function warnTestJsonTransport() {
+  if (process.env.NODE_ENV !== 'test') return;
+  const mode = String(process.env.MAIL_TRANSPORT || '').trim().toLowerCase();
+  if (mode !== 'json') return;
+  if (!String(process.env.SMTP_HOST || '').trim()) return;
+  console.warn('MAIL_TRANSPORT=json is set with SMTP_HOST. Test mail uses the JSON transport and does not connect to that SMTP server.');
 }
 
 function escapeHtml(value) {
@@ -154,8 +172,12 @@ function parseAddressList(value, { max = 5, field = 'email' } = {}) {
   return { value: addresses };
 }
 
+function reserveEmail(actorId) {
+  return emailLimiter().check(`mail:${actorId}`);
+}
+
 function consumeRate(actorId) {
-  const limit = emailLimiter().check(`mail:${actorId}`);
+  const limit = reserveEmail(actorId);
   if (limit.allowed) return;
   const error = httpError(429, 'Too many emails. Try again later.');
   error.retryAfterSeconds = limit.retryAfterSeconds;
@@ -366,7 +388,9 @@ module.exports = {
   orderFilesLink,
   escapeHtml,
   parseAddressList,
+  reserveEmail,
   consumeRate,
+  warnTestJsonTransport,
   renderShareEmail,
   renderTestEmail,
   deliver,

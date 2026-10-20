@@ -116,13 +116,20 @@ function request({ method, path: requestPath, token, json, raw, contentType }) {
       const chunks = [];
       res.on('data', (chunk) => chunks.push(chunk));
       res.on('end', () => {
+        clearTimeout(timer);
         const text = Buffer.concat(chunks).toString('utf8');
         let parsed = null;
         try { parsed = JSON.parse(text); } catch (err) { parsed = null; }
         resolve({ status: res.statusCode, json: parsed, text, headers: res.headers });
       });
     });
-    req.on('error', reject);
+    const timer = setTimeout(() => {
+      req.destroy(new Error(`request timed out ${method} ${requestPath}`));
+    }, 25000);
+    req.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
     if (body) req.end(body);
     else req.end();
   });
@@ -494,6 +501,20 @@ async function runApiChecks() {
     const same = afterAgain.json.files.find((file) => file.id === fileId);
     assert(same.customer_downloaded_at === downloaded.customer_downloaded_at, 'the first download time should stay');
 
+    const missingId = sent.json.files[1].id;
+    const missingRow = await db.get(`SELECT stored_name, customer_downloaded_at FROM shared_files WHERE id = ?`, [missingId]);
+    assert(missingRow && !missingRow.customer_downloaded_at, 'the second file should still be undownloaded');
+    fs.unlinkSync(path.join(uploadDir, missingRow.stored_name));
+    const missingDownload = await request({ method: 'GET', path: `/api/shared-files/${missingId}/download`, token: customer.token });
+    assert(missingDownload.status === 404, `a file missing from disk should be 404, got ${missingDownload.status}`);
+    const afterMissing = await db.get(`SELECT customer_downloaded_at FROM shared_files WHERE id = ?`, [missingId]);
+    assert(!afterMissing.customer_downloaded_at, 'a missing file should not record the first customer download');
+    const missingLog = await db.get(
+      `SELECT id FROM activity_log WHERE action = 'shared_file.downloaded' AND detail LIKE ?`,
+      [`%"file_id":${missingId},%`]
+    );
+    assert(!missingLog, 'a missing file should not write a download activity row');
+
     const notes = await request({ method: 'GET', path: '/api/notifications?limit=50', token: customer.token });
     const welcome = (notes.json.notifications || []).find((row) => row.type === 'files_shared' && row.title === `New files for order ${orderNumber}`);
     assert(welcome, `customer should be notified: ${JSON.stringify(notes.json.notifications)}`);
@@ -677,9 +698,13 @@ async function runApiChecks() {
       files: [pdfFile('limited.pdf', 'limited')],
       fields: { send_email: 'true', email_to: 'extra@acmeconstruction.com' },
     });
-    assert(limited.status === 429, `email rate limit should be 429, got ${limited.status} ${limited.text}`);
+    assert(limited.status === 201 && limited.json.email && limited.json.email.status === 'rate_limited', `email rate limit should still share the file, got ${limited.status} ${limited.text}`);
     const afterLimit = await db.get('SELECT COUNT(*) AS count FROM shared_files');
-    assert(afterLimit.count === beforeLimit.count, 'a rate-limited send should not store a file');
+    assert(afterLimit.count === beforeLimit.count + 1, 'a rate-limited send should still store the file');
+    assert(
+      /MAIL_TRANSPORT=json is set with SMTP_HOST/.test(server.logs()),
+      'startup should warn when json transport is set with SMTP_HOST'
+    );
 
     console.log('PASS permissions, isolation, tracking, and mock email');
   } finally {
@@ -732,10 +757,61 @@ async function runUnconfigured() {
   }
 }
 
+async function runUnreachableSmtp() {
+  const timeoutMs = 2500;
+  const server = startServer(baseEnv({
+    SMTP_HOST: '10.255.255.1',
+    SMTP_PORT: '2525',
+    SMTP_USER: '',
+    SMTP_PASS: '',
+    SMTP_FROM: 'files@accent.example',
+    SMTP_SECURE: 'false',
+    PUBLIC_APP_URL: appUrl,
+    MAIL_TRANSPORT: '',
+    SMTP_TIMEOUT_MS: String(timeoutMs),
+  }));
+  await server.ready;
+  const db = openDb(dbFile);
+  try {
+    const admin = await login('admin', adminPassword);
+    const order = await db.get(`SELECT id FROM orders WHERE email = 'jsmith@acmeconstruction.com' ORDER BY id LIMIT 1`);
+    const before = await db.get('SELECT COUNT(*) AS count FROM shared_files WHERE deleted_at IS NULL');
+    const started = Date.now();
+    const sent = await share(admin.token, order.id, {
+      files: [pdfFile('blackhole.pdf', 'blackhole')],
+      fields: { send_email: 'true', email_to: 'jsmith@acmeconstruction.com' },
+    });
+    const elapsed = Date.now() - started;
+    assert(sent.status === 201, `unreachable SMTP should still share files: ${sent.status} ${sent.text}`);
+    assert(sent.json.email && sent.json.email.status === 'failed', `expected failed email, got ${JSON.stringify(sent.json.email)}`);
+    assert(elapsed < timeoutMs + 8000, `share should fail within the SMTP timeout, took ${elapsed}ms`);
+    const after = await db.get('SELECT COUNT(*) AS count FROM shared_files WHERE deleted_at IS NULL');
+    assert(after.count === before.count + 1, 'the file should be stored when SMTP is unreachable');
+    const testStarted = Date.now();
+    const testMail = await request({
+      method: 'POST',
+      path: '/api/settings/test-email',
+      token: admin.token,
+      json: { to: 'ops@accent.example' },
+    });
+    const testElapsed = Date.now() - testStarted;
+    assert(testMail.status === 502, `unreachable test email should fail, got ${testMail.status} ${testMail.text}`);
+    assert(testElapsed < timeoutMs + 8000, `test email should fail within the SMTP timeout, took ${testElapsed}ms`);
+    const logs = server.logs();
+    assert(!/TypeError|Unhandled/.test(logs), `unreachable SMTP should not crash\n${logs}`);
+    console.log(`PASS unreachable SMTP fails within the timeout (${elapsed}ms share, ${testElapsed}ms test)`);
+  } finally {
+    await db.close();
+    server.stop();
+    await server.closed;
+  }
+}
+
 async function main() {
   await checkMigration();
   await runApiChecks();
   await runUnconfigured();
+  await runUnreachableSmtp();
   console.log('phase 13 ok');
 }
 

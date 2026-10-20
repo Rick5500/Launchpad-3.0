@@ -193,8 +193,8 @@ async function shareFiles(user, orderId, body, files) {
   let emailPlan = 'skipped';
   if (wantsEmail && !configured) emailPlan = 'not_configured';
   if (wantsEmail && configured) {
-    emailPlan = 'pending';
-    mailer.consumeRate(actorId(user));
+    const slot = mailer.reserveEmail(actorId(user));
+    emailPlan = slot.allowed ? 'pending' : 'rate_limited';
   }
 
   const batchId = crypto.randomBytes(8).toString('hex');
@@ -335,6 +335,8 @@ async function loadVisible(user, id) {
 
 async function prepareDownload(user, id) {
   const file = await loadVisible(user, id);
+  const fullPath = safeStoredPath(file.stored_name);
+  if (!fullPath || !fs.existsSync(fullPath)) throw httpError(404, 'File not found');
   if (user.role === 'customer') {
     await run(
       `UPDATE shared_files
@@ -349,8 +351,6 @@ async function prepareDownload(user, id) {
       message: `Customer downloaded ${file.original_name}`,
     }).catch((err) => console.error('FILE DOWNLOAD LOG ERROR:', err.message || err));
   }
-  const fullPath = safeStoredPath(file.stored_name);
-  if (!fullPath || !fs.existsSync(fullPath)) throw httpError(404, 'File not found');
   return {
     fullPath,
     downloadName: sanitizeOriginalName(file.original_name),

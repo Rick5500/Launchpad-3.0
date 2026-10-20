@@ -91,10 +91,11 @@ export default function FilesFromAccent({ orderId, workOrderId = null, canManage
     setDialogOpen(true);
   }
 
-  function noticeFor(email) {
+  function noticeFor(email, configured) {
     const status = email && email.status;
     if (status === 'sent') return 'Files sent. The customer was emailed.';
-    if (status === 'not_configured') return "Files shared in Launchpad. Email isn't set up.";
+    if (status === 'rate_limited') return 'Files shared in Launchpad. Too many emails. Try again later.';
+    if (status === 'not_configured' || configured === false) return "Email isn't set up. Files are still shared in Launchpad.";
     if (status === 'failed') return 'Files shared in Launchpad. The email could not be sent.';
     return 'Files shared in Launchpad. No email was sent.';
   }
@@ -119,7 +120,7 @@ export default function FilesFromAccent({ orderId, workOrderId = null, canManage
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || 'Unable to share files');
       setDialogOpen(false);
-      setNotice(noticeFor(body.email));
+      setNotice(noticeFor(body.email, Boolean(payload?.mail?.configured)));
       await load();
     } catch (err) {
       setError(err.message || 'Unable to share files');
@@ -215,9 +216,11 @@ export default function FilesFromAccent({ orderId, workOrderId = null, canManage
                     {formatFileSize(file.size_bytes)}
                     {file.work_order_number ? ` · ${file.work_order_number}` : ' · Entire order'}
                   </Typography>
-                  <Typography variant="body2" data-testid="customer-download-state" sx={{ color: file.downloaded_by_customer ? brand.greenDark : brand.muted }}>
-                    {downloadLabel(file, timeZone)}
-                  </Typography>
+                  {canManage || file.customer_downloaded_at ? (
+                    <Typography variant="body2" data-testid="customer-download-state" sx={{ color: file.downloaded_by_customer ? brand.greenDark : brand.muted }}>
+                      {downloadLabel(file, timeZone)}
+                    </Typography>
+                  ) : null}
                 </Box>
                 <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
                   <Button size="small" data-testid="download-shared-file" onClick={() => download(file)} sx={{ color: brand.navy, fontWeight: 700 }}>
