@@ -233,7 +233,11 @@ async function loadDelivery(orderId, workOrderId) {
   );
 }
 
-const FROZEN_PRINT_STATUSES = new Set(['completed', 'complete', 'on-hold', 'cancelled', 'canceled']);
+const PRINT_MOVE_ROLES = new Set(['admin', 'manager', 'operator']);
+
+function canMarkPrinted(viewer) {
+  return Boolean(viewer && PRINT_MOVE_ROLES.has(viewer.role));
+}
 
 function actorLabel(viewer) {
   const name = viewer && (viewer.display_name || viewer.username);
@@ -242,49 +246,30 @@ function actorLabel(viewer) {
 }
 
 async function noteProductionPrint(tx, row, viewer) {
-  const status = String(row.status || '').trim().toLowerCase();
-  if (FROZEN_PRINT_STATUSES.has(status)) return row.status;
-  const retrieved = await tx.get(
-    `SELECT MIN(picked.event_time) AS retrieved_at FROM (
-       SELECT event_time FROM barcode_events
-       WHERE work_order_id = ? AND trim(coalesce(event_time, '')) != ''
-       UNION ALL
-       SELECT event_time FROM production_history
-       WHERE work_order_id = ?
-         AND trim(coalesce(event_time, '')) != ''
-         AND NOT (
-           lower(trim(coalesce(scanned_by, ''))) = 'system auto'
-           AND lower(trim(coalesce(notes, ''))) = 'order created'
-         )
-     ) AS picked`,
-    [row.id, row.id]
+  const updated = await tx.run(
+    `UPDATE work_orders
+     SET status = 'in-progress', updated_at = datetime('now')
+     WHERE id = ? AND status = 'open'`,
+    [row.id]
   );
-  const alreadyRetrieved = Boolean(retrieved && retrieved.retrieved_at);
-  const inProduction = status === 'in-progress';
-  if (inProduction && alreadyRetrieved) return row.status;
-
-  if (!inProduction) {
-    await tx.run(
-      `UPDATE work_orders SET status = 'in-progress', updated_at = datetime('now') WHERE id = ?`,
-      [row.id]
-    );
+  if (!updated || updated.changes !== 1) {
+    const current = await tx.get('SELECT status FROM work_orders WHERE id = ?', [row.id]);
+    return (current && current.status) || row.status;
   }
-  if (!alreadyRetrieved) {
-    await tx.run(
-      `INSERT INTO production_history (work_order_id, department, status, scanned_by, user_id, notes)
-       VALUES (?, ?, 'in-progress', ?, ?, 'Printed')`,
-      [row.id, row.department || 'Production', actorLabel(viewer), viewer && (viewer.userId || viewer.id) || null]
-    );
-  }
+  await tx.run(
+    `INSERT INTO production_history (work_order_id, department, status, scanned_by, user_id, notes)
+     VALUES (?, ?, 'in-progress', ?, ?, 'Printed')`,
+    [row.id, row.department || 'Production', actorLabel(viewer), (viewer && (viewer.userId || viewer.id)) || null]
+  );
   await tx.run(
     `INSERT INTO activity_log (actor_id, action, entity_type, entity_id, detail)
      VALUES (?, 'work_order.printed', 'work_order', ?, ?)`,
     [
-      viewer && (viewer.userId || viewer.id) || null,
+      (viewer && (viewer.userId || viewer.id)) || null,
       row.id,
       JSON.stringify({
         external_id: row.external_id || null,
-        message: inProduction ? 'Printed' : 'Printed and moved to In Production',
+        message: 'Printed and moved to In Production',
       }),
     ]
   );
@@ -364,7 +349,9 @@ async function buildSheet(workOrderId, viewer) {
     params
   );
   if (!row) return null;
-  row.status = await withTransaction((tx) => noteProductionPrint(tx, row, viewer));
+  if (canMarkPrinted(viewer)) {
+    row.status = await withTransaction((tx) => noteProductionPrint(tx, row, viewer));
+  }
 
   const lineItems = await all(
     `SELECT id, line_number, description, size, quantity, media, color, binding_finish,

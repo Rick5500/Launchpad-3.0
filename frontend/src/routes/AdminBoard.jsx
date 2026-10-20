@@ -1042,7 +1042,7 @@ export default function AdminBoard() {
           >
             <MenuItem value="">Any</MenuItem>
             <MenuItem value="open">Open</MenuItem>
-            <MenuItem value="in-progress">In progress</MenuItem>
+            <MenuItem value="in-progress">In Production</MenuItem>
             <MenuItem value="on-hold">On hold</MenuItem>
             <MenuItem value="completed">Completed</MenuItem>
           </TextField>

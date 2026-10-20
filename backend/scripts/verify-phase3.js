@@ -435,7 +435,7 @@ async function runApiChecks() {
       assert(sheet.due_time === '09:15', 'due time should be on the print');
       assert(sheet.special_instructions === 'Please deliver to loading dock.', 'special instructions should use the order notes');
       assert(sheet.routing.department, 'routing department should be present');
-      assert(sheet.routing.current_status_label === 'In Progress', 'printing a new work order moves it to In Production');
+      assert(sheet.routing.current_status_label === 'Active', 'a customer print should leave a new work order Active');
       assertCustomerHistory(sheet.production_history);
       decodePrinted(sheet.barcode_svg, sheet.external_id);
     }
@@ -457,9 +457,8 @@ async function runApiChecks() {
       'SELECT department, status, notes FROM production_history WHERE work_order_id = ? ORDER BY id',
       [bySuffix.A.id]
     );
-    assert(historyRows.length === 2, `printing should add one history row, got ${historyRows.length}`);
-    assert(historyRows[0].department === 'Submitted' && historyRows[0].status === 'Submitted', 'the created row should stay first');
-    assert(historyRows[1].status === 'in-progress' && historyRows[1].notes === 'Printed', 'printing should log In Production');
+    assert(historyRows.length === 1, `a customer print should not add a history row, got ${historyRows.length}`);
+    assert(historyRows[0].department === 'Submitted' && historyRows[0].status === 'Submitted', 'the created row should stay');
 
     const otherOrder = await request({ method: 'GET', path: `/api/orders/${orderId}/print`, token: other.token });
     const otherWorkOrder = await request({ method: 'GET', path: `/api/workorders/${bySuffix.A.id}/print`, token: other.token });
@@ -474,8 +473,15 @@ async function runApiChecks() {
     assert(staffPrint.json.staff_history === true, 'staff print includes history notes');
     assert(staffPrint.json.work_orders.length === 1, 'work order print returns that one sheet');
     const staffSheet = staffPrint.json.work_orders[0];
+    assert(staffSheet.routing.current_status_label === 'In Progress', 'a staff print moves an open job to In Production');
     assert(staffSheet.production_history[0].scanned_by === 'System Auto', 'staff history should keep who recorded the step');
     assert(staffSheet.production_history[0].notes === 'Order Created', 'staff history should keep the real note');
+    const printedHistory = await db.all(
+      'SELECT department, status, notes FROM production_history WHERE work_order_id = ? ORDER BY id',
+      [bySuffix.A.id]
+    );
+    assert(printedHistory.length === 2, `staff printing should add one history row, got ${printedHistory.length}`);
+    assert(printedHistory[1].status === 'in-progress' && printedHistory[1].notes === 'Printed', 'staff printing should log In Production');
     const adminOrderPrint = await request({ method: 'GET', path: `/api/orders/${orderId}/print`, token: admin.token });
     assert(adminOrderPrint.status === 200 && adminOrderPrint.json.work_orders.length === 3, 'admin can print every work order on the order');
 

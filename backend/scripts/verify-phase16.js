@@ -117,7 +117,8 @@ function weekdayAhead() {
     day: '2-digit',
   });
   const dayFmt = new Intl.DateTimeFormat('en-US', { timeZone: zone, weekday: 'short' });
-  for (let add = 0; add < 10; add += 1) {
+  // Tomorrow, not today: a 10:00 due on the shop day is already past after 10:00.
+  for (let add = 1; add < 12; add += 1) {
     const date = new Date(Date.now() + add * 24 * 60 * 60 * 1000);
     const weekday = dayFmt.format(date);
     if (weekday === 'Sat' || weekday === 'Sun') continue;
@@ -249,6 +250,50 @@ async function main() {
     );
     const beforePrint = await db.get(`SELECT status FROM work_orders WHERE id = ?`, [ticket.id]);
     assert(beforePrint.status === 'open', 'the job starts open');
+
+    const customerPrint = await request({
+      method: 'GET',
+      path: `/api/workorders/${sibling.id}/print`,
+      token: customer.token,
+    });
+    assert(customerPrint.status === 200, `customer print failed: ${customerPrint.status} ${customerPrint.text}`);
+    assert(customerPrint.json.work_orders[0].routing.current_status_label === 'Active', 'a customer print should leave the job open');
+    const siblingStatus = await db.get(`SELECT status FROM work_orders WHERE id = ?`, [sibling.id]);
+    assert(siblingStatus.status === 'open', `a customer print should not move the job, got ${siblingStatus.status}`);
+    const siblingPrinted = await db.get(
+      `SELECT id FROM production_history WHERE work_order_id = ? AND notes = 'Printed'`,
+      [sibling.id]
+    );
+    const siblingActivity = await db.get(
+      `SELECT COUNT(*) AS count FROM activity_log WHERE entity_type = 'work_order' AND entity_id = ? AND action = 'work_order.printed'`,
+      [sibling.id]
+    );
+    assert(!siblingPrinted, 'a customer print should not log a production start');
+    assert(siblingActivity.count === 0, 'a customer print should not write work_order.printed');
+
+    const raced = await db.run(
+      `INSERT INTO work_orders (external_id, customer_id, order_id, description, quantity, status, department, priority, due_date)
+       VALUES ('P16-RACE', ?, ?, 'Race', 1, 'open', 'Large Format', 'Normal', '2099-06-15 10:00:00')`,
+      [created.json.id, order.json.order.id]
+    );
+    const parallel = await Promise.all([0, 1, 2, 3].map(() => request({
+      method: 'GET',
+      path: `/api/workorders/${raced.lastID}/print`,
+      token: admin.token,
+    })));
+    assert(parallel.every((response) => response.status === 200), 'parallel prints should succeed');
+    const racedStatus = await db.get(`SELECT status FROM work_orders WHERE id = ?`, [raced.lastID]);
+    assert(racedStatus.status === 'in-progress', `parallel prints should leave the job in progress, got ${racedStatus.status}`);
+    const racedHistory = await db.get(
+      `SELECT COUNT(*) AS count FROM production_history WHERE work_order_id = ? AND notes = 'Printed'`,
+      [raced.lastID]
+    );
+    const racedActivity = await db.get(
+      `SELECT COUNT(*) AS count FROM activity_log WHERE entity_type = 'work_order' AND entity_id = ? AND action = 'work_order.printed'`,
+      [raced.lastID]
+    );
+    assert(racedHistory.count === 1, `four parallel prints should log one Printed row, got ${racedHistory.count}`);
+    assert(racedActivity.count === 1, `four parallel prints should write one activity row, got ${racedActivity.count}`);
 
     const printed = await request({
       method: 'GET',
