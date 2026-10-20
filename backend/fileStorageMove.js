@@ -6,9 +6,11 @@ const {
   uploadDir,
   legacyRoot,
   rootsEqual,
+  rootForStored,
   safeStoredPath,
   ensureUploadDir,
   inspectStored,
+  filesMatch,
   copyVerified,
   removeStored,
 } = require('./fileStore');
@@ -42,37 +44,78 @@ async function stamp(table, id, root, previous) {
   });
 }
 
+function resolveColumnRoot(value) {
+  const text = textOrNull(value);
+  if (!text) return null;
+  return rootForStored(text);
+}
+
+function chooseSourceRoot(previousRoot, recordedRoot) {
+  const previous = resolveColumnRoot(previousRoot);
+  if (previous) return previous;
+  const recorded = resolveColumnRoot(recordedRoot);
+  if (recorded) return recorded;
+  return legacyRoot();
+}
+
+async function finishCurrentCopy(table, row, target, sourceRoot, sourcePath, targetPath) {
+  if (!sourcePath || !sourceRoot || rootsEqual(sourceRoot, target) || sourcePath === targetPath) {
+    if (!textOrNull(row.storage_root) || !rootsEqual(textOrNull(row.storage_root), target) || textOrNull(row.storage_previous)) {
+      await stamp(table, row.id, target, null);
+    }
+    return { status: textOrNull(row.storage_previous) ? 'moved' : 'already' };
+  }
+  try {
+    if (!filesMatch(sourcePath, targetPath)) {
+      return { status: 'failed', error: 'A file already in the new folder does not match the original' };
+    }
+  } catch (err) {
+    if (err && err.code === 'ENOENT') {
+      // The current folder already has a copy that matches the record. A
+      // missing previous folder must not fail the move or delete that copy.
+      await stamp(table, row.id, target, null);
+      return { status: 'moved' };
+    }
+    return { status: 'failed', error: STORAGE_DOWN_MESSAGE, unavailable: true };
+  }
+  await stamp(table, row.id, target, sourceRoot);
+  const removed = removeStored(nameOf(row), sourceRoot);
+  if (removed === 'unavailable') return { status: 'failed', error: STORAGE_DOWN_MESSAGE, unavailable: true };
+  await stamp(table, row.id, target, null);
+  return { status: 'moved' };
+}
+
+function nameOf(row) {
+  return String(row.stored_name || '').trim();
+}
+
 async function moveRow(table, row, target) {
-  const name = String(row.stored_name || '').trim();
+  const name = nameOf(row);
   const size = recordSize(row.size_bytes);
   const recordedRoot = textOrNull(row.storage_root);
   const previousRoot = textOrNull(row.storage_previous);
-  const sourceRoot = previousRoot || recordedRoot || legacyRoot();
   const targetPath = safeStoredPath(name, target);
   if (!targetPath) return { status: 'failed', error: 'Stored name is not allowed' };
-  const sourcePath = safeStoredPath(name, sourceRoot);
-  if (!sourcePath) return { status: 'failed', error: 'Stored name is not allowed' };
 
   const targetInfo = inspectStored(targetPath, size);
   if (targetInfo.unavailable) return { status: 'failed', error: STORAGE_DOWN_MESSAGE, unavailable: true };
+  if (targetInfo.mismatch) {
+    return { status: 'failed', error: 'A file already in the new folder does not match this record' };
+  }
 
+  const sourceRoot = chooseSourceRoot(previousRoot, recordedRoot);
+  const sourcePath = safeStoredPath(name, sourceRoot);
+
+  if (targetInfo.ok) {
+    return finishCurrentCopy(table, row, target, sourceRoot, sourcePath, targetPath);
+  }
+
+  if (!sourcePath) return { status: 'missing', error: 'Original file is missing' };
   if (rootsEqual(sourceRoot, target) || sourcePath === targetPath) {
     if (!recordedRoot || !rootsEqual(recordedRoot, target) || previousRoot) {
       await stamp(table, row.id, target, null);
     }
     return { status: previousRoot ? 'moved' : 'already' };
-  }
-
-  if (targetInfo.mismatch) {
-    return { status: 'failed', error: 'A file already in the new folder does not match this record' };
-  }
-
-  if (targetInfo.ok && sourcePath !== targetPath) {
-    await stamp(table, row.id, target, rootsEqual(sourceRoot, target) ? null : sourceRoot);
-    const removed = removeStored(name, sourceRoot);
-    if (removed === 'unavailable') return { status: 'failed', error: STORAGE_DOWN_MESSAGE, unavailable: true };
-    await stamp(table, row.id, target, null);
-    return { status: 'moved' };
   }
 
   const sourceInfo = inspectStored(sourcePath, size);
@@ -83,14 +126,21 @@ async function moveRow(table, row, target) {
   try {
     copyVerified(sourcePath, targetPath, sourceInfo.size);
   } catch (err) {
-    if (err && err.code === 'ESIZE') {
-      return { status: 'failed', error: 'Copied file size does not match the original' };
+    if (err && (err.code === 'ESIZE' || err.code === 'ECHECKSUM')) {
+      return { status: 'failed', error: 'Copied file does not match the original' };
     }
     return { status: 'failed', error: STORAGE_DOWN_MESSAGE, unavailable: true };
   }
 
   const copied = inspectStored(targetPath, size);
-  if (!copied.ok) return { status: 'failed', error: 'Copied file size does not match the original' };
+  if (!copied.ok) return { status: 'failed', error: 'Copied file does not match the original' };
+  try {
+    if (!filesMatch(sourcePath, targetPath)) {
+      return { status: 'failed', error: 'Copied file does not match the original' };
+    }
+  } catch (err) {
+    return { status: 'failed', error: STORAGE_DOWN_MESSAGE, unavailable: true };
+  }
 
   await stamp(table, row.id, target, sourceRoot);
   const removed = removeStored(name, sourceRoot);
@@ -135,7 +185,33 @@ async function countOutside() {
   return count;
 }
 
+let moveInProgress = false;
+
+function moveBusyResult() {
+  return {
+    conflict: true,
+    unavailable: false,
+    error: 'A file move is already running.',
+    target: uploadDir(),
+    moved: 0,
+    already: 0,
+    missing: 0,
+    failed: 0,
+    errors: [],
+  };
+}
+
 async function moveAll(actorId) {
+  if (moveInProgress) return moveBusyResult();
+  moveInProgress = true;
+  try {
+    return await runMove(actorId);
+  } finally {
+    moveInProgress = false;
+  }
+}
+
+async function runMove(actorId) {
   const ready = ensureUploadDir();
   if (!ready.ok) {
     return {

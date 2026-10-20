@@ -1,9 +1,10 @@
 const crypto = require('crypto');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const multer = require('multer');
 const { httpError } = require('./httpError');
-const { getStorageDriver } = require('./storage/localFolder');
+const { MARKER_FILE, getStorageDriver } = require('./storage/localFolder');
 
 const ALLOWED_EXTENSIONS = new Set([
   'pdf', 'png', 'jpg', 'jpeg', 'gif', 'tif', 'tiff', 'webp', 'bmp', 'dwg', 'zip', 'plt',
@@ -28,8 +29,17 @@ const STORAGE_DOWN_MESSAGE = 'File storage is unavailable. The storage folder ca
 const ABSOLUTE_PATH_MESSAGE = 'Storage folder must be an absolute path. Relative paths are not allowed. Use a full local path, a mapped drive such as Z:\\launchpad, or a network share such as \\\\server\\share\\launchpad.';
 const CODE_FOLDER_MESSAGE = 'Storage folder cannot be inside the application code folders (backend or frontend).';
 const NOT_WRITABLE_MESSAGE = 'Storage folder is not reachable or is not writable. Launchpad must be able to write, read, and delete a test file there.';
+const VIRTUAL_PATH_MESSAGE = 'Storage folder cannot be inside /proc, /sys, or /dev.';
+const DEVICE_PATH_MESSAGE = 'Storage folder cannot use a Windows device path (\\\\?\\ or \\\\.\\).';
+const ADMIN_SHARE_MESSAGE = 'Storage folder cannot be a Windows admin share such as \\\\localhost\\C$.';
+const WINDOWS_DIR_MESSAGE = 'Storage folder cannot be inside the Windows directory.';
+const PARENT_MISSING_MESSAGE = 'The parent folder does not exist, so the storage folder was not created.';
+const TMP_CAUTION = 'This folder is under /tmp and can disappear when the computer restarts.';
+const REPO_CAUTION = 'This folder is inside the Launchpad project. Prefer a folder outside the repository.';
 
 let configuredRoot = null;
+let markerByRoot = new Map();
+let knownRootKeys = new Set();
 
 function storageDown(cause) {
   const error = httpError(503, STORAGE_DOWN_MESSAGE);
@@ -84,7 +94,35 @@ function insideCode(candidate) {
   return codeRoots().some((root) => insideDirectory(root, candidate));
 }
 
+function isVirtualPosix(value) {
+  const normalized = stripTrailing(path.posix.normalize(String(value || '')), 'posix');
+  if (!normalized.startsWith('/')) return false;
+  return ['/proc', '/sys', '/dev'].some((root) => normalized === root || normalized.startsWith(`${root}/`));
+}
+
+function isWindowsDirectory(value) {
+  return /^[A-Za-z]:\\windows(?:\\|$)/i.test(String(value || ''));
+}
+
+function isDevicePath(value) {
+  return /^[/\\]{2}\?[\\/]/.test(value) || /^[/\\]{2}\.[\\/]/.test(value);
+}
+
+function isLocalAdminShare(server, share) {
+  if (!/^[A-Za-z]\$$/i.test(String(share || ''))) return false;
+  return /^(localhost|127\.0\.0\.1|\.)$/i.test(String(server || ''));
+}
+
 function resolvesInsideCode(candidate) {
+  return resolvesInside(candidate, insideCode);
+}
+
+function resolvesInsideVirtual(candidate) {
+  if (isWinStyle(candidate) && process.platform !== 'win32') return false;
+  return resolvesInside(candidate, isVirtualPosix);
+}
+
+function resolvesInside(candidate, matches) {
   if (isWinStyle(candidate) && process.platform !== 'win32') return false;
   const api = pathApi(candidate);
   let current = candidate;
@@ -93,7 +131,7 @@ function resolvesInsideCode(candidate) {
       const real = fs.realpathSync(current);
       const suffix = api.relative(current, candidate);
       const resolved = suffix ? api.resolve(real, suffix) : real;
-      return insideCode(resolved);
+      return matches(resolved);
     } catch (err) {
       if (err.code !== 'ENOENT' && err.code !== 'ENOTDIR') return false;
       const parent = api.dirname(current);
@@ -111,14 +149,17 @@ function parseStoragePath(input) {
   if (!text) return { error: 'Storage folder is required' };
   if (text.length > 1024) return { error: 'Storage folder is too long' };
   if (/[\0\r\n]/.test(text)) return { error: 'Storage folder contains invalid characters' };
+  if (isDevicePath(text)) return { error: DEVICE_PATH_MESSAGE };
 
   if (text.startsWith('\\\\') || text.startsWith('//')) {
     const parts = text.replace(/^[/\\]+/, '').split(/[/\\]+/).filter(Boolean);
     if (parts.length < 2) {
       return { error: 'A network share must include the server and the share, for example \\\\server\\share\\launchpad.' };
     }
+    if (isLocalAdminShare(parts[0], parts[1])) return { error: ADMIN_SHARE_MESSAGE };
     const normalized = stripTrailing(path.win32.normalize(`\\\\${parts.join('\\')}`), 'win32');
     if (!normalized.startsWith('\\\\')) return { error: ABSOLUTE_PATH_MESSAGE };
+    if (isDevicePath(normalized)) return { error: DEVICE_PATH_MESSAGE };
     return { path: normalized, style: 'win32' };
   }
 
@@ -132,6 +173,7 @@ function parseStoragePath(input) {
     if (/^[A-Za-z]:\\$/.test(normalized)) {
       return { error: 'Storage folder must name a folder, not the root of a drive.' };
     }
+    if (isWindowsDirectory(normalized)) return { error: WINDOWS_DIR_MESSAGE };
     return { path: normalized, style: 'win32' };
   }
 
@@ -139,6 +181,7 @@ function parseStoragePath(input) {
     const normalized = stripTrailing(path.posix.normalize(text), 'posix');
     if (!normalized.startsWith('/')) return { error: ABSOLUTE_PATH_MESSAGE };
     if (normalized === '/') return { error: 'Storage folder must name a folder, not the root of a drive.' };
+    if (isVirtualPosix(normalized)) return { error: VIRTUAL_PATH_MESSAGE };
     return { path: normalized, style: 'posix' };
   }
 
@@ -186,6 +229,57 @@ function setConfiguredRoot(value) {
   configuredRoot = canonical;
 }
 
+function markerKey(root) {
+  const canonical = canonicalRoot(root) || String(root || '');
+  if (isWinStyle(canonical)) return canonical.toLowerCase();
+  return canonical;
+}
+
+function setMarkerMap(map) {
+  markerByRoot = new Map();
+  if (!map || typeof map !== 'object') return;
+  for (const [rawPath, id] of Object.entries(map)) {
+    const canonical = canonicalRoot(rawPath);
+    if (!canonical || typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id)) continue;
+    markerByRoot.set(markerKey(canonical), id);
+  }
+}
+
+function rememberMarker(root, id) {
+  const canonical = canonicalRoot(root);
+  if (!canonical || !/^[a-f0-9]{32}$/.test(String(id || ''))) return null;
+  markerByRoot.set(markerKey(canonical), id);
+  return canonical;
+}
+
+function markerIdFor(root) {
+  if (!root) return null;
+  return markerByRoot.get(markerKey(root)) || null;
+}
+
+function setKnownRoots(paths) {
+  knownRootKeys = new Set();
+  for (const raw of paths || []) rememberKnownRoot(raw);
+}
+
+function rememberKnownRoot(root) {
+  const canonical = canonicalRoot(root);
+  if (!canonical) return null;
+  knownRootKeys.add(markerKey(canonical));
+  return canonical;
+}
+
+function isKnownRoot(root) {
+  const canonical = canonicalRoot(root);
+  if (!canonical) return false;
+  if (rootsEqual(canonical, uploadDir())) return true;
+  if (rootsEqual(canonical, legacyRoot())) return true;
+  if (rootsEqual(canonical, defaultRoot())) return true;
+  const env = environmentRoot();
+  if (env && rootsEqual(canonical, env)) return true;
+  return knownRootKeys.has(markerKey(canonical));
+}
+
 function rootsEqual(left, right) {
   const a = canonicalRoot(left);
   const b = canonicalRoot(right);
@@ -197,7 +291,90 @@ function rootsEqual(left, right) {
 function rootForStored(storageRoot) {
   if (storageRoot === undefined) return uploadDir();
   if (storageRoot == null || String(storageRoot).trim() === '') return legacyRoot();
-  return canonicalRoot(String(storageRoot).trim());
+  const canonical = canonicalRoot(String(storageRoot).trim());
+  if (!canonical || !isKnownRoot(canonical)) return null;
+  return canonical;
+}
+
+function directoryHoldsFiles(root) {
+  let names;
+  try {
+    names = fs.readdirSync(root);
+  } catch (err) {
+    return false;
+  }
+  return names.some((name) => {
+    if (!name || name === MARKER_FILE || name.startsWith('.')) return false;
+    try {
+      return fs.statSync(pathApi(root).join(root, name)).isFile();
+    } catch (err) {
+      return false;
+    }
+  });
+}
+
+function canPlantOriginalMarker(root) {
+  const isDefault = rootsEqual(root, defaultRoot());
+  const env = environmentRoot();
+  const isEnv = Boolean(env && rootsEqual(root, env));
+  if (!isDefault && !isEnv) return false;
+  let stat;
+  try {
+    stat = fs.statSync(root);
+  } catch (err) {
+    return false;
+  }
+  if (!stat.isDirectory()) return false;
+  // The code default is the original folder even when it is still empty.
+  // UPLOAD_DIR gets a marker when it already holds files, and also when the
+  // directory is already there and empty: it is the folder this process was
+  // given. A missing directory is never created here.
+  if (isDefault) return true;
+  if (directoryHoldsFiles(root)) return true;
+  return isEnv;
+}
+
+function plantOriginalMarker() {
+  const root = uploadDir();
+  if (markerIdFor(root)) {
+    rememberKnownRoot(root);
+    return null;
+  }
+  if (!canPlantOriginalMarker(root)) return null;
+  const id = crypto.randomBytes(16).toString('hex');
+  try {
+    activeDriver().writeMarkerSync(root, id);
+  } catch (err) {
+    return null;
+  }
+  rememberMarker(root, id);
+  rememberKnownRoot(root);
+  return { path: root, markerId: id };
+}
+
+function writeStorageMarker(root, id) {
+  activeDriver().writeMarkerSync(root, id);
+  rememberMarker(root, id);
+  rememberKnownRoot(root);
+}
+
+function pathCaution(candidate) {
+  const notes = [];
+  if (candidate && !isWinStyle(candidate)) {
+    const normalized = stripTrailing(path.posix.normalize(candidate), 'posix');
+    const tmpRoots = new Set(['/tmp']);
+    const osTmp = os.tmpdir();
+    if (osTmp && osTmp.startsWith('/')) {
+      tmpRoots.add(stripTrailing(path.posix.normalize(osTmp), 'posix'));
+    }
+    const underTmp = [...tmpRoots].some((root) => normalized === root || normalized.startsWith(`${root}/`));
+    if (underTmp) notes.push(TMP_CAUTION);
+  }
+  const repo = path.resolve(__dirname, '..');
+  if (candidate && (insideDirectory(repo, candidate) || resolvesInside(candidate, (resolved) => insideDirectory(repo, resolved)))) {
+    notes.push(REPO_CAUTION);
+  }
+  return notes.length ? notes.join(' ') : null;
 }
 
 function extensionOf(filename) {
@@ -252,12 +429,23 @@ function contentTypeFor(storedName) {
   return CONTENT_TYPES[extensionOf(storedName)] || 'application/octet-stream';
 }
 
+function storageStatus(root) {
+  // First use of the implicit folder plants its marker in this process.
+  // A folder that already has an id is never given a new one.
+  if (root && rootsEqual(root, uploadDir()) && !markerIdFor(root)) plantOriginalMarker();
+  const id = markerIdFor(root);
+  const requireMarker = Boolean(id) || rootsEqual(root, uploadDir());
+  try {
+    return activeDriver().status(root, requireMarker ? (id || '') : undefined);
+  } catch (err) {
+    return { reachable: false, free_bytes: null, error: STORAGE_DOWN_MESSAGE };
+  }
+}
+
 function ensureUploadDir() {
   const root = uploadDir();
   try {
-    const driver = activeDriver();
-    driver.ensureSync(root);
-    const status = driver.status(root);
+    const status = storageStatus(root);
     if (!status.reachable) return { ok: false, path: root, error: status.error || STORAGE_DOWN_MESSAGE };
     return { ok: true, path: root };
   } catch (err) {
@@ -276,8 +464,12 @@ function storageRootOfUpload(file) {
 }
 
 function openStored(storedName, storageRoot) {
+  const root = rootForStored(storageRoot);
+  if (!root) return null;
   const full = safeStoredPath(storedName, storageRoot);
   if (!full) return null;
+  const status = storageStatus(root);
+  if (!status.reachable) throw storageDown();
   try {
     const stat = activeDriver().statSync(full);
     if (!stat || !stat.isFile()) return null;
@@ -293,8 +485,12 @@ function createStoredReadStream(fullPath) {
 }
 
 function removeStored(storedName, storageRoot) {
+  const root = rootForStored(storageRoot);
+  if (!root) return 'invalid';
   const full = safeStoredPath(storedName, storageRoot);
   if (!full) return 'invalid';
+  const status = storageStatus(root);
+  if (!status.reachable) return 'unavailable';
   try {
     activeDriver().unlinkSync(full);
     return 'removed';
@@ -332,6 +528,10 @@ function writeNewFile(ext, buffer) {
 }
 
 function copyToCurrentRoot(storedName, storageRoot) {
+  const sourceRoot = rootForStored(storageRoot);
+  if (!sourceRoot) return null;
+  const sourceStatus = storageStatus(sourceRoot);
+  if (!sourceStatus.reachable) throw storageDown();
   const source = safeStoredPath(storedName, storageRoot);
   if (!source) return null;
   const ext = extensionOf(storedName);
@@ -356,6 +556,10 @@ function copyToCurrentRoot(storedName, storageRoot) {
       try { activeDriver().unlinkSync(dest); } catch (cleanupErr) { /* leave the failed copy out of the record */ }
       return null;
     }
+    if (activeDriver().hashFileSync(source) !== activeDriver().hashFileSync(dest)) {
+      try { activeDriver().unlinkSync(dest); } catch (cleanupErr) { /* leave the failed copy out of the record */ }
+      return null;
+    }
     return { storedName: stored, storageRoot: ready.path, size: copied.size };
   } catch (err) {
     try { activeDriver().unlinkSync(dest); } catch (cleanupErr) { /* copy never finished */ }
@@ -364,6 +568,9 @@ function copyToCurrentRoot(storedName, storageRoot) {
 }
 
 function inspectStored(fullPath, recordSize) {
+  const root = pathApi(fullPath).dirname(fullPath);
+  const status = storageStatus(root);
+  if (!status.reachable) return { ok: false, unavailable: true };
   try {
     const stat = activeDriver().statSync(fullPath);
     if (!stat || !stat.isFile()) return { ok: false, missing: true };
@@ -375,6 +582,14 @@ function inspectStored(fullPath, recordSize) {
     if (err.code === 'ENOENT') return { ok: false, missing: true };
     return { ok: false, unavailable: true };
   }
+}
+
+function filesMatch(sourcePath, targetPath) {
+  const driver = activeDriver();
+  const source = driver.statSync(sourcePath);
+  const target = driver.statSync(targetPath);
+  if (!source.isFile() || !target.isFile() || source.size !== target.size) return false;
+  return driver.hashFileSync(sourcePath) === driver.hashFileSync(targetPath);
 }
 
 function copyVerified(sourcePath, targetPath, expectedSize) {
@@ -390,11 +605,21 @@ function copyVerified(sourcePath, targetPath, expectedSize) {
       error.code = 'ESIZE';
       throw error;
     }
+    if (driver.hashFileSync(sourcePath) !== driver.hashFileSync(tmp)) {
+      const error = new Error('checksum mismatch');
+      error.code = 'ECHECKSUM';
+      throw error;
+    }
     driver.renameSync(tmp, targetPath);
     const finalStat = driver.statSync(targetPath);
     if (!finalStat.isFile() || finalStat.size !== source.size) {
       const error = new Error('size mismatch');
       error.code = 'ESIZE';
+      throw error;
+    }
+    if (driver.hashFileSync(sourcePath) !== driver.hashFileSync(targetPath)) {
+      const error = new Error('checksum mismatch');
+      error.code = 'ECHECKSUM';
       throw error;
     }
     return finalStat.size;
@@ -407,24 +632,27 @@ function copyVerified(sourcePath, targetPath, expectedSize) {
 async function validateStoragePath(input) {
   const parsed = parseStoragePath(input);
   if (parsed.error) return parsed;
-  if (insideCode(parsed.path) || resolvesInsideCode(parsed.path)) {
-    return { error: CODE_FOLDER_MESSAGE };
-  }
+  if (insideCode(parsed.path) || resolvesInsideCode(parsed.path)) return { error: CODE_FOLDER_MESSAGE };
+  if (resolvesInsideVirtual(parsed.path)) return { error: VIRTUAL_PATH_MESSAGE };
   const found = getStorageDriver();
   if (found.error) return { error: found.error.message };
   try {
-    found.driver.ensureSync(parsed.path);
+    await found.driver.checkNewFolder(parsed.path);
     if (resolvesInsideCode(parsed.path)) return { error: CODE_FOLDER_MESSAGE };
-    found.driver.probeSync(parsed.path);
+    if (resolvesInsideVirtual(parsed.path)) return { error: VIRTUAL_PATH_MESSAGE };
     const status = found.driver.status(parsed.path);
     if (!status.reachable) return { error: status.error || NOT_WRITABLE_MESSAGE };
   } catch (err) {
+    if (err && err.code === 'ETIMEDOUT') {
+      return { error: 'Storage folder check timed out. The folder could not be confirmed as writable.' };
+    }
     if (err && (err.code === 'ENOTDIR' || err.code === 'EEXIST')) {
       return { error: 'Storage folder is not a directory.' };
     }
+    if (err && err.reason === 'parent') return { error: PARENT_MISSING_MESSAGE };
     return { error: NOT_WRITABLE_MESSAGE };
   }
-  return { path: parsed.path, style: parsed.style };
+  return { path: parsed.path, style: parsed.style, caution: pathCaution(parsed.path) };
 }
 
 function formatBytes(bytes) {
@@ -446,6 +674,7 @@ function describeStorage() {
   const source = configuredRoot
     ? 'settings'
     : (environmentRoot() ? 'environment' : 'default');
+  const caution = pathCaution(root);
   if (found.error) {
     return {
       driver: null,
@@ -455,17 +684,13 @@ function describeStorage() {
       free_label: null,
       reachable: false,
       warning: found.error.message,
+      caution,
       source,
       environment_path: environmentRoot(),
       default_path: defaultRoot(),
     };
   }
-  let status;
-  try {
-    status = found.driver.status(root);
-  } catch (err) {
-    status = { reachable: false, free_bytes: null, error: STORAGE_DOWN_MESSAGE };
-  }
+  const status = storageStatus(root);
   return {
     driver: found.driver.id,
     driver_label: found.driver.label,
@@ -474,6 +699,7 @@ function describeStorage() {
     free_label: status.reachable ? formatBytes(status.free_bytes) : null,
     reachable: Boolean(status.reachable),
     warning: status.reachable ? null : (status.error || STORAGE_DOWN_MESSAGE),
+    caution,
     source,
     environment_path: environmentRoot(),
     default_path: defaultRoot(),
@@ -546,19 +772,34 @@ function uploadErrorMessage(err) {
 
 module.exports = {
   ALLOWED_EXTENSIONS,
+  MARKER_FILE,
   STORAGE_DOWN_MESSAGE,
   ABSOLUTE_PATH_MESSAGE,
   CODE_FOLDER_MESSAGE,
   NOT_WRITABLE_MESSAGE,
+  VIRTUAL_PATH_MESSAGE,
+  DEVICE_PATH_MESSAGE,
+  ADMIN_SHARE_MESSAGE,
+  WINDOWS_DIR_MESSAGE,
+  PARENT_MISSING_MESSAGE,
   uploadDir,
   legacyRoot,
   defaultRoot,
   environmentRoot,
   rootsEqual,
   setConfiguredRoot,
+  setMarkerMap,
+  setKnownRoots,
+  rememberMarker,
+  rememberKnownRoot,
+  markerIdFor,
+  plantOriginalMarker,
+  writeStorageMarker,
+  isKnownRoot,
   parseStoragePath,
   validateStoragePath,
   describeStorage,
+  pathCaution,
   maxUploadMb,
   maxUploadBytes,
   maxFilesPerRequest,
@@ -575,7 +816,9 @@ module.exports = {
   writeNewFile,
   copyToCurrentRoot,
   inspectStored,
+  filesMatch,
   copyVerified,
+  rootForStored,
   uploadMiddleware,
   uploadErrorStatus,
   uploadErrorMessage,

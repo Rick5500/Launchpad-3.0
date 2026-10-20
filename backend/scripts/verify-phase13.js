@@ -18,6 +18,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-phase13-'));
 const dbFile = path.join(tmp, 'phase13.db');
 const migrateDb = path.join(tmp, 'migrate.db');
 const uploadDir = path.join(tmp, 'uploads');
+fs.mkdirSync(uploadDir, { recursive: true });
 const port = 3125;
 const adminPassword = 'AdminPass123';
 const smtpPass = 'super-secret-pass';

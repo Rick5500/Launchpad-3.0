@@ -80,6 +80,9 @@ router.put('/file-storage', auth.requireAuth, auth.requireRole('admin'), async (
 router.post('/file-storage/move', auth.requireAuth, auth.requireRole('admin'), async (req, res) => {
   try {
     const result = await fileStorageMove.moveAll(req.user.userId);
+    if (result.conflict) {
+      return res.status(409).json({ error: result.error || 'A file move is already running.' });
+    }
     let fileStorage = null;
     try {
       fileStorage = describeStorage();

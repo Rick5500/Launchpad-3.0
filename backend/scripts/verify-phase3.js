@@ -17,6 +17,7 @@ const backendDir = path.join(__dirname, '..');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-phase3-'));
 const freshDb = path.join(tmp, 'fresh.db');
 const uploadDir = path.join(tmp, 'uploads');
+fs.mkdirSync(uploadDir, { recursive: true });
 const port = 3117;
 const adminPassword = 'AdminPass123';
 

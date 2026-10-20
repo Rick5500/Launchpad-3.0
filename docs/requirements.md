@@ -23,7 +23,7 @@ High-level data model notes:
 - `deliveries` table with will-call flags, due-time rules, and an optional `order_id`
 - `users.is_active` deactivates an account without deleting it. Inactive users cannot sign in
 - `activity_log` records work order create, move, and complete events, plus admin changes to services, service line-item fields, users, settings, notification preferences, and barcode locations
-- `system_settings` stores company letterhead (`company_name`, `company_address`, `company_phone`), optional `due_soon_hours`, `last_backup_at`, and optional `file_storage_dir`. Cutoffs, timezone, and upload limits stay in the environment. The storage folder wins over `UPLOAD_DIR` when it is set
+- `system_settings` stores company letterhead (`company_name`, `company_address`, `company_phone`), optional `due_soon_hours`, `last_backup_at`, optional `file_storage_dir`, and `file_storage_marker` (the id written to `.launchpad-storage`). `file_storage_roots` keeps folders that have been used. Cutoffs, timezone, and upload limits stay in the environment. The storage folder wins over `UPLOAD_DIR` when it is set. A missing folder is not recreated on upload
 - `system_alerts` holds stored alerts. `notification_settings` turns in-app events on or off. Email rows stay disabled
 - `barcode_locations` maps a scan location to a department name, a stage name, or both
 
@@ -53,7 +53,7 @@ API endpoints:
 - A department-move barcode scan commits the event, department update, production history row, and activity row together
 - `GET` and `PUT /api/services` — admin service catalog. Customers and operators receive HTTP 403
 - `GET` and `PUT /api/users`, `POST /api/users/:id/password` — admin user management. Password hashes are omitted
-- `GET` and `PUT /api/settings` — admin letterhead, due-soon hours, and last backup time. Environment values are read-only in the response. `file_storage` on the response is the current folder, free space, and a warning when that folder cannot be reached. `PUT /api/settings/file-storage` saves the folder. `POST /api/settings/file-storage/move` copies existing files into it
+- `GET` and `PUT /api/settings` — admin letterhead, due-soon hours, and last backup time. Environment values are read-only in the response. `file_storage` on the response is the current folder, free space, a caution when the path is under `/tmp` or inside the project, and a warning when that folder cannot be reached. `PUT /api/settings/file-storage` saves the folder. `POST /api/settings/file-storage/move` copies existing files into it and returns HTTP 409 if a move is already running
 - `GET` and `PUT /api/notifications/settings` — admin in-app toggles. Email events cannot be enabled
 - `GET /api/activity` — admin activity log, with `format=csv`
 - `GET`, `POST`, `PUT`, and `DELETE /api/barcode/locations` — admin location map. Operators may `GET`

@@ -1,5 +1,6 @@
+const crypto = require('crypto');
 const activityLog = require('./activityLog');
-const { get, all, withTransaction } = require('./dbAsync');
+const { get, all, run, withTransaction } = require('./dbAsync');
 const { httpError } = require('./httpError');
 const { parseText, parseInteger } = require('./fields');
 const { getRules } = require('./deliveryRules');
@@ -9,6 +10,14 @@ const {
   maxFilesPerRequest,
   validateStoragePath,
   setConfiguredRoot,
+  setMarkerMap,
+  setKnownRoots,
+  rememberMarker,
+  rememberKnownRoot,
+  plantOriginalMarker,
+  writeStorageMarker,
+  uploadDir,
+  NOT_WRITABLE_MESSAGE,
 } = require('./fileStore');
 const { maxUnattachedUploads } = require('./uploadMaintenance');
 const {
@@ -25,6 +34,7 @@ const FILE_SHARE_EMAIL_KEY = 'email_customers_on_file_share';
 const PROOF_EMAIL_KEY = 'email_customers_on_proof';
 const INBOUND_POLL_KEY = 'inbound_email_polling_enabled';
 const FILE_STORAGE_KEY = 'file_storage_dir';
+const FILE_STORAGE_MARKER_KEY = 'file_storage_marker';
 
 function signupEnabledFromValue(value) {
   if (value == null || String(value).trim() === '') return true;
@@ -254,9 +264,69 @@ async function updateSettings(actorId, body) {
   return getSettings();
 }
 
+function parseMarkerJson(value) {
+  if (value == null || String(value).trim() === '') return {};
+  try {
+    const parsed = JSON.parse(String(value));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return parsed;
+  } catch (err) {
+    return {};
+  }
+}
+
+async function ensureStorageRootTable() {
+  await run(
+    `CREATE TABLE IF NOT EXISTS file_storage_roots (
+      path TEXT PRIMARY KEY,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`
+  );
+}
+
+async function rememberRoots(tx, paths) {
+  for (const root of paths) {
+    if (!root) continue;
+    await tx.run(
+      `INSERT INTO file_storage_roots (path, created_at) VALUES (?, datetime('now'))
+       ON CONFLICT(path) DO NOTHING`,
+      [root]
+    );
+  }
+}
+
+async function storeMarker(tx, root, markerId) {
+  const row = await tx.get('SELECT value FROM system_settings WHERE key = ?', [FILE_STORAGE_MARKER_KEY]);
+  const map = parseMarkerJson(row && row.value);
+  map[root] = markerId;
+  await tx.run(
+    `INSERT INTO system_settings (key, value, updated_at) VALUES (?,?,datetime('now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+    [FILE_STORAGE_MARKER_KEY, JSON.stringify(map)]
+  );
+}
+
+async function persistPlantedMarker(planted) {
+  if (!planted) return;
+  await withTransaction(async (tx) => {
+    await storeMarker(tx, planted.path, planted.markerId);
+    await rememberRoots(tx, [planted.path]);
+  });
+}
+
 async function loadFileStorageCache() {
+  await ensureStorageRootTable();
   const row = await get('SELECT value FROM system_settings WHERE key = ?', [FILE_STORAGE_KEY]);
+  const markerRow = await get('SELECT value FROM system_settings WHERE key = ?', [FILE_STORAGE_MARKER_KEY]);
+  const roots = await all('SELECT path FROM file_storage_roots');
   setConfiguredRoot(row && row.value);
+  setMarkerMap(parseMarkerJson(markerRow && markerRow.value));
+  setKnownRoots((roots || []).map((entry) => entry.path));
+  try {
+    await persistPlantedMarker(plantOriginalMarker());
+  } catch (err) {
+    console.error('FILE STORAGE MARKER ERROR:', err.message || err);
+  }
 }
 
 async function updateFileStorage(actorId, rawPath) {
@@ -265,11 +335,19 @@ async function updateFileStorage(actorId, rawPath) {
   }
   const text = rawPath == null ? '' : String(rawPath).trim();
   const current = await readMap();
+  const previousRoot = uploadDir();
   let stored = null;
+  let markerId = null;
   if (text) {
     const validated = await validateStoragePath(text);
     if (validated.error) throw httpError(400, validated.error);
     stored = validated.path;
+    markerId = crypto.randomBytes(16).toString('hex');
+    try {
+      writeStorageMarker(stored, markerId);
+    } catch (err) {
+      throw httpError(400, NOT_WRITABLE_MESSAGE);
+    }
   }
   await withTransaction(async (tx) => {
     if (stored == null) {
@@ -280,6 +358,8 @@ async function updateFileStorage(actorId, rawPath) {
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
         [FILE_STORAGE_KEY, stored]
       );
+      await storeMarker(tx, stored, markerId);
+      await rememberRoots(tx, [stored, previousRoot]);
     }
     await activityLog.recordOn(tx, actorId, 'settings.updated', 'system_settings', null, {
       keys: [FILE_STORAGE_KEY],
@@ -288,6 +368,13 @@ async function updateFileStorage(actorId, rawPath) {
     });
   });
   setConfiguredRoot(stored);
+  if (stored) {
+    rememberMarker(stored, markerId);
+    rememberKnownRoot(stored);
+    rememberKnownRoot(previousRoot);
+  } else {
+    await persistPlantedMarker(plantOriginalMarker());
+  }
   return getSettings();
 }
 
@@ -340,6 +427,7 @@ module.exports = {
   PROOF_EMAIL_KEY,
   INBOUND_POLL_KEY,
   FILE_STORAGE_KEY,
+  FILE_STORAGE_MARKER_KEY,
   getSettings,
   updateSettings,
   updateFileStorage,

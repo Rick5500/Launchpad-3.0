@@ -244,6 +244,7 @@ export default function SystemSettingsPage() {
         subtitle={'Uploads, shared files, proofs, and email attachments are stored in this folder. A mapped drive such as Z:\\launchpad or a network share such as \\\\server\\share\\launchpad is allowed. OneDrive and SharePoint are not connected.'}
       >
         <Box component="form" onSubmit={saveStorage} data-testid="file-storage-section" sx={{ display: 'grid', gap: 2, maxWidth: 720 }}>
+          {storage.caution ? <Alert severity="warning" data-testid="file-storage-caution">{storage.caution}</Alert> : null}
           {storage.warning ? <Alert severity="warning" data-testid="file-storage-warning">{storage.warning}</Alert> : null}
           {storageError ? <Alert severity="error" data-testid="file-storage-error">{storageError}</Alert> : null}
           {storageNotice ? <Alert severity="success">{storageNotice}</Alert> : null}
@@ -266,7 +267,7 @@ export default function SystemSettingsPage() {
             onChange={(event) => setStoragePath(event.target.value)}
             required
             inputProps={{ 'data-testid': 'file-storage-input' }}
-            helperText="Absolute path only. The folder is created when it is missing, then checked by writing, reading, and deleting a test file."
+            helperText="Absolute path only. Saving creates this folder when the parent folder already exists, then checks it by writing, reading, and deleting a test file. A folder under /tmp or inside the project shows a warning."
           />
           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
             <Button type="submit" variant="contained" disabled={storageSaving || loading} data-testid="file-storage-save">
@@ -280,7 +281,7 @@ export default function SystemSettingsPage() {
             </Button>
           </Box>
           <Typography variant="body2" color="text.secondary">
-            Move copies each file into the current folder, checks the size, updates the record, and only then deletes the original. Files already there are left in place. A file saved before this setting still opens from its original folder until you move it.
+            Move copies each file into the current folder, checks the size and a checksum, updates the record, and only then deletes the original. Files already there are left in place. Run Move before you remove UPLOAD_DIR. A file saved before this setting still opens from its original folder until you move it.
           </Typography>
         </Box>
       </SectionCard>

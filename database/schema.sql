@@ -299,6 +299,13 @@ CREATE TABLE IF NOT EXISTS system_settings (
   updated_at DATETIME
 );
 
+-- Folders that have been the file storage location. rootForStored accepts
+-- only the current folder, UPLOAD_DIR, the default folder, and these rows.
+CREATE TABLE IF NOT EXISTS file_storage_roots (
+  path TEXT PRIMARY KEY,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Notification settings. Email rows stay disabled (no mail is sent).
 -- In-app rows toggle the events stored in notifications.
 CREATE TABLE IF NOT EXISTS notification_settings (

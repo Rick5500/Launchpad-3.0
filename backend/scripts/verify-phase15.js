@@ -17,6 +17,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-phase15-'));
 const dbFile = path.join(tmp, 'phase15.db');
 const legacyDb = path.join(tmp, 'legacy.db');
 const uploadDir = path.join(tmp, 'uploads');
+fs.mkdirSync(uploadDir, { recursive: true });
 const port = 3127;
 const adminPassword = 'AdminPass123';
 const appUrl = 'https://launchpad.example';

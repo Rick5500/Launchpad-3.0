@@ -213,6 +213,29 @@ function checkPathRules() {
   assert(forwardUnc.path === '\\\\server\\share\\launchpad', `forward UNC should normalize, got ${forwardUnc.path || forwardUnc.error}`);
   const bare = fileStore.parseStoragePath('\\\\server');
   assert(bare.error && /server and the share/i.test(bare.error), 'a share without a folder name should say what is missing');
+  for (const blocked of ['/proc', '/proc/x', '/sys', '/sys/fs', '/dev', '/dev/null']) {
+    const parsed = fileStore.parseStoragePath(blocked);
+    assert(parsed.error && /\/proc, \/sys, or \/dev/.test(parsed.error), `${blocked} should be rejected before any folder is created: ${parsed.error}`);
+  }
+  for (const blocked of ['\\\\?\\C:\\launchpad', '\\\\.\\C:\\launchpad', '//?/C:/launchpad']) {
+    const parsed = fileStore.parseStoragePath(blocked);
+    assert(parsed.error && /device path/i.test(parsed.error), `${blocked} should be rejected: ${parsed.error}`);
+  }
+  const adminShare = fileStore.parseStoragePath('\\\\localhost\\C$\\launchpad');
+  assert(adminShare.error && /admin share/i.test(adminShare.error), `admin share should be rejected: ${adminShare.error}`);
+  const windowsDir = fileStore.parseStoragePath('C:\\Windows\\Temp');
+  assert(windowsDir.error && /Windows directory/i.test(windowsDir.error), `Windows directory should be rejected: ${windowsDir.error}`);
+  assert(fileStore.rootForStored('/etc') == null, 'an unknown folder must not be accepted as a stored root');
+  assert(fileStore.safeStoredPath(`${'c'.repeat(32)}.pdf`, '/etc') == null, 'a stored file must not be resolved from an unknown folder');
+  const repoFolder = path.join(path.resolve(backendDir, '..'), 'phase19-outside-code');
+  const repoCaution = fileStore.pathCaution(repoFolder);
+  assert(repoCaution && /project/i.test(repoCaution), `a folder inside the repo should warn: ${repoCaution}`);
+  const absent = path.join(tmp, 'absent-store');
+  fileStore.setConfiguredRoot(absent);
+  const absentReady = fileStore.ensureUploadDir();
+  assert(!absentReady.ok, 'a missing folder should be unreachable');
+  assert(!fs.existsSync(absent), 'checking storage must not create a missing folder');
+  fileStore.setConfiguredRoot(null);
 
   const traversal = fileStore.safeStoredPath(`../${'a'.repeat(32)}.pdf`);
   assert(traversal == null, 'a stored name must not escape the folder');
@@ -272,7 +295,10 @@ async function main() {
     assert(initial.json.file_storage.reachable === true, 'the upload dir should be reachable');
     assert(Number.isFinite(initial.json.file_storage.free_bytes) && initial.json.file_storage.free_bytes >= 0, 'free space should be reported');
     assert(initial.json.file_storage.free_label, 'free space should have a label');
-    assert(!initial.json.file_storage.warning, 'a reachable folder should not warn');
+    assert(!initial.json.file_storage.warning, 'a reachable folder should not use the unreachable warning');
+    assert(initial.json.file_storage.caution && /\/tmp/.test(initial.json.file_storage.caution), `a folder under /tmp should warn: ${initial.json.file_storage.caution}`);
+    const plantedMarker = fs.readFileSync(path.join(uploadDir, '.launchpad-storage'), 'utf8').trim();
+    assert(/^[a-f0-9]{32}$/.test(plantedMarker), 'an existing UPLOAD_DIR should get a marker on first start');
     const storedKey = await openDb(dbFile);
     const beforeKey = await storedKey.get(`SELECT value FROM system_settings WHERE key = 'file_storage_dir'`);
     assert(!beforeKey, 'the database should not override UPLOAD_DIR until an admin saves a folder');
@@ -309,6 +335,44 @@ async function main() {
     assert(!fs.existsSync(frontendDir), 'a rejected frontend path must not be created');
     const health = await request({ method: 'GET', path: '/api/health' });
     assert(health.status === 200 && health.json.status === 'ok', 'a rejected folder must not stop the server');
+
+    const procStarted = Date.now();
+    const procSave = await request({
+      method: 'PUT',
+      path: '/api/settings/file-storage',
+      token: admin,
+      json: { path: '/proc/x' },
+      timeoutMs: 4000,
+    });
+    assert(Date.now() - procStarted < 3000, `rejecting /proc/x should return quickly, took ${Date.now() - procStarted}ms`);
+    assert(procSave.status === 400, ` /proc/x should be rejected, got ${procSave.status} ${procSave.text}`);
+    assert(procSave.json && /\/proc, \/sys, or \/dev/.test(procSave.json.error || ''), ` /proc/x error should name the system directory: ${procSave.text}`);
+    const procLink = path.join(tmp, 'proc-link');
+    fs.symlinkSync('/proc', procLink);
+    const linkStarted = Date.now();
+    const linkSave = await request({
+      method: 'PUT',
+      path: '/api/settings/file-storage',
+      token: admin,
+      json: { path: path.join(procLink, 'launchpad-stuck') },
+      timeoutMs: 4000,
+    });
+    assert(Date.now() - linkStarted < 3000, `a symlink into /proc should return quickly, took ${Date.now() - linkStarted}ms`);
+    assert(linkSave.status === 400, `a symlink into /proc should be rejected, got ${linkSave.status} ${linkSave.text}`);
+    assert(!fs.existsSync(path.join(procLink, 'launchpad-stuck')), 'a symlink into /proc must not be created');
+    const missingParent = path.join(tmp, 'missing-parent', 'store');
+    const parentSave = await request({
+      method: 'PUT',
+      path: '/api/settings/file-storage',
+      token: admin,
+      json: { path: missingParent },
+      timeoutMs: 4000,
+    });
+    assert(parentSave.status === 400, `a missing parent should be rejected, got ${parentSave.status} ${parentSave.text}`);
+    assert(parentSave.json && /parent folder does not exist/i.test(parentSave.json.error || ''), `missing parent error should be clear: ${parentSave.text}`);
+    assert(!fs.existsSync(path.join(tmp, 'missing-parent')), 'a missing parent must not be created');
+    const afterProc = await request({ method: 'GET', path: '/api/health' });
+    assert(afterProc.status === 200 && afterProc.json.status === 'ok', 'rejecting /proc must leave the server up');
 
     const createdDir = path.join(tmp, 'created-store');
     assert(!fs.existsSync(createdDir), 'the new folder should start missing');
@@ -429,6 +493,30 @@ async function main() {
     fs.writeFileSync(path.join(uploadDir, names.delta), delta);
     fs.writeFileSync(path.join(uploadDir, names.echo), echo);
     fs.writeFileSync(path.join(uploadDir, names.mismatch), mismatch);
+    const checksumGood = Buffer.from('aaaa');
+    const checksumBad = Buffer.from('bbbb');
+    names.checksum = storedName();
+    fs.writeFileSync(path.join(uploadDir, names.checksum), checksumGood);
+    fs.writeFileSync(path.join(moveDir, names.checksum), checksumBad);
+    const goneRoot = path.join(tmp, 'gone-root');
+    const goneSaved = await request({
+      method: 'PUT',
+      path: '/api/settings/file-storage',
+      token: admin,
+      json: { path: goneRoot },
+    });
+    assert(goneSaved.status === 200, `gone root save failed: ${goneSaved.text}`);
+    const backToMove = await request({
+      method: 'PUT',
+      path: '/api/settings/file-storage',
+      token: admin,
+      json: { path: moveDir },
+    });
+    assert(backToMove.status === 200 && backToMove.json.file_storage.path === moveDir, `returning to the move folder failed: ${backToMove.text}`);
+    names.gone = storedName();
+    const goneBytes = Buffer.from('already-home');
+    fs.writeFileSync(path.join(moveDir, names.gone), goneBytes);
+    fs.rmSync(goneRoot, { recursive: true, force: true });
 
     const rows = openDb(dbFile);
     const alphaRow = await rows.run(
@@ -461,6 +549,15 @@ async function main() {
       `INSERT INTO order_files (original_name, stored_name, size_bytes) VALUES ('missing.pdf', ?, 4)`,
       [names.missing]
     );
+    await rows.run(
+      `INSERT INTO order_files (original_name, stored_name, size_bytes) VALUES ('checksum.pdf', ?, ?)`,
+      [names.checksum, checksumGood.length]
+    );
+    await rows.run(
+      `INSERT INTO order_files (original_name, stored_name, size_bytes, storage_root, storage_previous)
+       VALUES ('gone.pdf', ?, ?, ?, ?)`,
+      [names.gone, goneBytes.length, moveDir, goneRoot]
+    );
     await rows.close();
 
     const firstMove = await request({ method: 'POST', path: '/api/settings/file-storage/move', token: admin });
@@ -478,6 +575,10 @@ async function main() {
     assert(fs.readFileSync(path.join(moveDir, names.echo)).equals(echo), 'the email attachment should match');
     assert(fs.existsSync(path.join(uploadDir, names.mismatch)), 'a size mismatch must keep the original');
     assert(!fs.existsSync(path.join(moveDir, names.mismatch)), 'a size mismatch must not replace the new folder');
+    assert(fs.existsSync(path.join(uploadDir, names.checksum)), 'a checksum mismatch must keep the original');
+    assert(fs.readFileSync(path.join(moveDir, names.checksum)).equals(checksumBad), 'a checksum mismatch must not replace the copy already in the new folder');
+    assert(!fs.existsSync(goneRoot), 'a missing previous folder must not be recreated');
+    assert(fs.readFileSync(path.join(moveDir, names.gone)).equals(goneBytes), 'a file already in the current folder should stay when the previous folder is gone');
 
     const afterMove = openDb(dbFile);
     const alphaSaved = await afterMove.get('SELECT storage_root, storage_previous FROM order_files WHERE id = ?', [alphaRow.lastID]);
@@ -518,7 +619,7 @@ async function main() {
       contentType: uploadBody.contentType,
     });
     assert(blocked.status === 503, `an unreachable folder should reject uploads with 503, got ${blocked.status} ${blocked.text}`);
-    assert(blocked.json && /cannot be reached/i.test(blocked.json.error || ''), `503 should explain the folder, got ${blocked.text}`);
+    assert(blocked.json && /cannot be reached|not a directory/i.test(blocked.json.error || ''), `503 should explain the folder, got ${blocked.text}`);
     const warned = await request({ method: 'GET', path: '/api/settings', token: admin });
     assert(warned.status === 200, `settings should still load, got ${warned.status} ${server.logs()}`);
     assert(warned.json.file_storage.reachable === false, 'admins should see that the folder is unreachable');
@@ -533,6 +634,49 @@ async function main() {
       token: admin,
     });
     assert(legacyStill.status === 200 && legacyStill.buffer.equals(mismatch), 'a file in the original folder should still download');
+
+    const vanishDir = path.join(tmp, 'vanish-store');
+    const vanishSaved = await request({
+      method: 'PUT',
+      path: '/api/settings/file-storage',
+      token: admin,
+      json: { path: vanishDir },
+    });
+    assert(vanishSaved.status === 200 && vanishSaved.json.file_storage.reachable === true, `vanish folder save failed: ${vanishSaved.text}`);
+    assert(fs.existsSync(path.join(vanishDir, '.launchpad-storage')), 'saving a folder should write the marker file');
+    const vanishUpload = await request({
+      method: 'POST',
+      path: '/api/uploads',
+      token: admin,
+      raw: uploadBody.raw,
+      contentType: uploadBody.contentType,
+    });
+    assert(vanishUpload.status === 201, `upload into the vanish folder failed: ${vanishUpload.text}`);
+    const vanishId = vanishUpload.json.files[0].id;
+    fs.rmSync(vanishDir, { recursive: true, force: true });
+    assert(!fs.existsSync(vanishDir), 'the vanish folder should be deleted before the next request');
+    const vanishBlocked = await request({
+      method: 'POST',
+      path: '/api/uploads',
+      token: admin,
+      raw: uploadBody.raw,
+      contentType: uploadBody.contentType,
+    });
+    assert(vanishBlocked.status === 503, `a deleted folder should reject uploads with 503, got ${vanishBlocked.status} ${vanishBlocked.text}`);
+    assert(!fs.existsSync(vanishDir), 'an upload must not recreate a deleted storage folder');
+    const vanishDownload = await request({
+      method: 'GET',
+      path: `/api/uploads/${vanishId}/download`,
+      token: admin,
+    });
+    assert(vanishDownload.status === 503, `a file whose folder is gone should be 503, not 404: ${vanishDownload.status} ${vanishDownload.text}`);
+    const vanishMove = await request({ method: 'POST', path: '/api/settings/file-storage/move', token: admin });
+    assert(vanishMove.status === 503, `move should be 503 when the folder is gone, got ${vanishMove.status} ${vanishMove.text}`);
+    const vanishSettings = await request({ method: 'GET', path: '/api/settings', token: admin });
+    assert(vanishSettings.status === 200 && vanishSettings.json.file_storage.reachable === false, 'settings should say the deleted folder is unreachable');
+    assert(!fs.existsSync(vanishDir), 'loading settings must not recreate a deleted storage folder');
+    const vanishHealth = await request({ method: 'GET', path: '/api/health' });
+    assert(vanishHealth.status === 200 && vanishHealth.json.status === 'ok', 'the server should stay up when the folder is missing');
 
     console.log('PASS file storage setting, move, and unreachable folder');
   } catch (err) {
