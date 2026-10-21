@@ -88,7 +88,7 @@ function baseEnv(extra = {}) {
   };
 }
 
-function request({ method, path: requestPath, token, json, raw, contentType, timeoutMs }) {
+function request({ method, path: requestPath, token, json, raw, contentType, timeoutMs, port: requestPort }) {
   return new Promise((resolve, reject) => {
     const body = raw || (json != null ? Buffer.from(JSON.stringify(json)) : null);
     const headers = {};
@@ -99,7 +99,7 @@ function request({ method, path: requestPath, token, json, raw, contentType, tim
     }
     const req = http.request({
       hostname: '127.0.0.1',
-      port,
+      port: requestPort || port,
       path: requestPath,
       method,
       headers,
@@ -142,10 +142,12 @@ function multipart(files) {
   };
 }
 
-function startServer() {
+function startServer(extraEnv = {}) {
+  const env = { ...process.env, ...baseEnv(), ...extraEnv };
+  const listenPort = Number(env.PORT || port);
   const child = spawn(process.execPath, ['server.js'], {
     cwd: backendDir,
-    env: { ...process.env, ...baseEnv() },
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let logs = '';
@@ -160,7 +162,7 @@ function startServer() {
     }, 15000);
     const poll = async () => {
       try {
-        const health = await request({ method: 'GET', path: '/api/health' });
+        const health = await request({ method: 'GET', path: '/api/health', port: listenPort });
         if (health.status === 200 && health.json && health.json.status === 'ok') {
           clearTimeout(timer);
           resolve();
@@ -188,11 +190,12 @@ async function initDatabase() {
   if (result.code !== 0) throw new Error(`init_db failed (${result.code})\n${result.out}\n${result.err}`);
 }
 
-async function login(username, password) {
+async function login(username, password, requestPort) {
   const response = await request({
     method: 'POST',
     path: '/api/auth/login',
     json: { username, password },
+    port: requestPort,
   });
   assert(response.status === 200 && response.json && response.json.token, `login failed for ${username}: ${response.text}`);
   return response.json.token;
@@ -221,8 +224,12 @@ function checkPathRules() {
     const parsed = fileStore.parseStoragePath(blocked);
     assert(parsed.error && /device path/i.test(parsed.error), `${blocked} should be rejected: ${parsed.error}`);
   }
-  const adminShare = fileStore.parseStoragePath('\\\\localhost\\C$\\launchpad');
-  assert(adminShare.error && /admin share/i.test(adminShare.error), `admin share should be rejected: ${adminShare.error}`);
+  for (const blocked of ['\\\\localhost\\C$\\launchpad', '\\\\MYPC\\C$', '\\\\MYPC\\D$\\launchpad', '\\\\[::1]\\C$\\launchpad', '\\\\fe80::1\\C$\\data']) {
+    const parsed = fileStore.parseStoragePath(blocked);
+    assert(parsed.error && /admin share/i.test(parsed.error), `${blocked} should be rejected: ${parsed.error}`);
+  }
+  const ordinaryShare = fileStore.parseStoragePath('\\\\files\\share\\launchpad');
+  assert(ordinaryShare.path === '\\\\files\\share\\launchpad', `a normal share should stay allowed, got ${ordinaryShare.path || ordinaryShare.error}`);
   const windowsDir = fileStore.parseStoragePath('C:\\Windows\\Temp');
   assert(windowsDir.error && /Windows directory/i.test(windowsDir.error), `Windows directory should be rejected: ${windowsDir.error}`);
   assert(fileStore.rootForStored('/etc') == null, 'an unknown folder must not be accepted as a stored root');
@@ -230,6 +237,8 @@ function checkPathRules() {
   const repoFolder = path.join(path.resolve(backendDir, '..'), 'phase19-outside-code');
   const repoCaution = fileStore.pathCaution(repoFolder);
   assert(repoCaution && /project/i.test(repoCaution), `a folder inside the repo should warn: ${repoCaution}`);
+  const defaultCaution = fileStore.pathCaution(fileStore.defaultRoot());
+  assert(!defaultCaution || !/project/i.test(defaultCaution), `the shipped default folder should not warn about the project: ${defaultCaution}`);
   const absent = path.join(tmp, 'absent-store');
   fileStore.setConfiguredRoot(absent);
   const absentReady = fileStore.ensureUploadDir();
@@ -517,6 +526,8 @@ async function main() {
     const goneBytes = Buffer.from('already-home');
     fs.writeFileSync(path.join(moveDir, names.gone), goneBytes);
     fs.rmSync(goneRoot, { recursive: true, force: true });
+    const staleMoving = path.join(moveDir, '.stale.pdf.moving-abc123');
+    fs.writeFileSync(staleMoving, 'leftover');
 
     const rows = openDb(dbFile);
     const alphaRow = await rows.run(
@@ -578,6 +589,7 @@ async function main() {
     assert(fs.existsSync(path.join(uploadDir, names.checksum)), 'a checksum mismatch must keep the original');
     assert(fs.readFileSync(path.join(moveDir, names.checksum)).equals(checksumBad), 'a checksum mismatch must not replace the copy already in the new folder');
     assert(!fs.existsSync(goneRoot), 'a missing previous folder must not be recreated');
+    assert(!fs.existsSync(staleMoving), 'Move should remove a leftover .moving- file before it copies');
     assert(fs.readFileSync(path.join(moveDir, names.gone)).equals(goneBytes), 'a file already in the current folder should stay when the previous folder is gone');
 
     const afterMove = openDb(dbFile);
@@ -686,6 +698,81 @@ async function main() {
     server.stop();
     await server.closed;
   }
+  await checkFreshDefaultFolder();
+}
+
+async function checkFreshDefaultFolder() {
+  const root = fileStore.defaultRoot();
+  const parent = path.dirname(root);
+  const parentExisted = fs.existsSync(parent);
+  fs.mkdirSync(parent, { recursive: true });
+  fs.rmSync(root, { recursive: true, force: true });
+  assert(!fs.existsSync(root), 'a fresh install should start without the default uploads folder');
+  const freshDb = path.join(tmp, 'fresh-default.db');
+  const freshPort = 3170;
+  const env = { ...baseEnv(), DATABASE_FILE: freshDb, PORT: String(freshPort), UPLOAD_DIR: '' };
+  const init = await spawnNode(path.join(backendDir, 'init_db.js'), env);
+  if (init.code !== 0) throw new Error(`fresh init_db failed (${init.code})\n${init.out}\n${init.err}`);
+  const server = startServer(env);
+  try {
+    await server.ready;
+    assert(fs.existsSync(root) && fs.statSync(root).isDirectory(), 'startup should create the default folder when no marker has been recorded');
+    const marker = fs.readFileSync(path.join(root, '.launchpad-storage'), 'utf8').trim();
+    assert(/^[a-f0-9]{32}$/.test(marker), 'startup should plant the default marker');
+    const admin = await login('admin', adminPassword, freshPort);
+    const body = multipart([{ name: 'fresh.pdf', type: 'application/pdf', data: Buffer.from('%PDF-1.4 fresh') }]);
+    const uploaded = await request({
+      method: 'POST',
+      path: '/api/uploads',
+      token: admin,
+      raw: body.raw,
+      contentType: body.contentType,
+      port: freshPort,
+    });
+    assert(uploaded.status === 201, `a fresh install should accept an upload, got ${uploaded.status} ${uploaded.text}`);
+    const names = fs.readdirSync(root).filter((name) => name !== '.launchpad-storage');
+    assert(names.some((name) => name.endsWith('.pdf')), `the upload should land in the default folder: ${names.join(',')}`);
+    const settings = await request({ method: 'GET', path: '/api/settings', token: admin, port: freshPort });
+    assert(settings.json.file_storage.source === 'default', `fresh storage should follow the default folder, got ${settings.json.file_storage && settings.json.file_storage.source}`);
+    assert(settings.json.file_storage.path === root, `fresh path was ${settings.json.file_storage && settings.json.file_storage.path}`);
+    assert(!settings.json.file_storage.caution || !/project/i.test(settings.json.file_storage.caution), `the default folder should not warn that it is inside the project: ${settings.json.file_storage.caution}`);
+  } catch (err) {
+    console.error(server.logs());
+    throw err;
+  } finally {
+    server.stop();
+    await server.closed;
+  }
+
+  fs.rmSync(root, { recursive: true, force: true });
+  const again = startServer(env);
+  try {
+    await again.ready;
+    assert(!fs.existsSync(root), 'startup must not recreate the default folder after its marker was recorded');
+    const admin = await login('admin', adminPassword, freshPort);
+    const body = multipart([{ name: 'again.pdf', type: 'application/pdf', data: Buffer.from('%PDF-1.4 again') }]);
+    const blocked = await request({
+      method: 'POST',
+      path: '/api/uploads',
+      token: admin,
+      raw: body.raw,
+      contentType: body.contentType,
+      port: freshPort,
+    });
+    assert(blocked.status === 503, `a removed default folder should reject uploads with 503, got ${blocked.status} ${blocked.text}`);
+    assert(!fs.existsSync(root), 'the upload must not recreate the default folder');
+  } catch (err) {
+    console.error(again.logs());
+    throw err;
+  } finally {
+    again.stop();
+    await again.closed;
+    fs.rmSync(root, { recursive: true, force: true });
+    if (!parentExisted) {
+      try { fs.rmdirSync(parent); } catch (err) { /* leave the parent when it still holds something else */ }
+    }
+  }
+  console.log('PASS fresh default folder');
 }
 
 main()

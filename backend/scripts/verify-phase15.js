@@ -16,8 +16,7 @@ const backendDir = path.join(__dirname, '..');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-phase15-'));
 const dbFile = path.join(tmp, 'phase15.db');
 const legacyDb = path.join(tmp, 'legacy.db');
-const uploadDir = path.join(tmp, 'uploads');
-fs.mkdirSync(uploadDir, { recursive: true });
+fs.mkdirSync(path.resolve(backendDir, '..', 'data'), { recursive: true });
 const port = 3127;
 const adminPassword = 'AdminPass123';
 const appUrl = 'https://launchpad.example';
@@ -75,7 +74,7 @@ function baseEnv(extra = {}) {
     DELIVERY_SLOT_MINUTES: '15',
     PORT: String(port),
     NODE_ENV: 'test',
-    UPLOAD_DIR: uploadDir,
+    UPLOAD_DIR: '',
     UV_THREADPOOL_SIZE: process.env.UV_THREADPOOL_SIZE || '32',
     EMAIL_RATE_LIMIT_MAX: '1',
     EMAIL_RATE_LIMIT_WINDOW_MS: '900000',

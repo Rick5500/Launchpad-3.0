@@ -15,6 +15,7 @@ const {
   rememberMarker,
   rememberKnownRoot,
   plantOriginalMarker,
+  createDefaultFolderOnce,
   writeStorageMarker,
   uploadDir,
   NOT_WRITABLE_MESSAGE,
@@ -323,6 +324,7 @@ async function loadFileStorageCache() {
   setMarkerMap(parseMarkerJson(markerRow && markerRow.value));
   setKnownRoots((roots || []).map((entry) => entry.path));
   try {
+    createDefaultFolderOnce();
     await persistPlantedMarker(plantOriginalMarker());
   } catch (err) {
     console.error('FILE STORAGE MARKER ERROR:', err.message || err);

@@ -31,7 +31,7 @@ const CODE_FOLDER_MESSAGE = 'Storage folder cannot be inside the application cod
 const NOT_WRITABLE_MESSAGE = 'Storage folder is not reachable or is not writable. Launchpad must be able to write, read, and delete a test file there.';
 const VIRTUAL_PATH_MESSAGE = 'Storage folder cannot be inside /proc, /sys, or /dev.';
 const DEVICE_PATH_MESSAGE = 'Storage folder cannot use a Windows device path (\\\\?\\ or \\\\.\\).';
-const ADMIN_SHARE_MESSAGE = 'Storage folder cannot be a Windows admin share such as \\\\localhost\\C$.';
+const ADMIN_SHARE_MESSAGE = 'Storage folder cannot be a Windows admin share such as \\\\server\\C$.';
 const WINDOWS_DIR_MESSAGE = 'Storage folder cannot be inside the Windows directory.';
 const PARENT_MISSING_MESSAGE = 'The parent folder does not exist, so the storage folder was not created.';
 const TMP_CAUTION = 'This folder is under /tmp and can disappear when the computer restarts.';
@@ -108,9 +108,8 @@ function isDevicePath(value) {
   return /^[/\\]{2}\?[\\/]/.test(value) || /^[/\\]{2}\.[\\/]/.test(value);
 }
 
-function isLocalAdminShare(server, share) {
-  if (!/^[A-Za-z]\$$/i.test(String(share || ''))) return false;
-  return /^(localhost|127\.0\.0\.1|\.)$/i.test(String(server || ''));
+function isAdminShare(share) {
+  return /^[A-Za-z]\$$/i.test(String(share || ''));
 }
 
 function resolvesInsideCode(candidate) {
@@ -156,7 +155,7 @@ function parseStoragePath(input) {
     if (parts.length < 2) {
       return { error: 'A network share must include the server and the share, for example \\\\server\\share\\launchpad.' };
     }
-    if (isLocalAdminShare(parts[0], parts[1])) return { error: ADMIN_SHARE_MESSAGE };
+    if (isAdminShare(parts[1])) return { error: ADMIN_SHARE_MESSAGE };
     const normalized = stripTrailing(path.win32.normalize(`\\\\${parts.join('\\')}`), 'win32');
     if (!normalized.startsWith('\\\\')) return { error: ABSOLUTE_PATH_MESSAGE };
     if (isDevicePath(normalized)) return { error: DEVICE_PATH_MESSAGE };
@@ -325,13 +324,36 @@ function canPlantOriginalMarker(root) {
     return false;
   }
   if (!stat.isDirectory()) return false;
-  // The code default is the original folder even when it is still empty.
-  // UPLOAD_DIR gets a marker when it already holds files, and also when the
-  // directory is already there and empty: it is the folder this process was
-  // given. A missing directory is never created here.
+  // The directory is already there. UPLOAD_DIR is marked even when it is
+  // empty, because that folder is the one this process was given. A missing
+  // UPLOAD_DIR is not created here. The shipped default is created separately,
+  // once, before this runs.
   if (isDefault) return true;
   if (directoryHoldsFiles(root)) return true;
   return isEnv;
+}
+
+function createDefaultFolderOnce() {
+  // A saved folder and UPLOAD_DIR are never created here. Only the shipped
+  // default, and only when nothing else has been chosen.
+  if (configuredRoot) return false;
+  if (environmentRoot()) return false;
+  const root = defaultRoot();
+  if (!rootsEqual(uploadDir(), root)) return false;
+  if (markerIdFor(root)) return false;
+  try {
+    const stat = fs.statSync(root);
+    if (stat.isDirectory()) return false;
+    return false;
+  } catch (err) {
+    if (err.code !== 'ENOENT') return false;
+  }
+  try {
+    activeDriver().ensureSync(root);
+    return true;
+  } catch (err) {
+    return false;
+  }
 }
 
 function plantOriginalMarker() {
@@ -371,7 +393,8 @@ function pathCaution(candidate) {
     if (underTmp) notes.push(TMP_CAUTION);
   }
   const repo = path.resolve(__dirname, '..');
-  if (candidate && (insideDirectory(repo, candidate) || resolvesInside(candidate, (resolved) => insideDirectory(repo, resolved)))) {
+  const shippedDefault = candidate && rootsEqual(candidate, defaultRoot());
+  if (!shippedDefault && candidate && (insideDirectory(repo, candidate) || resolvesInside(candidate, (resolved) => insideDirectory(repo, resolved)))) {
     notes.push(REPO_CAUTION);
   }
   return notes.length ? notes.join(' ') : null;
@@ -498,6 +521,25 @@ function removeStored(storedName, storageRoot) {
     if (err.code === 'ENOENT') return 'missing';
     console.error('FILE CLEANUP ERROR:', err.message);
     return 'unavailable';
+  }
+}
+
+function removeMovingTemps(root) {
+  if (!root) return;
+  let names;
+  try {
+    names = fs.readdirSync(root);
+  } catch (err) {
+    return;
+  }
+  const api = pathApi(root);
+  for (const name of names) {
+    if (!/^\..+\.moving-[a-f0-9]+$/i.test(name)) continue;
+    try {
+      activeDriver().unlinkSync(api.join(root, name));
+    } catch (err) {
+      if (!err || err.code !== 'ENOENT') console.error('FILE STORAGE MOVE CLEANUP ERROR:', err && err.message ? err.message : err);
+    }
   }
 }
 
@@ -794,7 +836,9 @@ module.exports = {
   rememberKnownRoot,
   markerIdFor,
   plantOriginalMarker,
+  createDefaultFolderOnce,
   writeStorageMarker,
+  removeMovingTemps,
   isKnownRoot,
   parseStoragePath,
   validateStoragePath,

@@ -16,8 +16,7 @@ const { fillOrderLines, setServiceNames } = require('./orderLineDefaults');
 const backendDir = path.join(__dirname, '..');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-phase3-'));
 const freshDb = path.join(tmp, 'fresh.db');
-const uploadDir = path.join(tmp, 'uploads');
-fs.mkdirSync(uploadDir, { recursive: true });
+fs.mkdirSync(path.resolve(backendDir, '..', 'data'), { recursive: true });
 const port = 3117;
 const adminPassword = 'AdminPass123';
 
@@ -74,7 +73,7 @@ function baseEnv(databaseFile) {
     DELIVERY_SLOT_MINUTES: '15',
     PORT: String(port),
     NODE_ENV: 'test',
-    UPLOAD_DIR: uploadDir,
+    UPLOAD_DIR: '',
     UV_THREADPOOL_SIZE: process.env.UV_THREADPOOL_SIZE || '32',
   };
 }

@@ -15,8 +15,8 @@ const { fillOrderLines, setServiceNames } = require('./orderLineDefaults');
 const backendDir = path.join(__dirname, '..');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-phase18-'));
 const dbFile = path.join(tmp, 'phase18.db');
-const uploadDir = path.join(tmp, 'uploads');
-fs.mkdirSync(uploadDir, { recursive: true });
+const uploadDir = path.resolve(backendDir, '..', 'data', 'uploads');
+fs.mkdirSync(path.dirname(uploadDir), { recursive: true });
 const port = 3148;
 const graphPort = 3149;
 const graphBase = `http://127.0.0.1:${graphPort}`;
@@ -287,7 +287,7 @@ function baseEnv() {
     DELIVERY_SLOT_MINUTES: '15',
     PORT: String(port),
     NODE_ENV: 'test',
-    UPLOAD_DIR: uploadDir,
+    UPLOAD_DIR: '',
     MAX_UPLOAD_MB: '1',
     UV_THREADPOOL_SIZE: process.env.UV_THREADPOOL_SIZE || '32',
     M365_TENANT_ID: tenantId,
@@ -477,6 +477,7 @@ async function main() {
   assert(!pageSource.includes('dangerouslySetInnerHTML'), 'the email page should render subject and body as text');
   assert(pageSource.includes('{email.subject') && pageSource.includes('{email.body_text'), 'subject and body should be text children');
 
+  fs.rmSync(uploadDir, { recursive: true, force: true });
   const server = startServer();
   const db = openDb(dbFile);
   try {

@@ -9,6 +9,7 @@ const {
   rootForStored,
   safeStoredPath,
   ensureUploadDir,
+  removeMovingTemps,
   inspectStored,
   filesMatch,
   copyVerified,
@@ -226,6 +227,7 @@ async function runMove(actorId) {
     };
   }
   const target = uploadDir();
+  removeMovingTemps(target);
   const summary = {
     unavailable: false,
     error: null,
