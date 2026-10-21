@@ -145,7 +145,7 @@ export default function Layout({ user, onLogout }) {
   const drawer = (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <Box sx={{ px: 1.5, pt: 1.75, pb: 1 }}>
-        <BrandLogo onNavy />
+        <BrandLogo onNavy animated />
       </Box>
       <List sx={{ px: 1, flex: 1, overflow: 'auto' }}>
         {items.map((item) => {

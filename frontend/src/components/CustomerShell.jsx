@@ -28,6 +28,7 @@ export default function CustomerShell({ title, welcome, children, onLogout, extr
       >
         <BrandLogo
           onNavy
+          animated
           sx={{
             width: { xs: 'min(100%, 240px)', md: 260 },
             justifySelf: { xs: 'center', md: 'start' },

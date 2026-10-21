@@ -1,10 +1,11 @@
 import React from 'react';
 import { Box } from '@mui/material';
+import AnimatedBrandLogo from './AnimatedBrandLogo';
 
 export const IGNITION_LOGO_SRC = '/brand/ignition-logo.png';
 export const IGNITION_LOGO_ALT = 'Accent Ignition';
 
-export default function BrandLogo({ onNavy = false, sx, imgSx }) {
+export default function BrandLogo({ onNavy = false, sx, imgSx, animated = false }) {
   return (
     <Box
       sx={{
@@ -22,12 +23,16 @@ export default function BrandLogo({ onNavy = false, sx, imgSx }) {
         ...sx,
       }}
     >
-      <Box
-        component="img"
-        src={IGNITION_LOGO_SRC}
-        alt={IGNITION_LOGO_ALT}
-        sx={{ width: '100%', maxWidth: '100%', height: 'auto', display: 'block', ...imgSx }}
-      />
+      {animated ? (
+        <AnimatedBrandLogo sx={imgSx} />
+      ) : (
+        <Box
+          component="img"
+          src={IGNITION_LOGO_SRC}
+          alt={IGNITION_LOGO_ALT}
+          sx={{ width: '100%', maxWidth: '100%', height: 'auto', display: 'block', ...imgSx }}
+        />
+      )}
     </Box>
   );
 }
