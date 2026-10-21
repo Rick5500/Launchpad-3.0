@@ -41,10 +41,10 @@ async function openAuthorized(url) {
 function noticeFor(email) {
   const status = email && email.status;
   if (status === 'sent') return 'Proof sent. The customer was emailed.';
-  if (status === 'rate_limited') return 'Proof sent in Launchpad. Too many emails. Try again later.';
-  if (status === 'not_configured') return "Email isn't set up. The proof is still in Launchpad.";
-  if (status === 'failed') return 'Proof sent in Launchpad. The email could not be sent.';
-  return 'Proof sent in Launchpad. No email was sent.';
+  if (status === 'rate_limited') return 'Proof sent in Ignition. Too many emails. Try again later.';
+  if (status === 'not_configured') return "Email isn't set up. The proof is still in Ignition.";
+  if (status === 'failed') return 'Proof sent in Ignition. The email could not be sent.';
+  return 'Proof sent in Ignition. No email was sent.';
 }
 
 function holdMessage(proofStatus, jobStatus) {
@@ -355,10 +355,10 @@ export default function ProofPanel({
         <Box component="form" onSubmit={sendProof}>
           <DialogContent sx={{ display: 'grid', gap: 2 }}>
             {mail && !mail.configured ? (
-              <Alert severity="warning">Email isn't set up. The proof is still shared in Launchpad.</Alert>
+              <Alert severity="warning">Email isn't set up. The proof is still shared in Ignition.</Alert>
             ) : null}
             {mail && mail.configured && mail.public_url_set === false ? (
-              <Alert severity="info">The public app address is not set, so the email link may not open Launchpad.</Alert>
+              <Alert severity="info">The public app address is not set, so the email link may not open Ignition.</Alert>
             ) : null}
             <Button component="label" variant="outlined" sx={{ justifySelf: 'start', borderColor: brand.navy, color: brand.navy, width: { xs: '100%', sm: 'auto' } }}>
               Choose files

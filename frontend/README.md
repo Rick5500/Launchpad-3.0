@@ -1,9 +1,9 @@
-Frontend for Launchpad 3.0 using Vite + React.
+Frontend for Ignition using Vite + React.
 
 This folder contains a minimal Vite-powered React app. To run locally:
 
 ```powershell
-cd "C:\Projects\Launchpad 3.0\frontend"
+cd frontend
 npm install
 npm run dev
 ```

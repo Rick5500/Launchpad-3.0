@@ -329,7 +329,7 @@ export default function SystemSettingsPage() {
             label="Email customers when files are shared"
           />
           <Typography variant="body2" color="text.secondary">
-            This is the default on Send files. Staff can change it for one send. If email is not set up, the files are still shared in Launchpad.
+            This is the default on Send files. Staff can change it for one send. If email is not set up, the files are still shared in Ignition.
           </Typography>
           <FormControlLabel
             control={(
@@ -353,7 +353,7 @@ export default function SystemSettingsPage() {
             label="Poll the orders mailbox"
           />
           <Typography variant="body2" color="text.secondary">
-            When this is off, Launchpad does not check Microsoft 365 on a schedule. Check now still reads the mailbox. Mail is never marked read, moved, or deleted.
+            When this is off, Ignition does not check Microsoft 365 on a schedule. Check now still reads the mailbox. Mail is never marked read, moved, or deleted.
           </Typography>
           <Box>
             <Button type="submit" variant="contained" disabled={saving || loading}>{saving ? 'Saving...' : 'Save settings'}</Button>
