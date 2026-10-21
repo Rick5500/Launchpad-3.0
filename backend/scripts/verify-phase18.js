@@ -15,7 +15,8 @@ const { fillOrderLines, setServiceNames } = require('./orderLineDefaults');
 const backendDir = path.join(__dirname, '..');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-phase18-'));
 const dbFile = path.join(tmp, 'phase18.db');
-const uploadDir = path.join(tmp, 'uploads');
+const uploadDir = path.resolve(backendDir, '..', 'data', 'uploads');
+fs.mkdirSync(path.dirname(uploadDir), { recursive: true });
 const port = 3148;
 const graphPort = 3149;
 const graphBase = `http://127.0.0.1:${graphPort}`;
@@ -286,7 +287,7 @@ function baseEnv() {
     DELIVERY_SLOT_MINUTES: '15',
     PORT: String(port),
     NODE_ENV: 'test',
-    UPLOAD_DIR: uploadDir,
+    UPLOAD_DIR: '',
     MAX_UPLOAD_MB: '1',
     UV_THREADPOOL_SIZE: process.env.UV_THREADPOOL_SIZE || '32',
     M365_TENANT_ID: tenantId,
@@ -476,6 +477,7 @@ async function main() {
   assert(!pageSource.includes('dangerouslySetInnerHTML'), 'the email page should render subject and body as text');
   assert(pageSource.includes('{email.subject') && pageSource.includes('{email.body_text'), 'subject and body should be text children');
 
+  fs.rmSync(uploadDir, { recursive: true, force: true });
   const server = startServer();
   const db = openDb(dbFile);
   try {
@@ -650,7 +652,7 @@ async function main() {
     assert(afterFailure.stored_name === inboundFile.stored_name, 'a failed convert should keep the inbound file name');
     assert(afterFailure.order_file_id == null, 'a failed convert should clear the order file pointer');
     assert(fs.existsSync(inboundPath), 'a failed convert should leave the inbound pdf on disk');
-    const namesAfterFailure = fs.readdirSync(uploadDir);
+    const namesAfterFailure = fs.readdirSync(uploadDir).filter((name) => name !== '.launchpad-storage');
     assert(namesAfterFailure.length === 1 && namesAfterFailure[0] === inboundFile.stored_name, `only the inbound file should remain: ${namesAfterFailure.join(',')}`);
     await db.run(
       'UPDATE inbound_email_attachments SET order_file_id = ? WHERE id = ?',

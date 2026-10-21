@@ -1,6 +1,8 @@
 const express = require('express');
 const auth = require('../auth');
 const activityLog = require('../activityLog');
+const { describeStorage } = require('../fileStore');
+const fileStorageMove = require('../fileStorageMove');
 const graphMail = require('../graphMail');
 const inboundEmail = require('../inboundEmail');
 const mailer = require('../mailer');
@@ -16,6 +18,20 @@ async function withMail(body) {
   } catch (err) {
     mailbox = null;
   }
+  let fileStorage = null;
+  try {
+    fileStorage = describeStorage();
+    fileStorage.outside_current_folder = await fileStorageMove.countOutside();
+  } catch (err) {
+    fileStorage = {
+      reachable: false,
+      warning: 'File storage is unavailable. The storage folder cannot be reached, so uploads are paused.',
+      path: null,
+      free_bytes: null,
+      free_label: null,
+      outside_current_folder: null,
+    };
+  }
   return {
     ...body,
     mail: {
@@ -23,6 +39,7 @@ async function withMail(body) {
       from: mailer.publicFrom(),
       public_url_set: Boolean(mailer.publicAppUrl()),
     },
+    file_storage: fileStorage,
     inbound_mail: {
       configured: graphMail.isConfigured(),
       mailbox: graphMail.isConfigured() ? graphMail.mailbox() : null,
@@ -43,6 +60,46 @@ router.get('/', auth.requireAuth, auth.requireRole('admin'), async (req, res) =>
     res.json(await withMail(await settings.getSettings()));
   } catch (err) {
     sendError(res, err, 'SETTINGS GET ERROR:', 'Failed to load settings');
+  }
+});
+
+router.put('/file-storage', auth.requireAuth, auth.requireRole('admin'), async (req, res) => {
+  try {
+    if (!req.body || !Object.prototype.hasOwnProperty.call(req.body, 'path')) {
+      const error = new Error('path is required');
+      error.status = 400;
+      error.publicMessage = 'path is required';
+      throw error;
+    }
+    res.json(await withMail(await settings.updateFileStorage(req.user.userId, req.body.path)));
+  } catch (err) {
+    sendError(res, err, 'FILE STORAGE UPDATE ERROR:', 'Failed to update file storage');
+  }
+});
+
+router.post('/file-storage/move', auth.requireAuth, auth.requireRole('admin'), async (req, res) => {
+  try {
+    const result = await fileStorageMove.moveAll(req.user.userId);
+    if (result.conflict) {
+      return res.status(409).json({ error: result.error || 'A file move is already running.' });
+    }
+    let fileStorage = null;
+    try {
+      fileStorage = describeStorage();
+      fileStorage.outside_current_folder = await fileStorageMove.countOutside();
+    } catch (err) {
+      fileStorage = null;
+    }
+    const payload = { ...result, file_storage: fileStorage };
+    if (result.unavailable) {
+      return res.status(503).json({
+        ...payload,
+        error: result.error || 'File storage is unavailable. The storage folder cannot be reached, so uploads are paused.',
+      });
+    }
+    return res.json(payload);
+  } catch (err) {
+    sendError(res, err, 'FILE STORAGE MOVE ERROR:', 'Failed to move existing files');
   }
 });
 

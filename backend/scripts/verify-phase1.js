@@ -872,7 +872,7 @@ async function runApiChecks() {
     const removedWaiting = await request({ method: 'DELETE', path: `/api/uploads/${extraIds[0]}`, token: customerToken });
     assert(removedWaiting.status === 200, `customer should delete an unattached file: ${removedWaiting.text}`);
 
-    const namesOnDisk = fs.readdirSync(uploadDir);
+    const namesOnDisk = fs.readdirSync(uploadDir).filter((name) => name !== '.launchpad-storage');
     assert(namesOnDisk.every((name) => /^[a-f0-9]{32}\.[a-z0-9]+$/.test(name)), `upload names should be random: ${namesOnDisk.join(', ')}`);
     assert(!namesOnDisk.some((name) => name.includes('passwd') || name.includes('..')), 'disk names must not use the client filename');
 

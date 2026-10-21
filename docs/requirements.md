@@ -14,7 +14,7 @@ High-level data model notes:
 - `orders` group work orders. Order numbers are `YYYYMMDD-NNN` and reset daily. Each selected service becomes a work order suffixed `-A`, `-B`, `-C`. An order stores a required project name, originals source, payment method, optional Bill To, return (`To Me` or `See ShipTo`), and a snapshot of the company address. Null originals and a null payment method on older rows display as Not specified. Archive File Request may be satisfied by notes, and Ship To (3rd Party) by the ship-to address, instead of a line item. Archive requests stay pending approval
 - `services` map to a department queue and store a code, suffix mode (`sequence` or `code`), default turnaround hours, and an active flag. Archive file requests are flagged for later approval. Inactive services are hidden from new orders
 - `order_line_items` hold size, quantity, media, color, binding/finish, finishing, mount, and laminate, plus `field_values` JSON, and link to the matching service's work order. `service_fields` defines each service's inputs. Signs & Graphics includes mount and laminate options. Older Yes/No mount and laminate values stay on the row
-- `order_files` store upload metadata. Bytes live under `UPLOAD_DIR`, outside the web root
+- `order_files` store upload metadata. Bytes live in the file storage folder from system settings, then `UPLOAD_DIR`, then `data/uploads`, outside the web root. `storage_root` records the folder for that file. A blank root still resolves to the original folder
 - `work_orders` table capturing items, quantities, due dates, status, plus `order_id`, `service_id`, `next_department`, and `proof_status` (`awaiting`, `changes_requested`, `approved`)
 - `proofs` and `proof_files` store each proof version staff send for an order or one work order. The owning customer approves or requests changes. Approval releases an open job to production
 - `production_board` records or derived from `work_orders` status
@@ -23,7 +23,7 @@ High-level data model notes:
 - `deliveries` table with will-call flags, due-time rules, and an optional `order_id`
 - `users.is_active` deactivates an account without deleting it. Inactive users cannot sign in
 - `activity_log` records work order create, move, and complete events, plus admin changes to services, service line-item fields, users, settings, notification preferences, and barcode locations
-- `system_settings` stores company letterhead (`company_name`, `company_address`, `company_phone`), optional `due_soon_hours`, and `last_backup_at`. Cutoffs, timezone, and upload limits stay in the environment
+- `system_settings` stores company letterhead (`company_name`, `company_address`, `company_phone`), optional `due_soon_hours`, `last_backup_at`, optional `file_storage_dir`, and `file_storage_marker` (the id written to `.launchpad-storage`). `file_storage_roots` keeps folders that have been used. Cutoffs, timezone, and upload limits stay in the environment. The storage folder wins over `UPLOAD_DIR` when it is set. A missing folder is not recreated on upload. Startup creates `data/uploads` once when that default is in use and no marker has been recorded, including the `data` parent on a fresh clone. `UPLOAD_DIR=../data/uploads` is that default. An existing `UPLOAD_DIR` is marked even when empty. A missing `UPLOAD_DIR` that points elsewhere, and a saved folder, are not created at startup. Downloads return HTTP 503 while the storage folder is unavailable. Restoring the database onto other storage requires saving the folder again so the marker matches
 - `system_alerts` holds stored alerts. `notification_settings` turns in-app events on or off. Email rows stay disabled
 - `barcode_locations` maps a scan location to a department name, a stage name, or both
 
@@ -53,7 +53,7 @@ API endpoints:
 - A department-move barcode scan commits the event, department update, production history row, and activity row together
 - `GET` and `PUT /api/services` — admin service catalog. Customers and operators receive HTTP 403
 - `GET` and `PUT /api/users`, `POST /api/users/:id/password` — admin user management. Password hashes are omitted
-- `GET` and `PUT /api/settings` — admin letterhead, due-soon hours, and last backup time. Environment values are read-only in the response
+- `GET` and `PUT /api/settings` — admin letterhead, due-soon hours, and last backup time. Environment values are read-only in the response. `file_storage` on the response is the current folder, free space, a caution when the path is under `/tmp` or inside the project (not for the shipped default folder), and a warning when that folder cannot be reached. `PUT /api/settings/file-storage` saves the folder. `POST /api/settings/file-storage/move` copies existing files into it and returns HTTP 409 if a move is already running
 - `GET` and `PUT /api/notifications/settings` — admin in-app toggles. Email events cannot be enabled
 - `GET /api/activity` — admin activity log, with `format=csv`
 - `GET`, `POST`, `PUT`, and `DELETE /api/barcode/locations` — admin location map. Operators may `GET`
