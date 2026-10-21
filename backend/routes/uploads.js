@@ -1,4 +1,5 @@
 const express = require('express');
+const path = require('path');
 const auth = require('../auth');
 const db = require('../db');
 const {
@@ -10,6 +11,7 @@ const {
   uploadErrorMessage,
   storageRootOfUpload,
   openStored,
+  finishStoredDownload,
   removeStored,
 } = require('../fileStore');
 const { maxUnattachedUploads, countUnattachedUploads } = require('../uploadMaintenance');
@@ -101,7 +103,7 @@ router.post('/', auth.requireAuth, uploadRoles, (req, res) => {
           removeUploaded([file]);
           throw Object.assign(new Error('Empty files are not allowed'), { status: 400 });
         }
-        const storedName = require('path').basename(file.filename);
+        const storedName = path.basename(file.filename);
         const inserted = await run(
           `INSERT INTO order_files (
             customer_id, uploaded_by, original_name, stored_name, mime_type, size_bytes, storage_root
@@ -160,10 +162,7 @@ router.get('/:id/download', auth.requireAuth, uploadRoles, async (req, res) => {
     res.set('Content-Type', contentTypeFor(file.stored_name));
     res.set('Cache-Control', 'private, no-store');
     return res.download(opened.fullPath, sanitizeOriginalName(file.original_name), (downloadErr) => {
-      if (!downloadErr || downloadErr.code === 'ECONNABORTED') return;
-      if (res.headersSent) return;
-      console.error('DOWNLOAD ERROR:', downloadErr);
-      res.status(500).json({ error: 'Failed to download file' });
+      finishStoredDownload(res, downloadErr, path.dirname(opened.fullPath));
     });
   } catch (err) {
     if (err && err.status === 503) {

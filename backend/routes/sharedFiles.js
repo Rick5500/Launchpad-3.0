@@ -1,4 +1,5 @@
 const express = require('express');
+const path = require('path');
 const auth = require('../auth');
 const shared = require('../sharedFiles');
 const { sendError } = require('../httpError');
@@ -7,6 +8,7 @@ const {
   uploadMiddleware,
   uploadErrorStatus,
   uploadErrorMessage,
+  finishStoredDownload,
 } = require('../fileStore');
 
 const fileRouter = express.Router();
@@ -74,10 +76,7 @@ fileRouter.get('/:id/download', auth.requireAuth, readers, async (req, res) => {
     res.set('Content-Type', file.contentType);
     res.set('Cache-Control', 'private, no-store');
     return res.download(file.fullPath, file.downloadName, (downloadErr) => {
-      if (!downloadErr || downloadErr.code === 'ECONNABORTED') return;
-      if (res.headersSent) return;
-      console.error('SHARED DOWNLOAD ERROR:', downloadErr);
-      res.status(500).json({ error: 'Failed to download file' });
+      finishStoredDownload(res, downloadErr, path.dirname(file.fullPath));
     });
   } catch (err) {
     return fail(res, err, 'SHARED DOWNLOAD ERROR:', 'Failed to download file');

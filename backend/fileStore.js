@@ -334,10 +334,12 @@ function canPlantOriginalMarker(root) {
 }
 
 function createDefaultFolderOnce() {
-  // A saved folder and UPLOAD_DIR are never created here. Only the shipped
-  // default, and only when nothing else has been chosen.
+  // A saved folder is never created here. A custom UPLOAD_DIR is never
+  // created here. The example env file sets UPLOAD_DIR to the shipped
+  // default, and that path is the default.
   if (configuredRoot) return false;
-  if (environmentRoot()) return false;
+  const env = environmentRoot();
+  if (env && !rootsEqual(env, defaultRoot())) return false;
   const root = defaultRoot();
   if (!rootsEqual(uploadDir(), root)) return false;
   if (markerIdFor(root)) return false;
@@ -349,6 +351,11 @@ function createDefaultFolderOnce() {
     if (err.code !== 'ENOENT') return false;
   }
   try {
+    const parent = path.dirname(root);
+    if (!parent || parent === root) return false;
+    // A fresh clone has no data/ directory. Only this fixed default may
+    // create that parent. ensureSync still refuses to create a missing parent.
+    fs.mkdirSync(parent, { recursive: true });
     activeDriver().ensureSync(root);
     return true;
   } catch (err) {
@@ -486,21 +493,45 @@ function storageRootOfUpload(file) {
   return uploadDir();
 }
 
+function directoryExists(root) {
+  try {
+    return fs.statSync(root).isDirectory();
+  } catch (err) {
+    return false;
+  }
+}
+
 function openStored(storedName, storageRoot) {
   const root = rootForStored(storageRoot);
   if (!root) return null;
   const full = safeStoredPath(storedName, storageRoot);
   if (!full) return null;
   const status = storageStatus(root);
-  if (!status.reachable) throw storageDown();
+  if (!status.reachable || !directoryExists(root)) throw storageDown();
   try {
     const stat = activeDriver().statSync(full);
     if (!stat || !stat.isFile()) return null;
     return { fullPath: full, size: stat.size };
   } catch (err) {
-    if (err.code === 'ENOENT') return null;
+    // A missing file inside a folder we can still use is not found.
+    // A missing folder, or a path that is no longer a directory, is storage down.
+    if ((err.code === 'ENOENT' || err.code === 'ENOTDIR') && directoryExists(root)) return null;
     throw storageDown(err);
   }
+}
+
+function finishStoredDownload(res, err, root) {
+  if (!err || err.code === 'ECONNABORTED') return;
+  if (res.headersSent) return;
+  const missing = err.status === 404 || err.statusCode === 404 || err.code === 'ENOENT' || err.code === 'ENOTDIR';
+  if (missing) {
+    if (!root || !directoryExists(root)) {
+      return res.status(503).json({ error: STORAGE_DOWN_MESSAGE });
+    }
+    return res.status(404).json({ error: 'File not found' });
+  }
+  console.error('DOWNLOAD ERROR:', err);
+  return res.status(500).json({ error: 'Failed to download file' });
 }
 
 function createStoredReadStream(fullPath) {
@@ -854,6 +885,7 @@ module.exports = {
   ensureUploadDir,
   storageRootOfUpload,
   openStored,
+  finishStoredDownload,
   createStoredReadStream,
   removeStored,
   removeUploaded,

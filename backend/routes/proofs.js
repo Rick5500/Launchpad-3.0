@@ -1,4 +1,5 @@
 const express = require('express');
+const path = require('path');
 const auth = require('../auth');
 const proofs = require('../proofs');
 const { sendError } = require('../httpError');
@@ -8,6 +9,7 @@ const {
   uploadErrorStatus,
   uploadErrorMessage,
   createStoredReadStream,
+  finishStoredDownload,
 } = require('../fileStore');
 
 const proofRouter = express.Router();
@@ -51,17 +53,12 @@ function sendProofFile(res, file, disposition) {
     res.set('Content-Length', file.size);
     const stream = createStoredReadStream(file.fullPath);
     stream.on('error', (streamErr) => {
-      if (res.headersSent) return;
-      console.error('PROOF VIEW ERROR:', streamErr);
-      res.status(500).json({ error: 'Failed to open file' });
+      finishStoredDownload(res, streamErr, path.dirname(file.fullPath));
     });
     return stream.pipe(res);
   }
   return res.download(file.fullPath, file.downloadName, (downloadErr) => {
-    if (!downloadErr || downloadErr.code === 'ECONNABORTED') return;
-    if (res.headersSent) return;
-    console.error('PROOF DOWNLOAD ERROR:', downloadErr);
-    res.status(500).json({ error: 'Failed to download file' });
+    finishStoredDownload(res, downloadErr, path.dirname(file.fullPath));
   });
 }
 

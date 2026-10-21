@@ -1,10 +1,12 @@
 const express = require('express');
+const path = require('path');
 const auth = require('../auth');
 const graphMail = require('../graphMail');
 const inboundEmail = require('../inboundEmail');
 const { OrderError } = require('../orderService');
 const { inboundEmailPollingEnabled } = require('../systemSettings');
 const { sendError } = require('../httpError');
+const { finishStoredDownload } = require('../fileStore');
 
 const router = express.Router();
 const staff = auth.requireRole('admin', 'manager', 'operator');
@@ -55,10 +57,7 @@ router.get('/:id/attachments/:attachmentId/download', auth.requireAuth, staff, a
     res.set('Content-Type', file.contentType);
     res.set('Cache-Control', 'private, no-store');
     return res.download(file.path, file.name, (err) => {
-      if (!err || err.code === 'ECONNABORTED') return;
-      if (res.headersSent) return;
-      console.error('INBOUND DOWNLOAD ERROR:', err.message);
-      res.status(500).json({ error: 'Failed to download file' });
+      finishStoredDownload(res, err, path.dirname(file.path));
     });
   } catch (err) {
     sendError(res, err, 'INBOUND DOWNLOAD ERROR:', 'Failed to download file');
