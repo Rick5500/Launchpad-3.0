@@ -217,7 +217,7 @@ systemSettings.loadRuntimeCache()
     if (!storageReady.ok) console.error('UPLOAD DIR ERROR:', storageReady.error);
     mailer.warnTestJsonTransport();
     app.listen(port, () => {
-      console.log(`Launchpad backend listening on port ${port}`);
+      console.log(`Ignition backend listening on port ${port}`);
       notificationScheduler.start();
       startOrphanSweep();
       inboundEmailPoller.start();

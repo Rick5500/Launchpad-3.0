@@ -22,10 +22,10 @@ function customerLabel(option) {
 function noticeFor(email, configured) {
   const status = email && email.status;
   if (status === 'sent') return 'Files sent. The customer was emailed.';
-  if (status === 'rate_limited') return 'Files shared in Launchpad. Too many emails. Try again later.';
-  if (status === 'not_configured' || configured === false) return "Email isn't set up. Files are still shared in Launchpad.";
-  if (status === 'failed') return 'Files shared in Launchpad. The email could not be sent.';
-  return 'Files shared in Launchpad. No email was sent.';
+  if (status === 'rate_limited') return 'Files shared in Ignition. Too many emails. Try again later.';
+  if (status === 'not_configured' || configured === false) return "Email isn't set up. Files are still shared in Ignition.";
+  if (status === 'failed') return 'Files shared in Ignition. The email could not be sent.';
+  return 'Files shared in Ignition. No email was sent.';
 }
 
 export default function SendFiles() {
@@ -151,10 +151,10 @@ export default function SendFiles() {
           {error ? <Alert severity="error">{error}</Alert> : null}
           {notice ? <Alert severity="success" onClose={() => setNotice('')}>{notice}</Alert> : null}
           {mail && !mail.configured ? (
-            <Alert severity="warning">Email isn't set up. Files are still shared in Launchpad.</Alert>
+            <Alert severity="warning">Email isn't set up. Files are still shared in Ignition.</Alert>
           ) : null}
           {mail && mail.configured && mail.public_url_set === false ? (
-            <Alert severity="info">The public app address is not set, so the email link may not open Launchpad.</Alert>
+            <Alert severity="info">The public app address is not set, so the email link may not open Ignition.</Alert>
           ) : null}
           <Autocomplete
             options={customers}
