@@ -25,6 +25,9 @@ const mediaSx = {
   maxWidth: '100%',
   minWidth: 0,
   height: 'auto',
+  aspectRatio: '16 / 9',
+  objectFit: 'contain',
+  objectPosition: 'center',
   display: 'block',
   bgcolor: '#fff',
 };
@@ -50,7 +53,7 @@ export default function AnimatedBrandLogo({ sx }) {
     return (
       <StaticLogo
         src={poster ? SIGNIN_LOGO_POSTER : STATIC_LOGO_SRC}
-        alt={poster ? 'Ignition' : STATIC_LOGO_ALT}
+        alt={STATIC_LOGO_ALT}
         sx={sx}
         onError={poster ? () => setFailed(true) : undefined}
       />
@@ -65,7 +68,7 @@ export default function AnimatedBrandLogo({ sx }) {
       loop
       playsInline
       poster={SIGNIN_LOGO_POSTER}
-      aria-label="Ignition"
+      aria-label={STATIC_LOGO_ALT}
       onError={() => setFailed(true)}
       ref={(node) => {
         if (node) node.muted = true;

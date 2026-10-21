@@ -5,6 +5,9 @@ import AnimatedBrandLogo from './AnimatedBrandLogo';
 export const IGNITION_LOGO_SRC = '/brand/ignition-logo.png';
 export const IGNITION_LOGO_ALT = 'Accent Ignition';
 
+// Horizontal padding is 20px. The 151px frame is 16/9, about 85px tall, matching the old static logo.
+export const NAV_LOGO_CARD_MAX_WIDTH = 171;
+
 export default function BrandLogo({ onNavy = false, sx, imgSx, animated = false }) {
   return (
     <Box
