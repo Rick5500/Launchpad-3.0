@@ -93,8 +93,8 @@
 }
 
 .wo-logo {
-  width: 108px;
-  max-width: 34%;
+  width: 2.05in;
+  max-width: 42%;
   height: auto;
   display: block;
   flex: 0 0 auto;
@@ -452,7 +452,8 @@
   }
 
   .wo-logo {
-    max-width: 200px;
+    width: min(220px, 78%);
+    max-width: 220px;
   }
 
   .wo-number {

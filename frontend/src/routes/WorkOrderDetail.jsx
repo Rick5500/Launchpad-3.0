@@ -31,6 +31,7 @@ import { requestBoardRefresh } from '../boardEvents';
 import { useAuth } from '../context/AuthContext';
 import { canonicalWorkOrderStatus, isActiveWorkOrderStatus } from '../workOrderStatus';
 import { brand, formatFileSize, formatShopStamp, timezoneLabel } from '../brand';
+import BrandLogo from '../components/BrandLogo';
 
 const tabs = ['Overview', 'Specifications', 'Attachments', 'Scan History', 'Routing', 'Notes'];
 
@@ -652,7 +653,7 @@ export default function WorkOrderDetail() {
           >
             <Box sx={{ minWidth: 0 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1 }}>
-                <Box component="img" src="/logo.png" alt="Accent Imaging" sx={{ height: 36, width: 'auto', display: 'block' }} />
+                <BrandLogo sx={{ width: { xs: 168, sm: 200 }, flex: '0 0 auto' }} />
                 <Typography sx={{ color: brand.orange, fontWeight: 800, letterSpacing: '0.08em', fontSize: 15 }}>
                   WORK ORDER
                 </Typography>

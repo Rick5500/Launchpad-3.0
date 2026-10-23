@@ -221,6 +221,25 @@ function safeSubject(value) {
   return String(value || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 180);
 }
 
+// Hosted on the public site, same origin as the sign-in links. Email clients
+// cannot load a relative path, so the image is omitted until PUBLIC_APP_URL is set.
+const EMAIL_LOGO_PATH = '/brand/logo.png';
+
+function emailLogoHtml() {
+  const base = publicAppUrl();
+  if (!base) return '';
+  const src = escapeHtml(`${base}${EMAIL_LOGO_PATH}`);
+  return `<img src="${src}" alt="Launchpad" width="280" style="display:block;width:280px;max-width:100%;height:auto;border:0;outline:none;text-decoration:none;margin:0 0 12px;" />`;
+}
+
+function emailBannerHtml(name) {
+  const logo = emailLogoHtml();
+  const title = name
+    ? `<div style="color:#ffffff;font-size:18px;font-weight:700;">${escapeHtml(name)}</div>`
+    : '';
+  return `<tr><td style="background:#0A2F6E;padding:16px 24px;border-bottom:4px solid #F58220;">${logo}${title}</td></tr>`;
+}
+
 function renderShareEmail({ letterhead, orderNumber, message, fileNames, link }) {
   const name = letterhead && letterhead.name ? letterhead.name : '';
   const orderLabel = orderNumber || 'your order';
@@ -252,9 +271,7 @@ function renderShareEmail({ letterhead, orderNumber, message, fileNames, link })
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F7FB;padding:24px 12px;">
     <tr><td align="center">
       <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#ffffff;border:1px solid #E2E8F0;">
-        <tr><td style="background:#0A2F6E;padding:18px 24px;border-bottom:4px solid #F58220;">
-          <div style="color:#ffffff;font-size:18px;font-weight:700;">${escapeHtml(name)}</div>
-        </td></tr>
+        ${emailBannerHtml(name)}
         <tr><td style="padding:24px;">
           <h1 style="margin:0 0 12px;font-size:20px;color:#0A2F6E;">New files for order ${escapeHtml(orderLabel)}</h1>
           ${messageHtml}
@@ -311,9 +328,7 @@ function renderTransferEmail({ letterhead, subject, message, fileNames, link }) 
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F7FB;padding:24px 12px;">
     <tr><td align="center">
       <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#ffffff;border:1px solid #E2E8F0;">
-        <tr><td style="background:#0A2F6E;padding:18px 24px;border-bottom:4px solid #F58220;">
-          <div style="color:#ffffff;font-size:18px;font-weight:700;">${escapeHtml(name)}</div>
-        </td></tr>
+        ${emailBannerHtml(name)}
         <tr><td style="padding:24px;">
           <h1 style="margin:0 0 12px;font-size:20px;color:#0A2F6E;">${escapeHtml(heading)}</h1>
           ${messageHtml}
@@ -372,9 +387,7 @@ function renderProofEmail({ letterhead, orderNumber, version, message, fileNames
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F7FB;padding:24px 12px;">
     <tr><td align="center">
       <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#ffffff;border:1px solid #E2E8F0;">
-        <tr><td style="background:#0A2F6E;padding:18px 24px;border-bottom:4px solid #F58220;">
-          <div style="color:#ffffff;font-size:18px;font-weight:700;">${escapeHtml(name)}</div>
-        </td></tr>
+        ${emailBannerHtml(name)}
         <tr><td style="padding:24px;">
           <h1 style="margin:0 0 12px;font-size:20px;color:#0A2F6E;">Proof ${escapeHtml(versionLabel)} for order ${escapeHtml(orderLabel)}</h1>
           ${messageHtml}
@@ -428,9 +441,7 @@ function renderProofChangesEmail({ letterhead, orderNumber, version, comment, cu
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F7FB;padding:24px 12px;">
     <tr><td align="center">
       <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#ffffff;border:1px solid #E2E8F0;">
-        <tr><td style="background:#0A2F6E;padding:18px 24px;border-bottom:4px solid #F58220;">
-          <div style="color:#ffffff;font-size:18px;font-weight:700;">${escapeHtml(name)}</div>
-        </td></tr>
+        ${emailBannerHtml(name)}
         <tr><td style="padding:24px;">
           <h1 style="margin:0 0 12px;font-size:20px;color:#0A2F6E;">Changes requested on proof ${escapeHtml(versionLabel)}</h1>
           <p style="margin:0 0 12px;line-height:1.5;">${escapeHtml(who)} requested changes on ${escapeHtml(where)}.</p>
@@ -473,9 +484,7 @@ function renderTestEmail({ letterhead }) {
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F7FB;padding:24px 12px;">
     <tr><td align="center">
       <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#ffffff;border:1px solid #E2E8F0;">
-        <tr><td style="background:#0A2F6E;padding:18px 24px;border-bottom:4px solid #F58220;">
-          <div style="color:#ffffff;font-size:18px;font-weight:700;">${escapeHtml(name)}</div>
-        </td></tr>
+        ${emailBannerHtml(name)}
         <tr><td style="padding:24px;">
           <h1 style="margin:0 0 12px;font-size:20px;color:#0A2F6E;">Test email</h1>
           <p style="margin:0 0 12px;line-height:1.5;">This is a test email from Launchpad. If you received it, mail sending is working.</p>

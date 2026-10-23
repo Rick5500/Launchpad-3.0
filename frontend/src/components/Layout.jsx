@@ -42,6 +42,7 @@ import UploadFileIcon from '@mui/icons-material/UploadFile';
 import FolderSharedIcon from '@mui/icons-material/FolderShared';
 import MarkEmailUnreadIcon from '@mui/icons-material/MarkEmailUnread';
 import { brand } from '../brand';
+import BrandLogo from './BrandLogo';
 import { useDocumentTitle } from '../useDocumentTitle';
 import NotificationBell from './NotificationBell';
 import HeaderScan from './HeaderScan';
@@ -143,13 +144,8 @@ export default function Layout({ user, onLogout }) {
 
   const drawer = (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <Box sx={{ px: 1, pt: 1.5, pb: 1 }}>
-        <Box
-          component="img"
-          src="/logo.png"
-          alt="Accent Imaging"
-          sx={{ width: '100%', height: 'auto', display: 'block' }}
-        />
+      <Box sx={{ px: 1.25, pt: 1.25, pb: 0.5 }}>
+        <BrandLogo />
       </Box>
       <List sx={{ px: 1, flex: 1, overflow: 'auto' }}>
         {items.map((item) => {
