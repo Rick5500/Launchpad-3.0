@@ -554,6 +554,18 @@ function collectFileIds(lineItems, topLevel) {
   return ids;
 }
 
+function conversionQuoteId(payload) {
+  if (!payload || payload.quote_request_id == null || String(payload.quote_request_id).trim() === '') return null;
+  const parsed = Number(String(payload.quote_request_id).trim());
+  if (!Number.isInteger(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+function quoteFileMatchesConversion(user, file, quoteRequestId) {
+  const converter = user.role === 'admin' || user.role === 'manager';
+  return converter && quoteRequestId != null && Number(file.quote_request_id) === quoteRequestId;
+}
+
 async function allocateOrderNumber(tx, now) {
   const today = businessToday(now);
   const updated = await tx.run(
@@ -798,6 +810,7 @@ async function createOrder(user, body, now = new Date()) {
   const lineItems = parseLineItems(payload, serviceIds);
   const topLevelFileIds = parseTopLevelFileIds(payload);
   const fileIds = collectFileIds(lineItems, topLevelFileIds);
+  const quoteRequestId = conversionQuoteId(payload);
   if (originalsSource === ORIGINALS_FILES && fileIds.length === 0) {
     throw new OrderError('Attach at least one file when originals source is Files attached below');
   }
@@ -869,7 +882,7 @@ async function createOrder(user, body, now = new Date()) {
     if (fileIds.length) {
       const filePlaceholders = fileIds.map(() => '?').join(', ');
       const files = await tx.all(
-        `SELECT id, order_id, customer_id, uploaded_by
+        `SELECT id, order_id, quote_request_id, customer_id, uploaded_by
          FROM order_files
          WHERE id IN (${filePlaceholders})`,
         fileIds
@@ -877,6 +890,9 @@ async function createOrder(user, body, now = new Date()) {
       if (files.length !== fileIds.length) throw new OrderError('One or more files could not be found', 404);
       for (const file of files) {
         if (file.order_id) throw new OrderError('A file is already attached to an order');
+        if (file.quote_request_id != null && !quoteFileMatchesConversion(user, file, quoteRequestId)) {
+          throw new OrderError('A quote file can only be attached when a manager or admin converts that quote', 403);
+        }
         const staff = user.role === 'admin' || user.role === 'manager' || user.role === 'operator';
         const ownsAsCustomer = Number(file.customer_id) === customerId;
         const uploadedByStaff = staff && Number(file.uploaded_by) === Number(user.userId || user.id);
@@ -1072,7 +1088,7 @@ async function createOrder(user, body, now = new Date()) {
     );
 
     if (payload.quote_request_id != null && String(payload.quote_request_id).trim() !== '') {
-      await quotes.attachConversion(tx, user, payload.quote_request_id, newOrderId, customerId);
+      await quotes.attachConversion(tx, user, quoteRequestId == null ? payload.quote_request_id : quoteRequestId, newOrderId, customerId);
     }
 
     return newOrderId;

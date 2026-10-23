@@ -454,6 +454,26 @@ async function main() {
       json: orderBody(customerResponse.json.id, quoteId, serviceId, [fileId]),
     });
     assert(operatorOrder.status === 403, `operator convert should be 403, got ${operatorOrder.status} ${operatorOrder.text}`);
+    const operatorGrab = orderBody(customerResponse.json.id, quoteId, serviceId, [fileId]);
+    delete operatorGrab.quote_request_id;
+    const operatorSteal = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: operator.token,
+      json: operatorGrab,
+    });
+    assert(operatorSteal.status === 403 || operatorSteal.status === 404, `operator order with a quote file should be 403 or 404, got ${operatorSteal.status} ${operatorSteal.text}`);
+    const fileUntouched = await db.get('SELECT order_id, quote_request_id FROM order_files WHERE id = ?', [fileId]);
+    assert(fileUntouched && fileUntouched.order_id == null && fileUntouched.quote_request_id === quoteId, 'an operator order must not attach or change a quote file');
+    const customerGrab = orderBody(customerResponse.json.id, quoteId, serviceId, [fileId]);
+    delete customerGrab.quote_request_id;
+    const customerSteal = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customer.token,
+      json: customerGrab,
+    });
+    assert(customerSteal.status === 403 || customerSteal.status === 404, `a customer cannot attach a quote file to another order, got ${customerSteal.status} ${customerSteal.text}`);
     const customerOrder = await request({
       method: 'POST',
       path: '/api/orders',
