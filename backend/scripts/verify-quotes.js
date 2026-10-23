@@ -340,6 +340,12 @@ async function main() {
     assert(hiddenDownload.status === 404, 'another customer should not download the file');
     const blockedDelete = await request({ method: 'DELETE', path: `/api/uploads/${fileId}`, token: customer.token });
     assert(blockedDelete.status === 403, `a file on a quote should not be deleted, got ${blockedDelete.status}`);
+    const operatorDownload = await request({ method: 'GET', path: `/api/uploads/${fileId}/download`, token: operator.token });
+    assert(operatorDownload.status === 403 || operatorDownload.status === 404, `operator download of a quote file should be 403 or 404, got ${operatorDownload.status}`);
+    const operatorDelete = await request({ method: 'DELETE', path: `/api/uploads/${fileId}`, token: operator.token });
+    assert(operatorDelete.status === 403 || operatorDelete.status === 404, `operator delete of a quote file should be 403 or 404, got ${operatorDelete.status}`);
+    const quoteFileRemains = await db.get('SELECT id, quote_request_id FROM order_files WHERE id = ?', [fileId]);
+    assert(quoteFileRemains && quoteFileRemains.quote_request_id === quoteId, 'an operator must not delete a quote file');
 
     for (const pathName of [
       '/api/quote-requests',

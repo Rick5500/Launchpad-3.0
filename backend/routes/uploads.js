@@ -47,8 +47,19 @@ function publicFile(row) {
   };
 }
 
+function isQuoteOnlyFile(file) {
+  return file.quote_request_id != null && file.order_id == null;
+}
+
 async function canAccessFile(user, file) {
   if (!file) return false;
+  // A quote attachment that is not on an order is visible only to the owning
+  // customer, a manager, or an admin. Operators never see those files.
+  if (isQuoteOnlyFile(file)) {
+    if (user.role === 'admin' || user.role === 'manager') return true;
+    if (user.role !== 'customer') return false;
+    return Number(file.customer_id) === Number(user.userId || user.id);
+  }
   if (user.role === 'admin' || user.role === 'manager' || user.role === 'operator') return true;
   if (user.role !== 'customer') return false;
   const userId = Number(user.userId || user.id);
@@ -147,7 +158,7 @@ router.get('/:id/download', auth.requireAuth, uploadRoles, async (req, res) => {
   }
   try {
     const file = await get(
-      `SELECT id, order_id, customer_id, original_name, stored_name, size_bytes, storage_root
+      `SELECT id, order_id, quote_request_id, customer_id, original_name, stored_name, size_bytes, storage_root
        FROM order_files WHERE id = ?`,
       [id]
     );
