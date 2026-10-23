@@ -205,6 +205,7 @@ function LoginScreen() {
   const registerAlertRef = useRef(null);
   const videoRef = useRef(null);
   const settledRef = useRef(false);
+  const introWatchRef = useRef(0);
   const [videoNode, setVideoNode] = useState(null);
   const bindVideo = useCallback((node) => {
     videoRef.current = node;
@@ -226,7 +227,14 @@ function LoginScreen() {
   const [animateForm, setAnimateForm] = useState(false);
   const revealFormRef = useRef(() => {});
 
+  function clearIntroWatch() {
+    if (!introWatchRef.current) return;
+    window.clearTimeout(introWatchRef.current);
+    introWatchRef.current = 0;
+  }
+
   function revealForm({ animate, markSeen, keepVideo }) {
+    clearIntroWatch();
     if (settledRef.current) return;
     settledRef.current = true;
     if (markSeen) markIntroSeen();
@@ -287,10 +295,17 @@ function LoginScreen() {
       if (cancelled || settledRef.current) return;
       revealFormRef.current({ animate: false, markSeen: false, keepVideo: false });
     };
+    const revealIfWaiting = () => {
+      if (cancelled || settledRef.current) return;
+      revealFormRef.current({ animate: true, markSeen: false, keepVideo: false });
+    };
     video.muted = true;
     video.defaultMuted = true;
     video.playsInline = true;
     video.addEventListener('error', fail);
+    video.addEventListener('stalled', revealIfWaiting);
+    video.addEventListener('abort', revealIfWaiting);
+    introWatchRef.current = window.setTimeout(revealIfWaiting, 6500);
     let pending;
     try {
       pending = video.play();
@@ -304,7 +319,10 @@ function LoginScreen() {
     }
     return () => {
       cancelled = true;
+      clearIntroWatch();
       video.removeEventListener('error', fail);
+      video.removeEventListener('stalled', revealIfWaiting);
+      video.removeEventListener('abort', revealIfWaiting);
     };
   }, [showVideo, videoNode]);
 
