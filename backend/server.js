@@ -53,6 +53,7 @@ const settingsRouter = require('./routes/settings');
 const activityRouter = require('./routes/activity');
 const searchRouter = require('./routes/search');
 const inboundEmailRouter = require('./routes/inboundEmails');
+const quotesRouter = require('./routes/quotes');
 const inboundEmailPoller = require('./inboundEmailPoller');
 const systemSettings = require('./systemSettings');
 const mailer = require('./mailer');
@@ -201,6 +202,7 @@ app.use('/api/settings', settingsRouter);
 app.use('/api/activity', activityRouter);
 app.use('/api/search', searchRouter);
 app.use('/api/inbound-emails', inboundEmailRouter);
+app.use('/api/quote-requests', quotesRouter);
 
 // Admin placeholder
 app.get('/api/admin', auth.requireAuth, auth.requireRole('admin'), (req, res) => res.json({ message: 'admin endpoint (placeholder)', user: req.user }));

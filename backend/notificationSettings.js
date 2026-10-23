@@ -12,6 +12,8 @@ const IN_APP_EVENTS = [
   { event_key: 'files_shared', label: 'Files from Accent', description: 'Files were shared with a customer, with or without an order.' },
   { event_key: 'proof_ready', label: 'Proof ready', description: 'A proof was sent for the customer to approve.' },
   { event_key: 'proof_decision', label: 'Proof decision', description: 'A customer approved a proof or requested changes.' },
+  { event_key: 'quote_ready', label: 'Quote ready', description: 'A quote was sent to the customer.' },
+  { event_key: 'quote_accepted', label: 'Quote accepted', description: 'A customer accepted a quote.' },
 ];
 
 const EMAIL_EVENTS = [

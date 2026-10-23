@@ -13,6 +13,8 @@ import BarcodeSettingsPage from './routes/BarcodeSettingsPage';
 import WorkOrdersList from './routes/WorkOrdersList';
 import SendProofPage from './routes/SendProofPage';
 import CustomerProofsPage from './routes/CustomerProofsPage';
+import CustomerQuotes from './routes/CustomerQuotes';
+import QuoteRequests from './routes/QuoteRequests';
 import WorkOrderDetail from './routes/WorkOrderDetail';
 import WorkOrderForm from './routes/WorkOrderForm';
 import DepartmentsAdmin from './routes/DepartmentsAdmin';
@@ -753,6 +755,11 @@ function AppRoutes() {
         <Route path="email-orders" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><EmailOrders /></ProtectedRoute>} />
         <Route path="email-orders/:id" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><EmailOrders /></ProtectedRoute>} />
         <Route path="proofs" element={<ProtectedRoute roles={['customer']}><CustomerProofsPage /></ProtectedRoute>} />
+        <Route path="quotes/new" element={<ProtectedRoute roles={['customer']}><CustomerQuotes /></ProtectedRoute>} />
+        <Route path="quotes/:id" element={<ProtectedRoute roles={['customer']}><CustomerQuotes /></ProtectedRoute>} />
+        <Route path="quotes" element={<ProtectedRoute roles={['customer']}><CustomerQuotes /></ProtectedRoute>} />
+        <Route path="quote-requests" element={<ProtectedRoute roles={['admin', 'manager']}><QuoteRequests /></ProtectedRoute>} />
+        <Route path="quote-requests/:id" element={<ProtectedRoute roles={['admin', 'manager']}><QuoteRequests /></ProtectedRoute>} />
         <Route path="services" element={<ProtectedRoute roles={['admin']}><ServicesPage /></ProtectedRoute>} />
         <Route path="users" element={<ProtectedRoute roles={['admin']}><UsersPage /></ProtectedRoute>} />
         <Route path="settings" element={<ProtectedRoute roles={['admin']}><SystemSettingsPage /></ProtectedRoute>} />

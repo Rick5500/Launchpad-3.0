@@ -41,7 +41,10 @@ import LocalShippingIcon from '@mui/icons-material/LocalShipping';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import FolderSharedIcon from '@mui/icons-material/FolderShared';
 import MarkEmailUnreadIcon from '@mui/icons-material/MarkEmailUnread';
+import RequestQuoteIcon from '@mui/icons-material/RequestQuote';
+import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import { brand } from '../brand';
+import { authFetch } from '../api';
 import BrandLogo from './BrandLogo';
 import { useDocumentTitle } from '../useDocumentTitle';
 import NotificationBell from './NotificationBell';
@@ -58,6 +61,7 @@ const staffNav = [
   { title: 'Send Files', route: '/send-files', icon: <UploadFileIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Send Proof', route: '/send-proof', icon: <FactCheckIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Email Orders', route: '/email-orders', icon: <MarkEmailUnreadIcon />, roles: ['admin', 'operator', 'manager'] },
+  { title: 'Quote Requests', route: '/quote-requests', icon: <RequestQuoteIcon />, roles: ['admin', 'manager'], badge: 'new-quotes' },
   {
     title: 'Reports',
     route: '/reports',
@@ -77,6 +81,8 @@ const staffNav = [
 
 const customerNav = [
   { title: 'Place Order', route: '/order', icon: <NoteAddIcon />, roles: ['customer'] },
+  { title: 'Request a Quote', route: '/quotes/new', icon: <RequestQuoteIcon />, roles: ['customer'] },
+  { title: 'My Quotes', route: '/quotes', icon: <ReceiptLongIcon />, roles: ['customer'] },
   { title: 'Files from Accent', route: '/files', icon: <FolderSharedIcon />, roles: ['customer'] },
   { title: 'Work Orders', route: '/work-orders', icon: <AssignmentIcon />, roles: ['customer'] },
   { title: 'Proofs', route: '/proofs', icon: <RateReviewIcon />, roles: ['customer'] },
@@ -86,6 +92,7 @@ const customerNav = [
 
 function isActive(route, pathname) {
   if (route === '/') return pathname === '/';
+  if (route === '/quotes') return pathname === '/quotes' || /^\/quotes\/\d+/.test(pathname);
   return pathname === route || pathname.startsWith(`${route}/`);
 }
 
@@ -99,6 +106,9 @@ function pageTitle(pathname) {
     ['/files', 'Files from Accent'],
     ['/send-proof', 'Send Proof'],
     ['/email-orders', 'Email Orders'],
+    ['/quote-requests', 'Quote Requests'],
+    ['/quotes/new', 'Request a Quote'],
+    ['/quotes', 'My Quotes'],
     ['/proofs', 'Proofs'],
     ['/reports', 'Reports'],
     ['/customers', 'Customers'],
@@ -126,6 +136,29 @@ export default function Layout({ user, onLogout }) {
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [mobileOpen, setMobileOpen] = useState(false);
   const [reportsOpen, setReportsOpen] = useState(() => location.pathname.startsWith('/reports'));
+  const [quoteNewCount, setQuoteNewCount] = useState(0);
+  const showQuoteBadge = user?.role === 'admin' || user?.role === 'manager';
+
+  useEffect(() => {
+    if (!showQuoteBadge) return undefined;
+    let cancelled = false;
+    async function loadCount() {
+      try {
+        const response = await authFetch('/api/quote-requests/summary', { cache: 'no-store' });
+        if (!response.ok) return;
+        const body = await response.json();
+        if (!cancelled) setQuoteNewCount(Number(body.new_count) || 0);
+      } catch (err) {
+        // The next poll retries a transient failure.
+      }
+    }
+    loadCount();
+    const timer = setInterval(loadCount, 45000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [showQuoteBadge, location.pathname]);
 
   useEffect(() => {
     if (location.pathname.startsWith('/reports')) setReportsOpen(true);
@@ -209,6 +242,30 @@ export default function Layout({ user, onLogout }) {
             >
               <ListItemIcon sx={{ color: '#fff', minWidth: 40 }}>{item.icon}</ListItemIcon>
               <ListItemText primary={item.title} primaryTypographyProps={{ fontSize: 14, fontWeight: active ? 700 : 500 }} />
+              {item.badge === 'new-quotes' && quoteNewCount > 0 ? (
+                <Box
+                  component="span"
+                  aria-label={`${quoteNewCount} new quote requests`}
+                  sx={{
+                    ml: 1,
+                    minWidth: 28,
+                    height: 28,
+                    px: 0.9,
+                    borderRadius: 14,
+                    flexShrink: 0,
+                    bgcolor: active ? '#fff' : brand.orange,
+                    color: active ? brand.navy : '#111',
+                    fontSize: 16,
+                    fontWeight: 800,
+                    lineHeight: 1,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  {quoteNewCount > 99 ? '99+' : quoteNewCount}
+                </Box>
+              ) : null}
             </ListItemButton>
           );
         })}

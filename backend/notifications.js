@@ -8,6 +8,7 @@ const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
 const STAFF_ROLES = new Set(['admin', 'manager', 'operator']);
+const QUOTE_NOTIFICATION_TYPES = ['quote_ready', 'quote_accepted'];
 
 function dueSoonMinutes() {
   const raw = process.env.DELIVERY_DUE_SOON_MINUTES;
@@ -57,8 +58,8 @@ function writeNotifications(items, cb) {
     for (const item of items) {
       const inserted = await tx.run(
         `INSERT OR IGNORE INTO notifications
-          (type, title, body, customer_id, work_order_id, delivery_id, order_id, transfer_id, dedupe_key)
-         VALUES (?,?,?,?,?,?,?,?,?)`,
+          (type, title, body, customer_id, work_order_id, delivery_id, order_id, transfer_id, quote_request_id, dedupe_key)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
         [
           item.type,
           item.title,
@@ -68,6 +69,7 @@ function writeNotifications(items, cb) {
           item.deliveryId == null ? null : item.deliveryId,
           item.orderId == null ? null : item.orderId,
           item.transferId == null ? null : item.transferId,
+          item.quoteRequestId == null ? null : item.quoteRequestId,
           item.dedupeKey,
         ]
       );
@@ -82,6 +84,7 @@ function writeNotifications(items, cb) {
           delivery_id: item.deliveryId == null ? null : item.deliveryId,
           order_id: item.orderId == null ? null : item.orderId,
           transfer_id: item.transferId == null ? null : item.transferId,
+          quote_request_id: item.quoteRequestId == null ? null : item.quoteRequestId,
         });
       }
     }
@@ -208,6 +211,30 @@ function notifyProofDecision(item, cb) {
   }], cb);
 }
 
+function notifyQuoteReady(item, cb) {
+  if (!item || !item.quoteRequestId) return cb(null, []);
+  insertNotifications([{
+    type: 'quote_ready',
+    title: item.title || 'Your quote is ready',
+    body: item.body || '',
+    customerId: item.customerId,
+    quoteRequestId: item.quoteRequestId,
+    dedupeKey: item.dedupeKey || `quote_ready:${item.quoteRequestId}`,
+  }], cb);
+}
+
+function notifyQuoteAccepted(item, cb) {
+  if (!item || !item.quoteRequestId) return cb(null, []);
+  insertNotifications([{
+    type: 'quote_accepted',
+    title: item.title || 'Quote accepted',
+    body: item.body || '',
+    customerId: null,
+    quoteRequestId: item.quoteRequestId,
+    dedupeKey: item.dedupeKey || `quote_accepted:${item.quoteRequestId}`,
+  }], cb);
+}
+
 function notifyFilesShared(item, cb) {
   if (!item || (!item.orderId && !item.transferId)) return cb(null, []);
   const orderNumber = item.orderNumber || item.orderId;
@@ -306,7 +333,14 @@ function parsePositiveId(value) {
 }
 
 function visibility(user) {
-  if (isStaff(user)) return { sql: '', params: [] };
+  if (user && (user.role === 'admin' || user.role === 'manager')) return { sql: '', params: [] };
+  if (isStaff(user)) {
+    const placeholders = QUOTE_NOTIFICATION_TYPES.map(() => '?').join(', ');
+    return {
+      sql: `WHERE n.type NOT IN (${placeholders})`,
+      params: QUOTE_NOTIFICATION_TYPES.slice(),
+    };
+  }
   return { sql: 'WHERE n.customer_id = ?', params: [user.userId] };
 }
 
@@ -321,6 +355,7 @@ function mapRow(row) {
     delivery_id: row.delivery_id,
     order_id: row.order_id == null ? null : row.order_id,
     transfer_id: row.transfer_id == null ? null : row.transfer_id,
+    quote_request_id: row.quote_request_id == null ? null : row.quote_request_id,
     created_at: row.created_at,
     read: Boolean(row.is_read),
   };
@@ -357,6 +392,7 @@ function listNotifications(user, query, cb) {
          n.delivery_id,
          n.order_id,
          n.transfer_id,
+         n.quote_request_id,
          n.created_at,
          CASE WHEN r.user_id IS NULL THEN 0 ELSE 1 END AS is_read
        FROM notifications n
@@ -434,6 +470,8 @@ module.exports = {
   notifyFilesShared,
   notifyProofReady,
   notifyProofDecision,
+  notifyQuoteReady,
+  notifyQuoteAccepted,
   checkDeliveryNotifications,
   listNotifications,
   markRead,
