@@ -263,8 +263,8 @@ function LoginScreen() {
       bodyScheme: body.style.colorScheme,
       htmlScheme: html.style.colorScheme,
     };
-    body.style.backgroundColor = '#05070d';
-    html.style.backgroundColor = '#05070d';
+    body.style.backgroundColor = '#000';
+    html.style.backgroundColor = '#000';
     body.style.overflow = 'hidden';
     html.style.overflow = 'hidden';
     body.style.colorScheme = 'dark';
@@ -414,14 +414,13 @@ function LoginScreen() {
         },
         boxSizing: 'border-box',
         colorScheme: 'dark',
-        bgcolor: '#05070d',
-        backgroundImage: 'radial-gradient(ellipse 90% 55% at 50% 12%, rgba(10, 47, 110, 0.55), rgba(5, 7, 13, 0) 68%)',
+        bgcolor: '#000',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
         overflowX: 'hidden',
         overflowY: 'auto',
-        scrollbarColor: '#2a4468 #05070d',
+        scrollbarColor: '#2a4468 #000',
         px: { xs: 2, sm: 3 },
         pt: { xs: 6, sm: 5 },
         pb: 4,
@@ -459,6 +458,9 @@ function LoginScreen() {
           aspectRatio: '16 / 9',
           position: 'relative',
           flexShrink: 0,
+          bgcolor: '#000',
+          WebkitMaskImage: 'radial-gradient(ellipse 100% 100% at 50% 48%, #000 84%, transparent 100%)',
+          maskImage: 'radial-gradient(ellipse 100% 100% at 50% 48%, #000 84%, transparent 100%)',
         }}
       >
         <Box
