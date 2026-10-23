@@ -28,14 +28,14 @@ const CONTENT_TYPES = {
 const STORAGE_DOWN_MESSAGE = 'File storage is unavailable. The storage folder cannot be reached, so uploads are paused.';
 const ABSOLUTE_PATH_MESSAGE = 'Storage folder must be an absolute path. Relative paths are not allowed. Use a full local path, a mapped drive such as Z:\\launchpad, or a network share such as \\\\server\\share\\launchpad.';
 const CODE_FOLDER_MESSAGE = 'Storage folder cannot be inside the application code folders (backend or frontend).';
-const NOT_WRITABLE_MESSAGE = 'Storage folder is not reachable or is not writable. Ignition must be able to write, read, and delete a test file there.';
+const NOT_WRITABLE_MESSAGE = 'Storage folder is not reachable or is not writable. Launchpad must be able to write, read, and delete a test file there.';
 const VIRTUAL_PATH_MESSAGE = 'Storage folder cannot be inside /proc, /sys, or /dev.';
 const DEVICE_PATH_MESSAGE = 'Storage folder cannot use a Windows device path (\\\\?\\ or \\\\.\\).';
 const ADMIN_SHARE_MESSAGE = 'Storage folder cannot be a Windows admin share such as \\\\server\\C$.';
 const WINDOWS_DIR_MESSAGE = 'Storage folder cannot be inside the Windows directory.';
 const PARENT_MISSING_MESSAGE = 'The parent folder does not exist, so the storage folder was not created.';
 const TMP_CAUTION = 'This folder is under /tmp and can disappear when the computer restarts.';
-const REPO_CAUTION = 'This folder is inside the Ignition project. Prefer a folder outside the repository.';
+const REPO_CAUTION = 'This folder is inside the Launchpad project. Prefer a folder outside the repository.';
 
 let configuredRoot = null;
 let markerByRoot = new Map();

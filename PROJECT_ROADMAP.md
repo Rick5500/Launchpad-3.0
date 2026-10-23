@@ -1,7 +1,7 @@
-# Ignition Project Roadmap
+# Launchpad 3.0 Project Roadmap
 
 ## Vision
-Ignition is a manufacturing and work-order management platform that connects administrators, customers, operators, and production teams in a single unified web application. The product is designed to streamline work order entry, production tracking, barcode scanning, delivery scheduling, and role-based dashboards while providing a clean, extensible architecture for future growth.
+Launchpad 3.0 will be a modern manufacturing and work-order management platform that connects administrators, customers, operators, and production teams in a single unified web application. The product is designed to streamline work order entry, production tracking, barcode scanning, delivery scheduling, and role-based dashboards while providing a clean, extensible architecture for future growth.
 
 ## Technology Stack
 - Frontend: React with Vite
@@ -63,7 +63,7 @@ Services, users, system settings, notification toggles, the activity log, barcod
 - Document APIs and features in repository docs.
 
 ## Release Notes
-- **v0.1.0**: Initial project scaffold.
+- **v0.1.0**: Initial project scaffold created for Launchpad 3.0.
 - **v0.1.1**: Added backend auth scaffolding and login screen.
 - **v0.1.2**: Migrated frontend to Vite + React and added `/health` backend endpoint.
 - **v0.8.0**: Added staff reporting with CSV export and in-app delivery and work-order notifications. Email delivery is stubbed and off by default.

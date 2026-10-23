@@ -92,22 +92,12 @@
   min-width: 0;
 }
 
-.wo-logo-card {
-  display: block;
-  flex: 0 1 auto;
-  width: 1.75in;
-  max-width: 48%;
-  box-sizing: border-box;
-  background: #fff;
-  border-radius: 8px;
-  padding: 3px 6px;
-  line-height: 0;
-}
-
 .wo-logo {
-  width: 100%;
+  width: 108px;
+  max-width: 34%;
   height: auto;
   display: block;
+  flex: 0 0 auto;
   background: transparent;
 }
 
@@ -461,9 +451,8 @@
     align-items: flex-start;
   }
 
-  .wo-logo-card {
-    width: min(200px, 70%);
-    max-width: 70%;
+  .wo-logo {
+    max-width: 200px;
   }
 
   .wo-number {
@@ -763,7 +752,6 @@
   }
 
   .wo-band,
-  .wo-logo-card,
   .wo-section-title,
   .wo-flag,
   .wo-flag-rush,
