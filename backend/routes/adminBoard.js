@@ -42,7 +42,9 @@ router.get('/activity', async (req, res) => {
   try {
     const access = await users.loadAccess(req.user.userId);
     const scope = adminBoard.resolveBoardScope(access, req.query);
-    sendBoard(res, await adminBoard.listActivity(req.query, false, scope.restricted ? scope.department : null));
+    sendBoard(res, await adminBoard.listActivity(req.query, false, scope.restricted ? scope.department : null, {
+      includeQuotes: adminBoard.canSeeQuoteRequests(access),
+    }));
   } catch (err) {
     sendError(res, err, 'ADMIN BOARD ACTIVITY ERROR:', 'Failed to load activity');
   }

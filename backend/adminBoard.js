@@ -7,6 +7,7 @@ const MAX_PAGE_SIZE = 100;
 const ACTIVITY_PREVIEW = 8;
 const SCAN_PREVIEW = 10;
 const APPROVAL_PREVIEW = 5;
+const QUOTE_PREVIEW = 5;
 const STORED_ALERT_LIMIT = 20;
 
 // Entry-queue stat cards. Seeded departments use sort_order 1 through 5 for
@@ -297,7 +298,7 @@ function presentActivity(row, timeZone, now) {
     action: row.action,
     entity_type: row.entity_type,
     entity_id: row.entity_id,
-    external_id: detail.external_id || detail.order_number || null,
+    external_id: detail.external_id || detail.order_number || (row.entity_type === 'quote_request' ? (detail.project_name || null) : null),
     summary,
     manual: Boolean(detail.manual),
     note: detail.note || null,
@@ -696,16 +697,28 @@ async function countCategories(scope, now) {
   return counts;
 }
 
-async function listActivity(query, preview, department) {
+function canSeeQuoteRequests(user) {
+  const role = user && user.role;
+  return role === 'admin' || role === 'manager';
+}
+
+async function listActivity(query, preview, department, options = {}) {
+  const includeQuotes = Boolean(options && options.includeQuotes);
   const limit = preview ? ACTIVITY_PREVIEW : parseLimit(query.limit, 20);
   const offset = preview ? 0 : parseOffset(query.offset);
   const window = completionWindow();
   const now = new Date();
   const params = [];
+  const quoteClause = `lower(coalesce(a.entity_type, '')) = 'quote_request'`;
   let where = '';
-  if (department) {
+  if (department && includeQuotes) {
+    where = `WHERE (${activityDepartmentSql('a')} OR ${quoteClause})`;
+    params.push(department, department, department, department);
+  } else if (department) {
     where = `WHERE ${activityDepartmentSql('a')}`;
     params.push(department, department, department, department);
+  } else if (!includeQuotes) {
+    where = `WHERE lower(coalesce(a.entity_type, '')) != 'quote_request'`;
   }
   const totalRow = await get(`SELECT COUNT(*) AS count FROM activity_log a ${where}`, params);
   const rows = await all(
@@ -809,7 +822,72 @@ async function listScans(limit, department) {
   }));
 }
 
-async function loadAlerts(now = new Date(), scope = null) {
+async function listOpenQuoteRequests() {
+  const [newRow, acceptedRow, rows] = await Promise.all([
+    get(`SELECT COUNT(*) AS count FROM quote_requests WHERE status = 'New'`),
+    get(`SELECT COUNT(*) AS count FROM quote_requests WHERE status = 'Accepted' AND converted_order_id IS NULL`),
+    all(
+      `SELECT q.id, q.project_name, q.needed_by, q.status,
+              COALESCE(NULLIF(trim(u.display_name), ''), NULLIF(trim(u.username), ''), '') AS customer_name
+       FROM quote_requests q
+       LEFT JOIN users u ON u.id = q.customer_id
+       WHERE q.status = 'New'
+          OR (q.status = 'Accepted' AND q.converted_order_id IS NULL)
+       ORDER BY datetime(COALESCE(q.updated_at, q.created_at)) DESC, q.id DESC
+       LIMIT ?`,
+      [QUOTE_PREVIEW]
+    ),
+  ]);
+  return {
+    new_count: newRow ? newRow.count : 0,
+    accepted_count: acceptedRow ? acceptedRow.count : 0,
+    quotes: rows.map((row) => ({
+      id: row.id,
+      customer_name: row.customer_name || '',
+      project_name: row.project_name || '',
+      needed_by: row.needed_by || null,
+      needed_by_display: formatWall(row.needed_by),
+      status: row.status,
+    })),
+  };
+}
+
+async function quoteRequestAlerts() {
+  const [newRow, acceptedRow] = await Promise.all([
+    get(`SELECT COUNT(*) AS count FROM quote_requests WHERE status = 'New'`),
+    get(`SELECT COUNT(*) AS count FROM quote_requests WHERE status = 'Accepted' AND converted_order_id IS NULL`),
+  ]);
+  const alerts = [];
+  const newCount = newRow ? newRow.count : 0;
+  const acceptedCount = acceptedRow ? acceptedRow.count : 0;
+  if (newCount > 0) {
+    alerts.push({
+      id: 'quote-requests',
+      severity: 'info',
+      source: 'computed',
+      message: 'New quote requests',
+      detail: `${newCount} new quote ${newCount === 1 ? 'request is' : 'requests are'} waiting.`,
+      count: newCount,
+      created_at: null,
+      relative: null,
+    });
+  }
+  if (acceptedCount > 0) {
+    alerts.push({
+      id: 'quote-accepted',
+      severity: 'info',
+      source: 'computed',
+      message: 'Accepted quotes',
+      detail: `${acceptedCount} accepted ${acceptedCount === 1 ? 'quote is' : 'quotes are'} ready to convert.`,
+      count: acceptedCount,
+      created_at: null,
+      relative: null,
+    });
+  }
+  return alerts;
+}
+
+async function loadAlerts(now = new Date(), scope = null, options = {}) {
   const window = completionWindow();
   const [departments, activeRows, deliveries, backup, stored] = await Promise.all([
     all(`SELECT name, color, sort_order, is_active, show_on_board FROM departments ORDER BY sort_order, name`),
@@ -858,6 +936,9 @@ async function loadAlerts(now = new Date(), scope = null) {
   }
 
   const alerts = [];
+  if (options && options.includeQuotes) {
+    alerts.push(...await quoteRequestAlerts());
+  }
   if (emptyNames.length) {
     const allEmpty = tracked > 0 && emptyNames.length === tracked;
     const listed = emptyNames.length === 1
@@ -948,6 +1029,7 @@ async function loadAlerts(now = new Date(), scope = null) {
 
 async function loadSummary(user, query) {
   const scope = resolveBoardScope(user, query || {});
+  const includeQuotes = canSeeQuoteRequests(user);
   const now = new Date();
   const window = completionWindow(now);
   const [
@@ -960,6 +1042,7 @@ async function loadSummary(user, query) {
     approvals,
     scans,
     alerts,
+    quoteRequests,
   ] = await Promise.all([
     all(`SELECT name, color, sort_order, is_active, show_on_board FROM departments ORDER BY sort_order, name`),
     all(
@@ -978,10 +1061,11 @@ async function loadSummary(user, query) {
          AND datetime(coalesce(wo.updated_at, wo.created_at)) < datetime(?)`,
       [window.start, window.end]
     ),
-    listActivity({}, true, scope.restricted ? scope.department : null),
+    listActivity({}, true, scope.restricted ? scope.department : null, { includeQuotes }),
     listApprovals({}, true, scope.restricted ? scope.department : null),
     listScans(SCAN_PREVIEW, scope.restricted ? scope.department : null),
-    loadAlerts(now, scope),
+    loadAlerts(now, scope, { includeQuotes }),
+    includeQuotes ? listOpenQuoteRequests() : Promise.resolve(null),
   ]);
 
   const activeByLower = new Map();
@@ -1059,6 +1143,7 @@ async function loadSummary(user, query) {
     alerts,
     viewer: presentViewer(scope),
   };
+  if (quoteRequests) body.quote_requests = quoteRequests;
 
   if (!scope.restricted) return body;
 
@@ -1173,6 +1258,7 @@ module.exports = {
   FINISHED_SQL,
   COMPLETE_SCOPE_SQL,
   resolveBoardScope,
+  canSeeQuoteRequests,
   loadSummary,
   listWorkOrders,
   listActivity,

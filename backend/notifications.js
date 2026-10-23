@@ -8,7 +8,7 @@ const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
 const STAFF_ROLES = new Set(['admin', 'manager', 'operator']);
-const QUOTE_NOTIFICATION_TYPES = ['quote_ready', 'quote_accepted'];
+const QUOTE_NOTIFICATION_TYPES = ['quote_ready', 'quote_accepted', 'quote_requested', 'quote_declined'];
 
 function dueSoonMinutes() {
   const raw = process.env.DELIVERY_DUE_SOON_MINUTES;
@@ -232,6 +232,30 @@ function notifyQuoteAccepted(item, cb) {
     customerId: null,
     quoteRequestId: item.quoteRequestId,
     dedupeKey: item.dedupeKey || `quote_accepted:${item.quoteRequestId}`,
+  }], cb);
+}
+
+function notifyQuoteRequested(item, cb) {
+  if (!item || !item.quoteRequestId) return cb(null, []);
+  insertNotifications([{
+    type: 'quote_requested',
+    title: item.title || 'New quote request',
+    body: item.body || '',
+    customerId: null,
+    quoteRequestId: item.quoteRequestId,
+    dedupeKey: item.dedupeKey || `quote_requested:${item.quoteRequestId}`,
+  }], cb);
+}
+
+function notifyQuoteDeclined(item, cb) {
+  if (!item || !item.quoteRequestId) return cb(null, []);
+  insertNotifications([{
+    type: 'quote_declined',
+    title: item.title || 'Quote declined',
+    body: item.body || '',
+    customerId: null,
+    quoteRequestId: item.quoteRequestId,
+    dedupeKey: item.dedupeKey || `quote_declined:${item.quoteRequestId}`,
   }], cb);
 }
 
@@ -472,6 +496,8 @@ module.exports = {
   notifyProofDecision,
   notifyQuoteReady,
   notifyQuoteAccepted,
+  notifyQuoteRequested,
+  notifyQuoteDeclined,
   checkDeliveryNotifications,
   listNotifications,
   markRead,

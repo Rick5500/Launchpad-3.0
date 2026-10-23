@@ -369,13 +369,113 @@ async function createQuote(user, body) {
     });
     return inserted.lastID;
   });
-  return getQuote(user, id);
+  const quote = await getQuote(user, id);
+  const customerLabel = quote.customer_name || 'a customer';
+  try {
+    await notify(notifications.notifyQuoteRequested, {
+      quoteRequestId: id,
+      title: `New quote request from ${customerLabel}: ${quote.project_name}`,
+      body: quote.needed_by ? `Needed by ${quote.needed_by}.` : '',
+      dedupeKey: `quote_requested:${id}`,
+    });
+  } catch (err) {
+    console.error('QUOTE REQUEST NOTIFICATION ERROR:', err);
+  }
+  try {
+    await emailNewQuoteRequest(user, quote);
+  } catch (err) {
+    console.error('QUOTE REQUEST EMAIL ERROR:', err);
+  }
+  return quote;
 }
 
 function notify(fn, item) {
   return new Promise((resolve, reject) => {
     fn(item, (err, created) => (err ? reject(err) : resolve(created || [])));
   });
+}
+
+async function inAppEventEnabled(eventKey) {
+  const row = await get(
+    `SELECT enabled FROM notification_settings WHERE event_key = ? AND channel = 'in_app'`,
+    [eventKey]
+  );
+  if (!row) return true;
+  return Number(row.enabled) !== 0;
+}
+
+async function quoteStaffEmails() {
+  const rows = await all(
+    `SELECT email FROM users
+     WHERE role IN ('admin', 'manager')
+       AND COALESCE(is_active, 1) = 1
+       AND email IS NOT NULL
+       AND trim(email) != ''
+     ORDER BY id`
+  );
+  const addresses = [];
+  const seen = new Set();
+  for (const row of rows) {
+    const parsed = mailer.parseAddressList(row.email, { max: 1, field: 'email' });
+    if (parsed.error || !parsed.value || parsed.value.length !== 1) continue;
+    const address = parsed.value[0];
+    const key = address.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    addresses.push(address);
+  }
+  return addresses;
+}
+
+async function emailNewQuoteRequest(user, quote) {
+  if (!mailer.isConfigured()) return { status: 'not_configured', recipients: [] };
+  if (!(await inAppEventEnabled('quote_requested'))) return { status: 'disabled', recipients: [] };
+  const addresses = await quoteStaffEmails();
+  if (!addresses.length) return { status: 'no_recipients', recipients: [] };
+  const slot = mailer.reserveEmail(actorId(user));
+  if (!slot.allowed) return { status: 'rate_limited', recipients: [] };
+  let letterhead;
+  try {
+    letterhead = await loadLetterhead();
+  } catch (err) {
+    console.error('LETTERHEAD ERROR:', err.message || err);
+    letterhead = { name: '', address_lines: [], phone: '' };
+  }
+  const rendered = mailer.renderQuoteRequestEmail({
+    letterhead,
+    customerName: quote.customer_name,
+    projectName: quote.project_name,
+    neededBy: quote.needed_by,
+    link: mailer.staffQuoteLink(quote.id),
+  });
+  const result = await mailer.deliver({
+    to: addresses[0],
+    cc: addresses.slice(1),
+    subject: rendered.subject,
+    text: rendered.text,
+    html: rendered.html,
+  });
+  if (result.status === 'sent' || result.status === 'failed') {
+    try {
+      await activityLog.record(
+        actorId(user),
+        result.status === 'sent' ? 'quote_request.staff_emailed' : 'quote_request.staff_email_failed',
+        'quote_request',
+        quote.id,
+        {
+          project_name: quote.project_name,
+          recipients: addresses,
+          subject: rendered.subject,
+          message: result.status === 'sent'
+            ? `Emailed managers about the quote request for ${quote.project_name}`
+            : `Could not email managers about the quote request for ${quote.project_name}`,
+        }
+      );
+    } catch (err) {
+      console.error('QUOTE REQUEST EMAIL LOG ERROR:', err);
+    }
+  }
+  return { status: result.status, recipients: result.recipients };
 }
 
 async function emailQuote(user, quote, version) {
@@ -570,6 +670,21 @@ async function decide(user, rawId, decision, body) {
       });
     } catch (err) {
       console.error('QUOTE ACCEPT NOTIFICATION ERROR:', err);
+    }
+  } else {
+    const reasonText = String(reason || '').trim();
+    const who = quote.customer_name || 'A customer';
+    try {
+      await notify(notifications.notifyQuoteDeclined, {
+        quoteRequestId: id,
+        title: `Quote declined for ${saved.projectName}`,
+        body: reasonText
+          ? `${who} declined the quote. Reason: ${reasonText}`
+          : `${who} declined the quote.`,
+        dedupeKey: `quote_declined:${id}:v${saved.version}`,
+      });
+    } catch (err) {
+      console.error('QUOTE DECLINE NOTIFICATION ERROR:', err);
     }
   }
   return quote;

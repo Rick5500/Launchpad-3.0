@@ -519,7 +519,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_proofs_scope_version ON proofs(order_id, I
 CREATE INDEX IF NOT EXISTS idx_proof_files_proof ON proof_files(proof_id);
 
 -- In-app notifications. One row per event. Read state is per user in notification_reads.
--- type: delivery_overdue, delivery_due_soon, work_order_on_hold, work_order_completed, work_order_rush, files_shared, proof_ready, proof_decision, quote_ready, quote_accepted
+-- type: delivery_overdue, delivery_due_soon, work_order_on_hold, work_order_completed, work_order_rush, files_shared, proof_ready, proof_decision, quote_ready, quote_accepted, quote_requested, quote_declined
 CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   type TEXT NOT NULL,
