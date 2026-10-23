@@ -94,10 +94,10 @@ export default function FilesFromAccent({ orderId, workOrderId = null, canManage
   function noticeFor(email, configured) {
     const status = email && email.status;
     if (status === 'sent') return 'Files sent. The customer was emailed.';
-    if (status === 'rate_limited') return 'Files shared in Ignition. Too many emails. Try again later.';
-    if (status === 'not_configured' || configured === false) return "Email isn't set up. Files are still shared in Ignition.";
-    if (status === 'failed') return 'Files shared in Ignition. The email could not be sent.';
-    return 'Files shared in Ignition. No email was sent.';
+    if (status === 'rate_limited') return 'Files shared in Launchpad. Too many emails. Try again later.';
+    if (status === 'not_configured' || configured === false) return "Email isn't set up. Files are still shared in Launchpad.";
+    if (status === 'failed') return 'Files shared in Launchpad. The email could not be sent.';
+    return 'Files shared in Launchpad. No email was sent.';
   }
 
   async function sendFiles(event) {
@@ -246,10 +246,10 @@ export default function FilesFromAccent({ orderId, workOrderId = null, canManage
         <Box component="form" onSubmit={sendFiles}>
           <DialogContent sx={{ display: 'grid', gap: 2 }}>
             {mail && !mail.configured ? (
-              <Alert severity="warning">Email isn't set up. Files are still shared in Ignition.</Alert>
+              <Alert severity="warning">Email isn't set up. Files are still shared in Launchpad.</Alert>
             ) : null}
             {mail && mail.configured && mail.public_url_set === false ? (
-              <Alert severity="info">The public app address is not set, so the email link may not open Ignition.</Alert>
+              <Alert severity="info">The public app address is not set, so the email link may not open Launchpad.</Alert>
             ) : null}
             <Button component="label" variant="outlined" sx={{ justifySelf: 'start', borderColor: brand.navy, color: brand.navy }}>
               Choose files

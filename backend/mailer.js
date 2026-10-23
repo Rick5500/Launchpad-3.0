@@ -68,15 +68,6 @@ function fromAddress(value) {
   return text;
 }
 
-const DEFAULT_SENDER_NAME = 'Ignition';
-
-function mailFromHeader(value) {
-  const text = fromAddress(value);
-  if (!text) return '';
-  if (/<[^<>]+>\s*$/.test(text)) return text;
-  return `${DEFAULT_SENDER_NAME} <${text}>`;
-}
-
 function isConfigured() {
   const smtp = smtpSettings();
   if (!smtp.host || smtp.host.length > 253) return false;
@@ -87,7 +78,7 @@ function isConfigured() {
 
 function publicFrom() {
   if (!isConfigured()) return null;
-  return mailFromHeader(smtpSettings().from);
+  return fromAddress(smtpSettings().from);
 }
 
 function publicAppUrl() {
@@ -250,7 +241,7 @@ function renderShareEmail({ letterhead, orderNumber, message, fileNames, link })
     'Sign in to open these files:',
     link,
     '',
-    'This link opens Ignition. You need to sign in. Files are not available from a public link.',
+    'This link opens Launchpad. You need to sign in. Files are not available from a public link.',
     '',
     footer.join('\n'),
   ].join('\n').replace(/\n{3,}/g, '\n\n');
@@ -309,7 +300,7 @@ function renderTransferEmail({ letterhead, subject, message, fileNames, link }) 
     'Sign in to open these files:',
     link,
     '',
-    'This link opens Ignition. You need to sign in. Files are not available from a public link.',
+    'This link opens Launchpad. You need to sign in. Files are not available from a public link.',
     '',
     footer.join('\n'),
   ].join('\n').replace(/\n{3,}/g, '\n\n');
@@ -370,7 +361,7 @@ function renderProofEmail({ letterhead, orderNumber, version, message, fileNames
     'Sign in to review this proof. You can approve it or request changes.',
     link,
     '',
-    'This link opens Ignition. You need to sign in. The proof is not available from a public link.',
+    'This link opens Launchpad. You need to sign in. The proof is not available from a public link.',
     '',
     footer.join('\n'),
   ].join('\n').replace(/\n{3,}/g, '\n\n');
@@ -464,13 +455,13 @@ function renderProofChangesEmail({ letterhead, orderNumber, version, comment, cu
 }
 
 function renderTestEmail({ letterhead }) {
-  const name = letterhead && letterhead.name ? letterhead.name : 'Ignition';
+  const name = letterhead && letterhead.name ? letterhead.name : 'Launchpad';
   const footer = footerLines(letterhead);
   const appUrl = publicAppUrl();
   const text = [
     name,
     '',
-    'This is a test email from Ignition.',
+    'This is a test email from Launchpad.',
     'If you received it, mail sending is working.',
     appUrl ? `App: ${appUrl}` : '',
     '',
@@ -487,7 +478,7 @@ function renderTestEmail({ letterhead }) {
         </td></tr>
         <tr><td style="padding:24px;">
           <h1 style="margin:0 0 12px;font-size:20px;color:#0A2F6E;">Test email</h1>
-          <p style="margin:0 0 12px;line-height:1.5;">This is a test email from Ignition. If you received it, mail sending is working.</p>
+          <p style="margin:0 0 12px;line-height:1.5;">This is a test email from Launchpad. If you received it, mail sending is working.</p>
           ${appUrl ? `<p style="margin:0;font-size:13px;color:#5E6A78;">App: ${escapeHtml(appUrl)}</p>` : ''}
         </td></tr>
         <tr><td style="padding:16px 24px;background:#F4F7FB;border-top:1px solid #E2E8F0;font-size:13px;color:#5E6A78;line-height:1.5;">
@@ -542,7 +533,7 @@ async function deliver({ to, cc, subject, text, html }) {
   const addresses = [to, ...(cc || [])].filter(Boolean);
   try {
     const info = await createTransport().sendMail({
-      from: mailFromHeader(smtpSettings().from),
+      from: fromAddress(smtpSettings().from),
       to,
       cc: cc && cc.length ? cc : undefined,
       subject,

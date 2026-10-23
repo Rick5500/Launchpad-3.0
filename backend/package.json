@@ -1,7 +1,7 @@
 {
   "name": "launchpad-backend",
   "version": "0.1.0",
-  "description": "Backend for Ignition",
+  "description": "Backend for Launchpad 3.0",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

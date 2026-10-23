@@ -42,7 +42,6 @@ import UploadFileIcon from '@mui/icons-material/UploadFile';
 import FolderSharedIcon from '@mui/icons-material/FolderShared';
 import MarkEmailUnreadIcon from '@mui/icons-material/MarkEmailUnread';
 import { brand } from '../brand';
-import BrandLogo, { NAV_LOGO_CARD_MAX_WIDTH } from './BrandLogo';
 import { useDocumentTitle } from '../useDocumentTitle';
 import NotificationBell from './NotificationBell';
 import HeaderScan from './HeaderScan';
@@ -116,7 +115,7 @@ function pageTitle(pathname) {
     ['/orders', 'Order'],
   ];
   const match = titles.find(([route]) => pathname === route || pathname.startsWith(`${route}/`));
-  return match ? match[1] : 'Ignition';
+  return match ? match[1] : 'LaunchPad 3.0';
 }
 
 export default function Layout({ user, onLogout }) {
@@ -144,8 +143,13 @@ export default function Layout({ user, onLogout }) {
 
   const drawer = (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <Box sx={{ px: 1.5, pt: 1.75, pb: 1 }}>
-        <BrandLogo onNavy animated sx={{ width: '100%', maxWidth: NAV_LOGO_CARD_MAX_WIDTH, mx: 'auto' }} />
+      <Box sx={{ px: 1, pt: 1.5, pb: 1 }}>
+        <Box
+          component="img"
+          src="/logo.png"
+          alt="Accent Imaging"
+          sx={{ width: '100%', height: 'auto', display: 'block' }}
+        />
       </Box>
       <List sx={{ px: 1, flex: 1, overflow: 'auto' }}>
         {items.map((item) => {
@@ -323,7 +327,7 @@ export default function Layout({ user, onLogout }) {
         </Box>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', pt: 2, color: brand.muted, fontSize: 12 }}>
           <span>© 2026 Accent Imaging, Inc. All rights reserved.</span>
-          <span>Ignition</span>
+          <span>LaunchPad 3.0</span>
         </Box>
       </Box>
     </Box>

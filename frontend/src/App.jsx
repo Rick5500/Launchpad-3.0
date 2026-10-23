@@ -32,7 +32,6 @@ import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import theme from './theme';
 import { brand } from './brand';
-import BrandLogo from './components/BrandLogo';
 import { safeAppPath } from './safePath';
 import { useDocumentTitle } from './useDocumentTitle';
 
@@ -154,12 +153,15 @@ function LoginScreen() {
   }, [mode, alertText]);
 
   return (
-    <Box sx={{ minHeight: '100vh', bgcolor: brand.navy, display: 'flex', flexDirection: 'column', p: 2, boxSizing: 'border-box' }}>
-      <Box sx={{ width: 440, maxWidth: '100%', m: 'auto', bgcolor: '#fff', borderRadius: 2, boxShadow: 6, overflow: 'hidden' }}>
-        <Box sx={{ px: { xs: 2.5, sm: 4 }, pt: { xs: 2.5, sm: 3 } }}>
-          <BrandLogo animated sx={{ width: '100%', maxWidth: 360, mx: 'auto' }} />
-        </Box>
-        <Box sx={{ p: { xs: 2.5, sm: 4 }, pt: 2 }}>
+    <Box sx={{ minHeight: '100vh', bgcolor: brand.navy, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2.5, p: 2 }}>
+      <Box
+        component="img"
+        src="/logo.png"
+        alt="Accent Imaging"
+        sx={{ width: { xs: 'min(100%, 420px)', sm: 450 }, height: 'auto', display: 'block' }}
+      />
+      <Box sx={{ width: 440, maxWidth: '100%', bgcolor: '#fff', borderRadius: 2, boxShadow: 6, overflow: 'hidden' }}>
+        <Box sx={{ p: 4 }}>
         {mode === 'sign-in' ? (
           <>
             <Typography variant="h5" sx={{ color: brand.navy, fontWeight: 700, mb: 0.5 }}>

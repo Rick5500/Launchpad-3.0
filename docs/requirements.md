@@ -1,4 +1,4 @@
-# Requirements — Ignition
+# Requirements — Launchpad 3.0
 
 Scope (v1 scaffold):
 - User login / authentication (basic user table + roles)

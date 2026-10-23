@@ -3,7 +3,6 @@ import { Box, Button, Typography } from '@mui/material';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { useNavigate } from 'react-router-dom';
 import { brand } from '../brand';
-import BrandLogo, { NAV_LOGO_CARD_MAX_WIDTH } from './BrandLogo';
 import { useAuth } from '../context/AuthContext';
 import NotificationBell from './NotificationBell';
 
@@ -26,12 +25,15 @@ export default function CustomerShell({ title, welcome, children, onLogout, extr
           gap: { xs: 1.5, md: 2 },
         }}
       >
-        <BrandLogo
-          onNavy
-          animated
+        <Box
+          component="img"
+          src="/logo.png"
+          alt="Accent Imaging"
           sx={{
-            width: '100%',
-            maxWidth: NAV_LOGO_CARD_MAX_WIDTH,
+            height: { xs: 68, md: 80 },
+            width: 'auto',
+            maxWidth: '100%',
+            display: 'block',
             justifySelf: { xs: 'center', md: 'start' },
           }}
         />
