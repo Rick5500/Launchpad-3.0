@@ -28,6 +28,7 @@ import LocalShippingOutlinedIcon from '@mui/icons-material/LocalShippingOutlined
 import BrushOutlinedIcon from '@mui/icons-material/BrushOutlined';
 import CloseIcon from '@mui/icons-material/Close';
 import CustomerShell from '../components/CustomerShell';
+import BrandLogo from '../components/BrandLogo';
 import { useDocumentTitle } from '../useDocumentTitle';
 import { useAuth } from '../context/AuthContext';
 import { authFetch } from '../api';
@@ -1158,7 +1159,7 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
         <Box className="no-print" sx={{ display: 'grid', gap: 2 }}>
           <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderTop: `4px solid ${brand.orange}`, borderRadius: 2, p: { xs: 2, sm: 2.5 } }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1 }}>
-              <Box component="img" src="/logo.png" alt="" sx={{ height: 36, width: 'auto', display: 'block' }} />
+              <BrandLogo sx={{ width: { xs: 168, sm: 200 }, flex: '0 0 auto' }} />
               <Typography sx={{ color: brand.orange, fontWeight: 800, letterSpacing: '0.08em', fontSize: 12 }}>
                 {isStaff ? 'STAFF ORDER' : 'CUSTOMER ORDER'}
               </Typography>

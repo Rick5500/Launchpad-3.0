@@ -276,7 +276,7 @@ function WorkOrderSheet({ payload, sheet }) {
             <td>
       <header className="wo-band">
         <div className="wo-band-main">
-          <img className="wo-logo" src="/logo.png" alt="Accent Imaging" />
+          <img className="wo-logo" src="/brand/logo-print.png" alt="Launchpad" />
           <div className="wo-band-copy">
             <div className="wo-kicker">WORK ORDER</div>
             <div className="wo-number">{display(sheet.barcode_value, '')}</div>
