@@ -1,5 +1,5 @@
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Alert,
   Box,
@@ -486,7 +486,16 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const isStaff = user?.role === 'admin' || user?.role === 'manager' || user?.role === 'operator';
-  useDocumentTitle(inboundEmail ? 'Email order' : (isStaff ? 'Create Order' : 'Customer Order Form'));
+  const [searchParams] = useSearchParams();
+  const fromQuote = searchParams.get('fromQuote');
+  const [quoteRequestId, setQuoteRequestId] = useState(null);
+  useDocumentTitle(
+    inboundEmail
+      ? 'Email order'
+      : quoteRequestId
+        ? 'Order from quote'
+        : (isStaff ? 'Create Order' : 'Customer Order Form')
+  );
   const draftApplied = useRef(false);
 
   const [options, setOptions] = useState({ services: [], delivery_methods: [], due_window: null, payment_methods: PAYMENT_METHODS });
@@ -547,6 +556,52 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
     if (!user || isStaff) return;
     applyProfile(user, true);
   }, [user, isStaff]);
+
+  useEffect(() => {
+    if (!fromQuote || inboundEmail) return undefined;
+    const id = Number(fromQuote);
+    if (!Number.isInteger(id) || id <= 0) return undefined;
+    let cancelled = false;
+    authFetch(`/api/quote-requests/${id}/order-draft`)
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || 'Unable to open this quote');
+        return body;
+      })
+      .then((draft) => {
+        if (cancelled) return;
+        setQuoteRequestId(draft.quote_request_id);
+        if (draft.customer_id) setCustomerId(String(draft.customer_id));
+        setCompany(draft.company || '');
+        setContactName(draft.contact_name || '');
+        setPhone(draft.phone || '');
+        setEmail(draft.email || '');
+        setAddress1(draft.address_line1 || '');
+        setAddress2(draft.address_line2 || '');
+        setCity(draft.city || '');
+        setStateName(draft.state || '');
+        setZip(draft.zip || '');
+        if (draft.project_name) setProjectName(draft.project_name);
+        if (draft.notes) setNotes(draft.notes);
+        if (draft.due_date) setDueDate(draft.due_date);
+        if (draft.files?.length) {
+          setOriginalsSource(ORIGINALS_FILES);
+          setLooseFiles(draft.files.map((file) => ({
+            key: `quote-${file.id}`,
+            id: file.id,
+            original_name: file.original_name,
+            size_bytes: file.size_bytes,
+            status: 'uploaded',
+          })));
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setLoadError(err.message || 'Unable to open this quote');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [fromQuote, inboundEmail]);
 
   useEffect(() => {
     if (!inboundEmail || draftApplied.current) return;
@@ -942,6 +997,7 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
     }
     if (!seeShipLines) payload.delivery_method = deliveryMethod;
     if (isStaff) payload.customer_id = Number(customerId);
+    if (quoteRequestId) payload.quote_request_id = quoteRequestId;
 
     setSubmitting(true);
     try {
@@ -1165,11 +1221,13 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
               </Typography>
             </Box>
             <Typography variant="h4" component="h1" sx={{ color: brand.navy, fontWeight: 800, fontSize: { xs: 26, sm: 32 }, lineHeight: 1.15 }}>
-              {inboundEmail ? 'Create order from this email' : (isStaff ? 'Create Order' : 'Place an order')}
+              {inboundEmail ? 'Create order from this email' : quoteRequestId ? 'Create order from quote' : (isStaff ? 'Create Order' : 'Place an order')}
             </Typography>
             <Typography sx={{ mt: 1, color: brand.muted, maxWidth: 760 }}>
               {inboundEmail
                 ? 'This is a draft. Review the customer, the job, and the files from the email, then create the order. Nothing is created until you submit.'
+                : quoteRequestId
+                  ? 'This order is filled in from the accepted quote. Choose the services, payment, and due time, then submit. The order is checked the same way as any other order.'
                 : isStaff
                   ? 'Create an order for a customer. Each step stays open, so required fields are on this page. Review the work orders, then submit.'
                   : 'Place an order with Accent Imaging. Company, contact, phone, and email start from your account. Fill anything still blank, then review and submit.'}

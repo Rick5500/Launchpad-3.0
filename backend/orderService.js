@@ -14,6 +14,7 @@ const {
   hoursLabel,
 } = require('./deliveryRules');
 const activityLog = require('./activityLog');
+const quotes = require('./quotes');
 const { parsePostalAddress } = require('./fields');
 const {
   PAYMENT_METHODS,
@@ -1069,6 +1070,10 @@ async function createOrder(user, body, now = new Date()) {
         message: `Created order ${orderNumber}`,
       })]
     );
+
+    if (payload.quote_request_id != null && String(payload.quote_request_id).trim() !== '') {
+      await quotes.attachConversion(tx, user, payload.quote_request_id, newOrderId, customerId);
+    }
 
     return newOrderId;
   });

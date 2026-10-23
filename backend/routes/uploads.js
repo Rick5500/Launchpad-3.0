@@ -180,14 +180,14 @@ router.delete('/:id', auth.requireAuth, uploadRoles, async (req, res) => {
   }
   try {
     const file = await get(
-      'SELECT id, order_id, customer_id, stored_name, storage_root FROM order_files WHERE id = ?',
+      'SELECT id, order_id, quote_request_id, customer_id, stored_name, storage_root FROM order_files WHERE id = ?',
       [id]
     );
     if (!file || !(await canAccessFile(req.user, file))) {
       return res.status(404).json({ error: 'File not found' });
     }
-    if (req.user.role === 'customer' && file.order_id) {
-      return res.status(403).json({ error: 'Files attached to an order cannot be deleted' });
+    if (req.user.role === 'customer' && (file.order_id || file.quote_request_id)) {
+      return res.status(403).json({ error: 'Files attached to a quote or an order cannot be deleted' });
     }
     await run('DELETE FROM order_files WHERE id = ?', [id]);
     removeStored(file.stored_name, file.storage_root);

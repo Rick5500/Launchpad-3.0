@@ -54,6 +54,21 @@ export default function CustomerShell({ title, welcome, children, onLogout, extr
           <Button color="inherit" onClick={() => navigate('/proofs')}>
             Proofs
           </Button>
+          {user?.role === 'admin' || user?.role === 'manager' ? (
+            <Button color="inherit" onClick={() => navigate('/quote-requests')} sx={{ fontWeight: 700 }}>
+              Quote Requests
+            </Button>
+          ) : null}
+          {user?.role === 'customer' ? (
+            <Button color="inherit" onClick={() => navigate('/quotes/new')} sx={{ fontWeight: 700 }}>
+              Request a Quote
+            </Button>
+          ) : null}
+          {user?.role === 'customer' ? (
+            <Button color="inherit" onClick={() => navigate('/quotes')} sx={{ fontWeight: 700 }}>
+              My Quotes
+            </Button>
+          ) : null}
           {extra}
           <NotificationBell user={user} />
           <Button color="inherit" startIcon={<LogoutIcon />} onClick={onLogout}>

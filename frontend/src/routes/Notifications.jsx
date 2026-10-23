@@ -21,6 +21,8 @@ const typeLabels = {
   files_shared: 'Files',
   proof_ready: 'Proof',
   proof_decision: 'Proof',
+  quote_ready: 'Quote',
+  quote_accepted: 'Quote',
 };
 
 function formatStamp(value) {
@@ -77,7 +79,9 @@ export default function Notifications() {
       const response = await authFetch(`/api/notifications/${item.id}/read`, { method: 'POST', cache: 'no-store' });
       if (response.ok) notifyNotificationsChanged();
     }
-    if (item.type === 'files_shared' && item.transfer_id) navigate(`/files/${item.transfer_id}`);
+    if (item.type === 'quote_ready' && item.quote_request_id) navigate(`/quotes/${item.quote_request_id}`);
+    else if (item.type === 'quote_accepted' && item.quote_request_id) navigate(`/quote-requests/${item.quote_request_id}`);
+    else if (item.type === 'files_shared' && item.transfer_id) navigate(`/files/${item.transfer_id}`);
     else if (item.type === 'files_shared' && item.order_id) navigate(`/orders/${item.order_id}#files-from-accent`);
     else if (item.type === 'proof_ready' && item.order_id) navigate(`/orders/${item.order_id}#proofs`);
     else if (item.type === 'proof_decision' && item.work_order_id) navigate(`/work-orders/${item.work_order_id}`);

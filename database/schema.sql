@@ -205,6 +205,7 @@ CREATE TABLE IF NOT EXISTS order_files (
   size_bytes INTEGER NOT NULL,
   storage_root TEXT,
   storage_previous TEXT,
+  quote_request_id INTEGER, -- set while the file is attached to a quote request; order_id may also be set after convert
   uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(order_id) REFERENCES orders(id),
   FOREIGN KEY(line_item_id) REFERENCES order_line_items(id),
@@ -353,6 +354,7 @@ CREATE INDEX IF NOT EXISTS idx_order_line_items_work_order ON order_line_items(w
 CREATE INDEX IF NOT EXISTS idx_order_files_order ON order_files(order_id);
 CREATE INDEX IF NOT EXISTS idx_order_files_customer ON order_files(customer_id);
 CREATE INDEX IF NOT EXISTS idx_order_files_work_order ON order_files(work_order_id);
+-- idx_order_files_quote is created in init_db.js after quote_request_id is added.
 CREATE INDEX IF NOT EXISTS idx_production_history_work_order ON production_history(work_order_id);
 CREATE INDEX IF NOT EXISTS idx_activity_log_created ON activity_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_barcode_events_work_order ON barcode_events(work_order_id);
@@ -517,7 +519,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_proofs_scope_version ON proofs(order_id, I
 CREATE INDEX IF NOT EXISTS idx_proof_files_proof ON proof_files(proof_id);
 
 -- In-app notifications. One row per event. Read state is per user in notification_reads.
--- type: delivery_overdue, delivery_due_soon, work_order_on_hold, work_order_completed, work_order_rush, files_shared, proof_ready, proof_decision
+-- type: delivery_overdue, delivery_due_soon, work_order_on_hold, work_order_completed, work_order_rush, files_shared, proof_ready, proof_decision, quote_ready, quote_accepted
 CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   type TEXT NOT NULL,
@@ -528,6 +530,7 @@ CREATE TABLE IF NOT EXISTS notifications (
   delivery_id INTEGER,
   order_id INTEGER,
   transfer_id INTEGER,
+  quote_request_id INTEGER,
   dedupe_key TEXT NOT NULL UNIQUE,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(customer_id) REFERENCES users(id),
@@ -549,4 +552,52 @@ CREATE TABLE IF NOT EXISTS notification_reads (
 CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_customer_id ON notifications(customer_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_dedupe_key ON notifications(dedupe_key);
+-- idx_notifications_quote is created in init_db.js after quote_request_id is added.
 CREATE INDEX IF NOT EXISTS idx_notification_reads_user ON notification_reads(user_id);
+
+-- Customer quote requests. Status is New, Quoted, Accepted, or Declined.
+-- Staff quotes live on the same row so a revision replaces the price and lines.
+CREATE TABLE IF NOT EXISTS quote_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL,
+  project_name TEXT NOT NULL,
+  description TEXT,
+  quantity TEXT,
+  size TEXT,
+  material TEXT,
+  finishing TEXT,
+  needed_by TEXT,
+  status TEXT NOT NULL DEFAULT 'New',
+  decline_reason TEXT,
+  price TEXT,
+  quote_notes TEXT,
+  valid_until TEXT,
+  quote_version INTEGER NOT NULL DEFAULT 0,
+  quoted_by INTEGER,
+  quoted_at DATETIME,
+  decided_at DATETIME,
+  converted_order_id INTEGER,
+  created_by INTEGER,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME,
+  FOREIGN KEY(customer_id) REFERENCES users(id),
+  FOREIGN KEY(quoted_by) REFERENCES users(id),
+  FOREIGN KEY(converted_order_id) REFERENCES orders(id),
+  FOREIGN KEY(created_by) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS quote_line_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  quote_request_id INTEGER NOT NULL,
+  line_number INTEGER NOT NULL,
+  code TEXT,
+  unit TEXT,
+  quantity TEXT,
+  description TEXT,
+  price TEXT,
+  FOREIGN KEY(quote_request_id) REFERENCES quote_requests(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_quote_requests_customer ON quote_requests(customer_id);
+CREATE INDEX IF NOT EXISTS idx_quote_requests_status ON quote_requests(status);
+CREATE INDEX IF NOT EXISTS idx_quote_line_items_request ON quote_line_items(quote_request_id);

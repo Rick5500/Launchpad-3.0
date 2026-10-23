@@ -123,6 +123,10 @@ function orderProofLink(orderId) {
   return appLink(`/orders/${Number(orderId)}#proofs`);
 }
 
+function quoteLink(quoteId) {
+  return appLink(`/quotes/${Number(quoteId)}`);
+}
+
 function proofReviewLink(orderId, workOrderId) {
   if (workOrderId) return appLink(`/work-orders/${Number(workOrderId)}`);
   return orderProofLink(orderId);
@@ -349,6 +353,74 @@ function renderTransferEmail({ letterhead, subject, message, fileNames, link }) 
 
   return {
     subject: safeSubject(subject || `New files from ${name}`),
+    text,
+    html,
+  };
+}
+
+function renderQuoteEmail({ letterhead, projectName, price, notes, validUntil, lineItems, link }) {
+  const name = letterhead && letterhead.name ? letterhead.name : '';
+  const project = projectName || 'your project';
+  const footer = footerLines(letterhead);
+  const safeLink = escapeHtml(link);
+  const href = String(link || '').replace(/"/g, '%22');
+  const lines = Array.isArray(lineItems) ? lineItems : [];
+  const lineText = lines.map((line) => {
+    const parts = [line.code, line.unit, line.quantity, line.description, line.price].filter(Boolean);
+    return parts.join(' · ');
+  }).filter(Boolean);
+  const notesText = notes ? String(notes) : '';
+  const text = [
+    name,
+    '',
+    `Your quote for ${project} is ready.`,
+    price ? `Total: ${price}` : '',
+    validUntil ? `Valid until: ${validUntil}` : '',
+    notesText ? `\n${notesText}\n` : '',
+    lineText.length ? 'Line items:' : '',
+    ...lineText.map((line) => `- ${line}`),
+    '',
+    'Sign in to accept or decline this quote.',
+    link,
+    '',
+    'This link opens Launchpad. You need to sign in.',
+    '',
+    footer.join('\n'),
+  ].filter((line) => line !== undefined).join('\n').replace(/\n{3,}/g, '\n\n');
+
+  const notesHtml = notesText
+    ? `<p style="margin:0 0 16px;line-height:1.5;">${escapeHtml(notesText).replace(/\n/g, '<br>')}</p>`
+    : '';
+  const itemsHtml = lineText.length
+    ? `<p style="margin:0 0 8px;font-weight:700;color:#0A2F6E;">Line items</p><ul style="margin:0 0 20px;padding-left:18px;">${lineText.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}</ul>`
+    : '';
+  const html = `<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#F4F7FB;font-family:Arial,Helvetica,sans-serif;color:#1B2838;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F7FB;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#ffffff;border:1px solid #E2E8F0;">
+        ${emailBannerHtml(name)}
+        <tr><td style="padding:24px;">
+          <h1 style="margin:0 0 12px;font-size:20px;color:#0A2F6E;">Quote for ${escapeHtml(project)}</h1>
+          ${price ? `<p style="margin:0 0 8px;font-size:18px;font-weight:700;color:#0A2F6E;">Total: ${escapeHtml(price)}</p>` : ''}
+          ${validUntil ? `<p style="margin:0 0 16px;">Valid until ${escapeHtml(validUntil)}</p>` : ''}
+          ${notesHtml}
+          ${itemsHtml}
+          <p style="margin:0 0 16px;"><a href="${href}" style="display:inline-block;background:#F58220;color:#111111;text-decoration:none;font-weight:700;padding:10px 16px;">Sign in to review this quote</a></p>
+          <p style="margin:0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>
+          <p style="margin:16px 0 0;font-size:13px;color:#5E6A78;">You need to sign in to accept or decline this quote.</p>
+        </td></tr>
+        <tr><td style="padding:16px 24px;background:#F4F7FB;border-top:1px solid #E2E8F0;font-size:13px;color:#5E6A78;line-height:1.5;">
+          ${footer.map((line) => escapeHtml(line)).join('<br>')}
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+  return {
+    subject: safeSubject(`Quote for ${project}`),
     text,
     html,
   };
@@ -596,6 +668,7 @@ module.exports = {
   orderFilesLink,
   transferFilesLink,
   orderProofLink,
+  quoteLink,
   proofReviewLink,
   escapeHtml,
   parseAddressList,
@@ -604,6 +677,7 @@ module.exports = {
   warnTestJsonTransport,
   renderShareEmail,
   renderTransferEmail,
+  renderQuoteEmail,
   renderProofEmail,
   renderProofChangesEmail,
   renderTestEmail,

@@ -385,6 +385,8 @@ async function seedNotificationSettings() {
     ['files_shared', 1, 'in_app'],
     ['proof_ready', 1, 'in_app'],
     ['proof_decision', 1, 'in_app'],
+    ['quote_ready', 1, 'in_app'],
+    ['quote_accepted', 1, 'in_app'],
   ];
 
   for (const event of events) {
@@ -527,6 +529,91 @@ async function ensureNotifications() {
     { name: 'read_at', definition: 'DATETIME' },
   ]);
   await run('CREATE INDEX IF NOT EXISTS idx_notification_reads_user ON notification_reads(user_id)');
+  await ensureColumns('notifications', [
+    { name: 'quote_request_id', definition: 'INTEGER' },
+  ]);
+  await run('CREATE INDEX IF NOT EXISTS idx_notifications_quote ON notifications(quote_request_id)');
+}
+
+async function ensureQuoteRequests() {
+  await run(`CREATE TABLE IF NOT EXISTS quote_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER NOT NULL,
+    project_name TEXT NOT NULL,
+    description TEXT,
+    quantity TEXT,
+    size TEXT,
+    material TEXT,
+    finishing TEXT,
+    needed_by TEXT,
+    status TEXT NOT NULL DEFAULT 'New',
+    decline_reason TEXT,
+    price TEXT,
+    quote_notes TEXT,
+    valid_until TEXT,
+    quote_version INTEGER NOT NULL DEFAULT 0,
+    quoted_by INTEGER,
+    quoted_at DATETIME,
+    decided_at DATETIME,
+    converted_order_id INTEGER,
+    created_by INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME,
+    FOREIGN KEY(customer_id) REFERENCES users(id),
+    FOREIGN KEY(quoted_by) REFERENCES users(id),
+    FOREIGN KEY(converted_order_id) REFERENCES orders(id),
+    FOREIGN KEY(created_by) REFERENCES users(id)
+  )`);
+  await ensureColumns('quote_requests', [
+    { name: 'customer_id', definition: 'INTEGER' },
+    { name: 'project_name', definition: 'TEXT' },
+    { name: 'description', definition: 'TEXT' },
+    { name: 'quantity', definition: 'TEXT' },
+    { name: 'size', definition: 'TEXT' },
+    { name: 'material', definition: 'TEXT' },
+    { name: 'finishing', definition: 'TEXT' },
+    { name: 'needed_by', definition: 'TEXT' },
+    { name: 'status', definition: "TEXT NOT NULL DEFAULT 'New'" },
+    { name: 'decline_reason', definition: 'TEXT' },
+    { name: 'price', definition: 'TEXT' },
+    { name: 'quote_notes', definition: 'TEXT' },
+    { name: 'valid_until', definition: 'TEXT' },
+    { name: 'quote_version', definition: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'quoted_by', definition: 'INTEGER' },
+    { name: 'quoted_at', definition: 'DATETIME' },
+    { name: 'decided_at', definition: 'DATETIME' },
+    { name: 'converted_order_id', definition: 'INTEGER' },
+    { name: 'created_by', definition: 'INTEGER' },
+    { name: 'created_at', definition: 'DATETIME' },
+    { name: 'updated_at', definition: 'DATETIME' },
+  ]);
+  await run(`CREATE TABLE IF NOT EXISTS quote_line_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    quote_request_id INTEGER NOT NULL,
+    line_number INTEGER NOT NULL,
+    code TEXT,
+    unit TEXT,
+    quantity TEXT,
+    description TEXT,
+    price TEXT,
+    FOREIGN KEY(quote_request_id) REFERENCES quote_requests(id)
+  )`);
+  await ensureColumns('quote_line_items', [
+    { name: 'quote_request_id', definition: 'INTEGER' },
+    { name: 'line_number', definition: 'INTEGER' },
+    { name: 'code', definition: 'TEXT' },
+    { name: 'unit', definition: 'TEXT' },
+    { name: 'quantity', definition: 'TEXT' },
+    { name: 'description', definition: 'TEXT' },
+    { name: 'price', definition: 'TEXT' },
+  ]);
+  await run('CREATE INDEX IF NOT EXISTS idx_quote_requests_customer ON quote_requests(customer_id)');
+  await run('CREATE INDEX IF NOT EXISTS idx_quote_requests_status ON quote_requests(status)');
+  await run('CREATE INDEX IF NOT EXISTS idx_quote_line_items_request ON quote_line_items(quote_request_id)');
+  await ensureColumns('order_files', [
+    { name: 'quote_request_id', definition: 'INTEGER' },
+  ]);
+  await run('CREATE INDEX IF NOT EXISTS idx_order_files_quote ON order_files(quote_request_id)');
 }
 
 async function ensureFileTransfers() {
@@ -1492,6 +1579,7 @@ async function main() {
   await run('CREATE INDEX IF NOT EXISTS idx_work_orders_service_id ON work_orders(service_id)');
   await run('CREATE INDEX IF NOT EXISTS idx_deliveries_order_id ON deliveries(order_id)');
   await ensureNotifications();
+  await ensureQuoteRequests();
   await ensureSharedFiles();
   await ensureProofs();
   await ensureInboundEmails();
