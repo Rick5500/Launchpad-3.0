@@ -157,7 +157,7 @@ function LoginScreen() {
     <Box sx={{ minHeight: '100vh', bgcolor: brand.navy, display: 'flex', flexDirection: 'column', p: 2, boxSizing: 'border-box' }}>
       <Box sx={{ width: 440, maxWidth: '100%', m: 'auto', bgcolor: '#fff', borderRadius: 2, boxShadow: 6, overflow: 'hidden' }}>
         <Box sx={{ px: { xs: 2.5, sm: 4 }, pt: { xs: 2.5, sm: 3 } }}>
-          <BrandLogo animated sx={{ width: '100%', maxWidth: 360, mx: 'auto' }} />
+          <BrandLogo />
         </Box>
         <Box sx={{ p: { xs: 2.5, sm: 4 }, pt: 2 }}>
         {mode === 'sign-in' ? (
