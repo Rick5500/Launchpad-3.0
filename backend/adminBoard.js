@@ -853,9 +853,15 @@ async function listOpenQuoteRequests() {
 }
 
 async function quoteRequestAlerts() {
-  const [newRow, acceptedRow] = await Promise.all([
+  const [newRow, acceptedRow, latestAccepted] = await Promise.all([
     get(`SELECT COUNT(*) AS count FROM quote_requests WHERE status = 'New'`),
     get(`SELECT COUNT(*) AS count FROM quote_requests WHERE status = 'Accepted' AND converted_order_id IS NULL`),
+    get(
+      `SELECT id FROM quote_requests
+       WHERE status = 'Accepted' AND converted_order_id IS NULL
+       ORDER BY datetime(COALESCE(updated_at, decided_at, created_at)) DESC, id DESC
+       LIMIT 1`
+    ),
   ]);
   const alerts = [];
   const newCount = newRow ? newRow.count : 0;
@@ -880,6 +886,7 @@ async function quoteRequestAlerts() {
       message: 'Accepted quotes',
       detail: `${acceptedCount} accepted ${acceptedCount === 1 ? 'quote is' : 'quotes are'} ready to convert.`,
       count: acceptedCount,
+      quote_request_id: latestAccepted ? latestAccepted.id : null,
       created_at: null,
       relative: null,
     });

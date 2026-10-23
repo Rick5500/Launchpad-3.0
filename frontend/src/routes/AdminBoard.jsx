@@ -200,6 +200,16 @@ function linkButton(label, onClick) {
   );
 }
 
+function quoteRequestPath(quote) {
+  if (quote && quote.status === 'Accepted') return `/order?fromQuote=${quote.id}`;
+  return `/quote-requests/${quote.id}`;
+}
+
+function quoteActivityPath(item) {
+  if (item.action === 'quote_request.accepted') return `/order?fromQuote=${item.entity_id}`;
+  return `/quote-requests/${item.entity_id}`;
+}
+
 export default function AdminBoard() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -952,7 +962,7 @@ export default function AdminBoard() {
                   {(summary.quote_requests.quotes || []).length ? summary.quote_requests.quotes.map((quote) => (
                     <Box
                       key={quote.id}
-                      onClick={() => navigate(`/quote-requests/${quote.id}`)}
+                      onClick={() => navigate(quoteRequestPath(quote))}
                       sx={{ cursor: 'pointer', minWidth: 0 }}
                     >
                       <Typography sx={{ fontWeight: 700, fontSize: 14, color: brand.navy }}>{quote.project_name}</Typography>
@@ -1011,7 +1021,7 @@ export default function AdminBoard() {
                       onClick={() => {
                         if (item.entity_type === 'work_order' && item.entity_id) navigate(`/work-orders/${item.entity_id}`);
                         if (item.entity_type === 'order' && item.entity_id) navigate(`/orders/${item.entity_id}`);
-                        if (item.entity_type === 'quote_request' && item.entity_id && showQuotePanel) navigate(`/quote-requests/${item.entity_id}`);
+                        if (item.entity_type === 'quote_request' && item.entity_id && showQuotePanel) navigate(quoteActivityPath(item));
                       }}
                     >
                       {item.external_id || item.summary}
@@ -1047,7 +1057,17 @@ export default function AdminBoard() {
                 return (
                   <Box
                     key={alert.id}
-                    onClick={quoteAlert && showQuotePanel ? () => navigate('/quote-requests') : undefined}
+                    onClick={quoteAlert && showQuotePanel ? () => {
+                      if (alert.id === 'quote-accepted') {
+                        const listed = (summary?.quote_requests?.quotes || []).find((quote) => quote.status === 'Accepted');
+                        const target = alert.quote_request_id || listed?.id;
+                        if (target) {
+                          navigate(`/order?fromQuote=${target}`);
+                          return;
+                        }
+                      }
+                      navigate('/quote-requests');
+                    } : undefined}
                     sx={{ display: 'flex', gap: 1, cursor: quoteAlert && showQuotePanel ? 'pointer' : 'default' }}
                   >
                     <Icon sx={{ color, fontSize: 20, mt: 0.2 }} />

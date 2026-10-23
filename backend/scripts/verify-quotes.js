@@ -484,7 +484,8 @@ async function main() {
     assert(acceptedBoard.json.quote_requests && acceptedBoard.json.quote_requests.accepted_count >= 1, 'accepted quotes waiting to convert should be counted');
     const acceptedRow = (acceptedBoard.json.quote_requests.quotes || []).find((row) => row.id === quoteId);
     assert(acceptedRow && acceptedRow.status === 'Accepted' && acceptedRow.project_name === 'Lobby banner', 'an accepted quote should stay on the dashboard until it is converted');
-    assert((acceptedBoard.json.alerts || []).some((alert) => alert.id === 'quote-accepted' && alert.count >= 1), 'accepted quotes should show in system alerts');
+    const acceptedAlert = (acceptedBoard.json.alerts || []).find((alert) => alert.id === 'quote-accepted');
+    assert(acceptedAlert && acceptedAlert.count >= 1 && acceptedAlert.quote_request_id === quoteId, 'the accepted-quote alert should point at the quote ready to convert');
     assert((acceptedBoard.json.activity || []).some((row) => row.action === 'quote_request.accepted' && row.entity_id === quoteId), 'accepting a quote should show in recent activity');
     const adminAcceptedBoard = await request({ method: 'GET', path: '/api/admin-board', token: admin.token });
     assert((adminAcceptedBoard.json.quote_requests.quotes || []).some((row) => row.id === quoteId && row.status === 'Accepted'), 'admins should see accepted quotes ready to convert');
