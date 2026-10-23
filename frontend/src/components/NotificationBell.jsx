@@ -91,7 +91,7 @@ export default function NotificationBell({ user }) {
             onClick={() => {
               setAnchor(null);
               if (!item.read) markRead(item.id);
-              if ((item.type === 'quote_ready' || item.type === 'quote_accepted') && item.quote_request_id) {
+              if ((item.type === 'quote_ready' || item.type === 'quote_accepted' || item.type === 'quote_requested' || item.type === 'quote_declined') && item.quote_request_id) {
                 navigate(user?.role === 'customer' ? `/quotes/${item.quote_request_id}` : `/quote-requests/${item.quote_request_id}`);
               } else if (item.type === 'files_shared' && item.transfer_id) navigate(`/files/${item.transfer_id}`);
               else if (item.type === 'files_shared' && item.order_id) navigate(`/orders/${item.order_id}#files-from-accent`);

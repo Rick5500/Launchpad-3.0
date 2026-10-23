@@ -23,6 +23,8 @@ const typeLabels = {
   proof_decision: 'Proof',
   quote_ready: 'Quote',
   quote_accepted: 'Quote',
+  quote_requested: 'Quote',
+  quote_declined: 'Quote',
 };
 
 function formatStamp(value) {
@@ -80,7 +82,7 @@ export default function Notifications() {
       if (response.ok) notifyNotificationsChanged();
     }
     if (item.type === 'quote_ready' && item.quote_request_id) navigate(`/quotes/${item.quote_request_id}`);
-    else if (item.type === 'quote_accepted' && item.quote_request_id) navigate(`/quote-requests/${item.quote_request_id}`);
+    else if ((item.type === 'quote_accepted' || item.type === 'quote_requested' || item.type === 'quote_declined') && item.quote_request_id) navigate(`/quote-requests/${item.quote_request_id}`);
     else if (item.type === 'files_shared' && item.transfer_id) navigate(`/files/${item.transfer_id}`);
     else if (item.type === 'files_shared' && item.order_id) navigate(`/orders/${item.order_id}#files-from-accent`);
     else if (item.type === 'proof_ready' && item.order_id) navigate(`/orders/${item.order_id}#proofs`);

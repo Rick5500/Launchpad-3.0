@@ -387,6 +387,8 @@ async function seedNotificationSettings() {
     ['proof_decision', 1, 'in_app'],
     ['quote_ready', 1, 'in_app'],
     ['quote_accepted', 1, 'in_app'],
+    ['quote_requested', 1, 'in_app'],
+    ['quote_declined', 1, 'in_app'],
   ];
 
   for (const event of events) {

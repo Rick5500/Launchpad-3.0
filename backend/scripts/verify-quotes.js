@@ -324,6 +324,44 @@ async function main() {
     const quoteId = created.json.quote.id;
     assert(created.json.quote.files.some((file) => file.id === fileId && file.original_name === 'banner.pdf'), 'the request should keep the uploaded file');
 
+    const requestedTitle = 'New quote request from Quinn Quote: Lobby banner';
+    const managerAfterCreate = await request({ method: 'GET', path: '/api/notifications?limit=20', token: manager.token });
+    const adminAfterCreate = await request({ method: 'GET', path: '/api/notifications?limit=20', token: admin.token });
+    const customerAfterCreate = await request({ method: 'GET', path: '/api/notifications?limit=20', token: customer.token });
+    const operatorAfterCreate = await request({ method: 'GET', path: '/api/notifications?limit=50', token: operator.token });
+    const requestedFor = (body, id) => (body.notifications || []).find((row) => row.type === 'quote_requested' && row.quote_request_id === id);
+    assert(requestedFor(managerAfterCreate.json, quoteId) && requestedFor(managerAfterCreate.json, quoteId).title === requestedTitle, 'managers should see a new quote request notice naming the customer and project');
+    assert(requestedFor(adminAfterCreate.json, quoteId), 'admins should be notified of a new quote request');
+    assert(!requestedFor(customerAfterCreate.json, quoteId), 'customers should not receive the staff new-request notice');
+    assert(!(operatorAfterCreate.json.notifications || []).some((row) => row.type === 'quote_requested' || row.type === 'quote_declined'), 'an operator should not receive a new quote request notice');
+    const skippedEmail = await db.get(
+      `SELECT id FROM activity_log WHERE action = 'quote_request.staff_emailed' AND entity_id = ?`,
+      [quoteId]
+    );
+    assert(!skippedEmail, 'quote request email should be skipped when SMTP is not configured');
+
+    const managerBoard = await request({ method: 'GET', path: '/api/admin-board', token: manager.token });
+    assert(managerBoard.status === 200 && managerBoard.json.quote_requests, managerBoard.text);
+    assert(managerBoard.json.quote_requests.new_count >= 1, 'managers should see the new quote count');
+    const boardQuote = (managerBoard.json.quote_requests.quotes || []).find((row) => row.id === quoteId);
+    assert(boardQuote && boardQuote.project_name === 'Lobby banner' && boardQuote.customer_name === 'Quinn Quote' && boardQuote.status === 'New' && boardQuote.needed_by, `dashboard should list the new request: ${JSON.stringify(boardQuote)}`);
+    assert((managerBoard.json.alerts || []).some((alert) => alert.id === 'quote-requests' && alert.count >= 1), 'new quote requests should show in system alerts');
+    assert((managerBoard.json.activity || []).some((row) => row.action === 'quote_request.created' && row.entity_id === quoteId), 'new quote requests should show in recent activity');
+    const adminBoard = await request({ method: 'GET', path: '/api/admin-board', token: admin.token });
+    assert(adminBoard.status === 200 && (adminBoard.json.quote_requests.quotes || []).some((row) => row.id === quoteId), 'admins should see quote requests on the dashboard');
+    const operatorBoard = await request({ method: 'GET', path: '/api/admin-board', token: operator.token });
+    assert(operatorBoard.status === 200 && operatorBoard.json.quote_requests == null, `operators should not receive quote dashboard data: ${operatorBoard.text.slice(0, 300)}`);
+    assert(!(operatorBoard.json.alerts || []).some((alert) => alert.id === 'quote-requests' || alert.id === 'quote-accepted'), 'operators should not see quote alerts');
+    assert(!(operatorBoard.json.activity || []).some((row) => row.entity_type === 'quote_request'), 'operators should not see quote activity on the dashboard');
+    const operatorActivity = await request({ method: 'GET', path: '/api/admin-board/activity?limit=100', token: operator.token });
+    assert(operatorActivity.status === 200 && !(operatorActivity.json.activity || []).some((row) => row.entity_type === 'quote_request'), 'operators should not receive quote activity');
+    const customerBoard = await request({ method: 'GET', path: '/api/admin-board', token: customer.token });
+    assert(customerBoard.status === 403, 'customers should not load the staff dashboard');
+    const settingsCatalog = await request({ method: 'GET', path: '/api/notifications/settings', token: admin.token });
+    assert(settingsCatalog.status === 200, settingsCatalog.text);
+    const settingKeys = new Set((settingsCatalog.json.in_app || []).map((event) => event.event_key));
+    assert(settingKeys.has('quote_requested') && settingKeys.has('quote_declined'), 'quote request notification settings should be listed');
+
     const createdLog = await db.get(
       `SELECT action, detail FROM activity_log WHERE action = 'quote_request.created' AND entity_id = ?`,
       [quoteId]
@@ -412,7 +450,11 @@ async function main() {
     assert(readyNote, 'the customer should be notified in the app');
     const operatorNotes = await request({ method: 'GET', path: '/api/notifications?limit=50', token: operator.token });
     assert(operatorNotes.status === 200, operatorNotes.text);
-    assert(!(operatorNotes.json.notifications || []).some((row) => row.type === 'quote_ready' || row.type === 'quote_accepted'), 'an operator should not receive quote notifications');
+    assert(!(operatorNotes.json.notifications || []).some((row) => row.type === 'quote_ready' || row.type === 'quote_accepted' || row.type === 'quote_requested' || row.type === 'quote_declined'), 'an operator should not receive quote notifications');
+    const quotedBoard = await request({ method: 'GET', path: '/api/admin-board', token: manager.token });
+    assert(quotedBoard.json.quote_requests && quotedBoard.json.quote_requests.new_count === 0, 'sending the only new quote should clear the new count');
+    assert(!(quotedBoard.json.quote_requests.quotes || []).some((row) => row.id === quoteId), 'a quoted request should leave the open dashboard list');
+    assert(!(quotedBoard.json.alerts || []).some((alert) => alert.id === 'quote-requests'), 'the new-request alert should clear when nothing is new');
 
     const options = await request({ method: 'GET', path: '/api/orders/options', token: manager.token });
     assert(options.status === 200, options.text);
@@ -438,6 +480,18 @@ async function main() {
     assert((managerNotes.json.notifications || []).some((row) => row.type === 'quote_accepted' && row.quote_request_id === quoteId), 'managers should be notified when a quote is accepted');
     const customerAfterAccept = await request({ method: 'GET', path: '/api/notifications?limit=20', token: customer.token });
     assert(!(customerAfterAccept.json.notifications || []).some((row) => row.type === 'quote_accepted'), 'the accept notice is for staff');
+    const acceptedBoard = await request({ method: 'GET', path: '/api/admin-board', token: manager.token });
+    assert(acceptedBoard.json.quote_requests && acceptedBoard.json.quote_requests.accepted_count >= 1, 'accepted quotes waiting to convert should be counted');
+    const acceptedRow = (acceptedBoard.json.quote_requests.quotes || []).find((row) => row.id === quoteId);
+    assert(acceptedRow && acceptedRow.status === 'Accepted' && acceptedRow.project_name === 'Lobby banner', 'an accepted quote should stay on the dashboard until it is converted');
+    const acceptedAlert = (acceptedBoard.json.alerts || []).find((alert) => alert.id === 'quote-accepted');
+    assert(acceptedAlert && acceptedAlert.count >= 1 && acceptedAlert.quote_request_id === quoteId, 'the accepted-quote alert should point at the quote ready to convert');
+    assert((acceptedBoard.json.activity || []).some((row) => row.action === 'quote_request.accepted' && row.entity_id === quoteId), 'accepting a quote should show in recent activity');
+    const adminAcceptedBoard = await request({ method: 'GET', path: '/api/admin-board', token: admin.token });
+    assert((adminAcceptedBoard.json.quote_requests.quotes || []).some((row) => row.id === quoteId && row.status === 'Accepted'), 'admins should see accepted quotes ready to convert');
+    const operatorAcceptedBoard = await request({ method: 'GET', path: '/api/admin-board', token: operator.token });
+    assert(operatorAcceptedBoard.json.quote_requests == null, 'operators should not receive accepted quote dashboard data');
+    assert(!(operatorAcceptedBoard.json.alerts || []).some((alert) => alert.id === 'quote-accepted'), 'operators should not see the accepted-quote alert');
 
     const ordersBefore = await db.get('SELECT COUNT(*) AS count FROM orders');
     const badOrder = await request({
@@ -515,6 +569,9 @@ async function main() {
       json: orderBody(customerResponse.json.id, quoteId, serviceId, []),
     });
     assert(again.status === 409, `a second convert should be 409, got ${again.status} ${again.text}`);
+    const convertedBoard = await request({ method: 'GET', path: '/api/admin-board', token: admin.token });
+    assert(!(convertedBoard.json.quote_requests.quotes || []).some((row) => row.id === quoteId), 'a converted quote should leave the open dashboard list');
+    assert(convertedBoard.json.quote_requests.accepted_count === 0, 'a converted quote should leave the accepted count');
 
     const declinedRequest = await request({
       method: 'POST',
@@ -544,6 +601,15 @@ async function main() {
       [declineId]
     );
     assert(declineLog, 'declining should be logged');
+    const declineNotes = await request({ method: 'GET', path: '/api/notifications?limit=30', token: manager.token });
+    const declineNote = (declineNotes.json.notifications || []).find((row) => row.type === 'quote_declined' && row.quote_request_id === declineId);
+    assert(declineNote && /Price is over budget/.test(declineNote.body || ''), `managers should see the decline reason, got ${JSON.stringify(declineNote)}`);
+    const adminDeclineNotes = await request({ method: 'GET', path: '/api/notifications?limit=30', token: admin.token });
+    assert((adminDeclineNotes.json.notifications || []).some((row) => row.type === 'quote_declined' && row.quote_request_id === declineId), 'admins should be notified when a quote is declined');
+    const operatorDeclineNotes = await request({ method: 'GET', path: '/api/notifications?limit=50', token: operator.token });
+    assert(!(operatorDeclineNotes.json.notifications || []).some((row) => row.type === 'quote_requested' || row.type === 'quote_declined' || row.type === 'quote_ready' || row.type === 'quote_accepted'), 'an operator should not receive quote notifications');
+    const customerDeclineNotes = await request({ method: 'GET', path: '/api/notifications?limit=30', token: customer.token });
+    assert(!(customerDeclineNotes.json.notifications || []).some((row) => row.type === 'quote_declined' || row.type === 'quote_requested'), 'customers should not receive staff quote notices');
     const readyBefore = await db.get(
       `SELECT COUNT(*) AS count FROM notifications WHERE type = 'quote_ready' AND quote_request_id = ?`,
       [declineId]
@@ -573,6 +639,43 @@ async function main() {
       [declineId]
     );
     assert(readyAfter.count === readyBefore.count, 'a disabled quote notification should not be written');
+
+    const quietRequestedBefore = await db.get(`SELECT COUNT(*) AS count FROM notifications WHERE type = 'quote_requested'`);
+    const quietDeclinedBefore = await db.get(`SELECT COUNT(*) AS count FROM notifications WHERE type = 'quote_declined'`);
+    const quietSettings = await request({
+      method: 'PUT',
+      path: '/api/notifications/settings',
+      token: admin.token,
+      json: { events: { quote_requested: false, quote_declined: false } },
+    });
+    assert(quietSettings.status === 200, quietSettings.text);
+    assert((quietSettings.json.in_app || []).some((event) => event.event_key === 'quote_requested' && event.enabled === false), 'the new-request setting should turn off');
+    assert((quietSettings.json.in_app || []).some((event) => event.event_key === 'quote_declined' && event.enabled === false), 'the decline setting should turn off');
+    const quietRequest = await request({
+      method: 'POST',
+      path: '/api/quote-requests',
+      token: customer.token,
+      json: quoteBody({ project_name: 'Quiet request', description: 'No notice.', quantity: '1' }),
+    });
+    assert(quietRequest.status === 201, quietRequest.text);
+    const quietRequestedAfter = await db.get(`SELECT COUNT(*) AS count FROM notifications WHERE type = 'quote_requested'`);
+    assert(quietRequestedAfter.count === quietRequestedBefore.count, 'turning off quote_requested should suppress the notice');
+    const quietQuoted = await request({
+      method: 'POST',
+      path: `/api/quote-requests/${quietRequest.json.quote.id}/quote`,
+      token: manager.token,
+      json: { price: '12.00', line_items: [] },
+    });
+    assert(quietQuoted.status === 200, quietQuoted.text);
+    const quietDeclined = await request({
+      method: 'POST',
+      path: `/api/quote-requests/${quietRequest.json.quote.id}/decline`,
+      token: customer.token,
+      json: { reason: 'Not now' },
+    });
+    assert(quietDeclined.status === 200, quietDeclined.text);
+    const quietDeclinedAfter = await db.get(`SELECT COUNT(*) AS count FROM notifications WHERE type = 'quote_declined'`);
+    assert(quietDeclinedAfter.count === quietDeclinedBefore.count, 'turning off quote_declined should suppress the notice');
 
     const openRequest = await request({
       method: 'POST',
@@ -619,6 +722,89 @@ async function main() {
     const html = mailed.json.email.preview && mailed.json.email.preview.html;
     assert(html && html.includes('Window graphic') && html.includes('$70.00'), 'the quote email should name the job and the price');
     assert(html.includes('quotes%2F') || html.includes('/quotes/'), 'the quote email should link back to the customer quote');
+
+    const mailDb = openDb(dbFile);
+    await mailDb.run(`UPDATE users SET email = 'admin@quote.example' WHERE username = 'admin'`);
+    await mailDb.run(
+      `INSERT INTO users (username, password_hash, role, display_name, email, is_active)
+       VALUES ('quietmanager', 'x', 'manager', 'Quiet Manager', 'quiet@quote.example', 0)`
+    );
+    await mailDb.close();
+    const enableRequested = await request({
+      method: 'PUT',
+      path: '/api/notifications/settings',
+      token: admin.token,
+      json: { events: { quote_requested: true } },
+    });
+    assert(enableRequested.status === 200, enableRequested.text);
+    const customer = await login('quotecustomer', customerPassword);
+    const suppressed = await request({
+      method: 'PUT',
+      path: '/api/notifications/settings',
+      token: admin.token,
+      json: { events: { quote_requested: false } },
+    });
+    assert(suppressed.status === 200, suppressed.text);
+    const silentRequest = await request({
+      method: 'POST',
+      path: '/api/quote-requests',
+      token: customer.token,
+      json: quoteBody({ project_name: 'Silent banner', description: 'No mail.', quantity: '1' }),
+    });
+    assert(silentRequest.status === 201, silentRequest.text);
+    const silentMail = await openDb(dbFile);
+    const silentLog = await silentMail.get(
+      `SELECT id FROM activity_log WHERE action = 'quote_request.staff_emailed' AND entity_id = ?`,
+      [silentRequest.json.quote.id]
+    );
+    const silentNote = await silentMail.get(
+      `SELECT id FROM notifications WHERE type = 'quote_requested' AND quote_request_id = ?`,
+      [silentRequest.json.quote.id]
+    );
+    await silentMail.close();
+    assert(!silentLog && !silentNote, 'a disabled quote request setting should suppress the notice and the email');
+    const enabledAgain = await request({
+      method: 'PUT',
+      path: '/api/notifications/settings',
+      token: admin.token,
+      json: { events: { quote_requested: true } },
+    });
+    assert(enabledAgain.status === 200, enabledAgain.text);
+    const mailedRequest = await request({
+      method: 'POST',
+      path: '/api/quote-requests',
+      token: customer.token,
+      json: quoteBody({ project_name: 'Mailed banner <b>', description: 'Please quote.', quantity: '3' }),
+    });
+    assert(mailedRequest.status === 201, mailedRequest.text);
+    const mailedDb = openDb(dbFile);
+    const mailedLog = await mailedDb.get(
+      `SELECT detail FROM activity_log WHERE action = 'quote_request.staff_emailed' AND entity_id = ?`,
+      [mailedRequest.json.quote.id]
+    );
+    const mailedNotes = await mailedDb.all(
+      `SELECT id FROM notifications WHERE type = 'quote_requested' AND quote_request_id = ?`,
+      [mailedRequest.json.quote.id]
+    );
+    await mailedDb.close();
+    assert(mailedNotes.length === 1, 'the mailed request should write one in-app notice');
+    assert(mailedLog, 'configured SMTP should email managers about a new quote request');
+    const mailedDetail = JSON.parse(mailedLog.detail);
+    const recipients = (mailedDetail.recipients || []).map((address) => String(address).toLowerCase());
+    assert(recipients.includes('manager@quote.example') && recipients.includes('admin@quote.example'), `active managers and admins should be emailed, got ${recipients.join(', ')}`);
+    assert(!recipients.includes('operator@quote.example') && !recipients.includes('quiet@quote.example'), 'operators and inactive managers should not be emailed');
+    assert(mailedDetail.subject === 'New quote request from Quinn Quote: Mailed banner <b>', `email subject should name the request, got ${mailedDetail.subject}`);
+    const mailer = require('../mailer');
+    const rendered = mailer.renderQuoteRequestEmail({
+      letterhead: { name: 'Accent', address_lines: [], phone: '' },
+      customerName: 'Quinn <Quote>',
+      projectName: 'A & B',
+      neededBy: '2026-11-02',
+      link: mailer.staffQuoteLink(mailedRequest.json.quote.id),
+    });
+    assert(rendered.html.includes('Quinn &lt;Quote&gt;') && rendered.html.includes('A &amp; B'), 'the request email should escape names');
+    assert(!rendered.html.includes('Quinn <Quote>'), 'raw HTML in a customer name should not be sent');
+    assert(rendered.html.includes('quote-requests'), 'the request email should link to Quote Requests');
   } catch (err) {
     console.error(mailServer.logs());
     throw err;
@@ -634,6 +820,9 @@ async function main() {
   assert(kept && kept.status === 'Accepted' && kept.converted_order_id, 'init should keep an existing quote');
   const stillOff = await check.get(`SELECT enabled, COUNT(*) AS count FROM notification_settings WHERE event_key = 'quote_ready'`);
   assert(stillOff && stillOff.enabled === 0 && stillOff.count === 1, 'init should not turn a quote notification back on or duplicate it');
+  const declinedOff = await check.get(`SELECT enabled, COUNT(*) AS count FROM notification_settings WHERE event_key = 'quote_declined'`);
+  assert(declinedOff && declinedOff.enabled === 0 && declinedOff.count === 1, 'init should not turn a declined-quote notification back on or duplicate it');
+  await check.run(`DELETE FROM notification_settings WHERE event_key = 'quote_requested'`);
   await check.run('DROP TABLE quote_line_items');
   await check.run('DROP TABLE quote_requests');
   await check.run('DROP INDEX IF EXISTS idx_order_files_quote');
@@ -655,6 +844,10 @@ async function main() {
   assert(noteCols.some((column) => column.name === 'quote_request_id'), 'notifications.quote_request_id should be added on upgrade');
   const setting = await after.get(`SELECT enabled FROM notification_settings WHERE event_key = 'quote_accepted'`);
   assert(setting && setting.enabled === 1, 'a missing quote notification setting should be seeded');
+  const requestedSetting = await after.get(`SELECT enabled, channel FROM notification_settings WHERE event_key = 'quote_requested'`);
+  assert(requestedSetting && requestedSetting.enabled === 1 && requestedSetting.channel === 'in_app', 'a missing quote request setting should be seeded on');
+  const declinedSetting = await after.get(`SELECT enabled, COUNT(*) AS count FROM notification_settings WHERE event_key = 'quote_declined'`);
+  assert(declinedSetting && declinedSetting.enabled === 0 && declinedSetting.count === 1, 'init should leave a disabled quote decline setting off');
   await after.close();
   console.log('PASS quote requests');
 }

@@ -127,6 +127,10 @@ function quoteLink(quoteId) {
   return appLink(`/quotes/${Number(quoteId)}`);
 }
 
+function staffQuoteLink(quoteId) {
+  return appLink(`/quote-requests/${Number(quoteId)}`);
+}
+
 function proofReviewLink(orderId, workOrderId) {
   if (workOrderId) return appLink(`/work-orders/${Number(workOrderId)}`);
   return orderProofLink(orderId);
@@ -537,6 +541,58 @@ function renderProofChangesEmail({ letterhead, orderNumber, version, comment, cu
   };
 }
 
+function renderQuoteRequestEmail({ letterhead, customerName, projectName, neededBy, link }) {
+  const name = letterhead && letterhead.name ? letterhead.name : '';
+  const customer = customerName || 'A customer';
+  const project = projectName || 'a project';
+  const footer = footerLines(letterhead);
+  const safeLink = escapeHtml(link);
+  const href = String(link || '').replace(/"/g, '%22');
+  const headline = `New quote request from ${customer}: ${project}`;
+  const needed = neededBy ? `Needed by ${neededBy}.` : '';
+  const text = [
+    name,
+    '',
+    headline,
+    needed,
+    '',
+    'Sign in to review this quote request.',
+    link,
+    '',
+    footer.join('\n'),
+  ].filter((line) => line !== '').join('\n');
+
+  const neededHtml = needed
+    ? `<p style="margin:0 0 16px;line-height:1.5;">${escapeHtml(needed)}</p>`
+    : '';
+  const html = `<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#F4F7FB;font-family:Arial,Helvetica,sans-serif;color:#1B2838;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F7FB;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#ffffff;border:1px solid #E2E8F0;">
+        ${emailBannerHtml(name)}
+        <tr><td style="padding:24px;">
+          <h1 style="margin:0 0 12px;font-size:20px;color:#0A2F6E;">${escapeHtml(headline)}</h1>
+          ${neededHtml}
+          <p style="margin:0 0 16px;"><a href="${href}" style="display:inline-block;background:#F58220;color:#111111;text-decoration:none;font-weight:700;padding:10px 16px;">Sign in to review this request</a></p>
+          <p style="margin:0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>
+        </td></tr>
+        <tr><td style="padding:16px 24px;background:#F4F7FB;border-top:1px solid #E2E8F0;font-size:13px;color:#5E6A78;line-height:1.5;">
+          ${footer.map((line) => escapeHtml(line)).join('<br>')}
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+  return {
+    subject: safeSubject(headline),
+    text,
+    html,
+  };
+}
+
 function renderTestEmail({ letterhead }) {
   const name = letterhead && letterhead.name ? letterhead.name : 'Launchpad';
   const footer = footerLines(letterhead);
@@ -669,6 +725,7 @@ module.exports = {
   transferFilesLink,
   orderProofLink,
   quoteLink,
+  staffQuoteLink,
   proofReviewLink,
   escapeHtml,
   parseAddressList,
@@ -678,6 +735,7 @@ module.exports = {
   renderShareEmail,
   renderTransferEmail,
   renderQuoteEmail,
+  renderQuoteRequestEmail,
   renderProofEmail,
   renderProofChangesEmail,
   renderTestEmail,

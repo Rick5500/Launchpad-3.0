@@ -200,12 +200,23 @@ function linkButton(label, onClick) {
   );
 }
 
+function quoteRequestPath(quote) {
+  if (quote && quote.status === 'Accepted') return `/order?fromQuote=${quote.id}`;
+  return `/quote-requests/${quote.id}`;
+}
+
+function quoteActivityPath(item) {
+  if (item.action === 'quote_request.accepted') return `/order?fromQuote=${item.entity_id}`;
+  return `/quote-requests/${item.entity_id}`;
+}
+
 export default function AdminBoard() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const canApprove = user?.role === 'admin';
   const canMove = user?.role === 'admin' || user?.role === 'manager';
   const [summary, setSummary] = useState(null);
+  const showQuotePanel = (user?.role === 'admin' || user?.role === 'manager') && Boolean(summary?.quote_requests);
   const [summaryError, setSummaryError] = useState('');
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]);
@@ -886,7 +897,7 @@ export default function AdminBoard() {
         </Box>
 
         <Box sx={{ gridColumn: '1 / -1', display: 'grid', gap: 2 }}>
-          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr', lg: showQuotePanel ? '1fr 1fr 1fr' : '1fr 1fr' }, gap: 2 }}>
             <Panel title="Scan Activity (Last 10 Scans)" action={linkButton('View Full Scan History', openScans)}>
               <Box sx={{ overflowX: 'auto' }}>
                 <Table size="small" sx={{ minWidth: 420 }}>
@@ -932,6 +943,43 @@ export default function AdminBoard() {
                 <Typography sx={{ mt: 1, fontSize: 12, color: brand.muted }}>An administrator approves or rejects these requests.</Typography>
               )}
             </Panel>
+
+            {showQuotePanel && (
+              <Panel
+                title="Quote Requests"
+                badge={(summary.quote_requests.new_count || 0) + (summary.quote_requests.accepted_count || 0) || null}
+                action={linkButton('View All Quote Requests', () => navigate('/quote-requests'))}
+              >
+                <Box data-testid="dashboard-quote-requests" sx={{ display: 'grid', gap: 1.25 }}>
+                  <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                    <Typography sx={{ fontSize: 14 }}>
+                      New <Box component="span" sx={{ fontWeight: 700 }}>{summary.quote_requests.new_count || 0}</Box>
+                    </Typography>
+                    <Typography sx={{ fontSize: 14 }}>
+                      Accepted - ready to convert <Box component="span" sx={{ fontWeight: 700 }}>{summary.quote_requests.accepted_count || 0}</Box>
+                    </Typography>
+                  </Box>
+                  {(summary.quote_requests.quotes || []).length ? summary.quote_requests.quotes.map((quote) => (
+                    <Box
+                      key={quote.id}
+                      onClick={() => navigate(quoteRequestPath(quote))}
+                      sx={{ cursor: 'pointer', minWidth: 0 }}
+                    >
+                      <Typography sx={{ fontWeight: 700, fontSize: 14, color: brand.navy }}>{quote.project_name}</Typography>
+                      <Typography sx={{ fontSize: 13, color: brand.muted }}>
+                        {quote.customer_name || 'Customer'}
+                        {' · '}
+                        Needed by {quote.needed_by_display || quote.needed_by || '—'}
+                        {' · '}
+                        {quote.status}
+                      </Typography>
+                    </Box>
+                  )) : (
+                    <Typography color="text.secondary" sx={{ fontSize: 14 }}>No open quote requests.</Typography>
+                  )}
+                </Box>
+              </Panel>
+            )}
           </Box>
         </Box>
 
@@ -964,10 +1012,16 @@ export default function AdminBoard() {
                 <Box key={item.id}>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1 }}>
                     <Typography
-                      sx={{ fontWeight: 700, fontSize: 14, color: item.entity_type === 'work_order' ? brand.navy : brand.text, cursor: item.entity_type === 'work_order' ? 'pointer' : 'default' }}
+                      sx={{
+                        fontWeight: 700,
+                        fontSize: 14,
+                        color: item.entity_type === 'work_order' || item.entity_type === 'order' || (item.entity_type === 'quote_request' && showQuotePanel) ? brand.navy : brand.text,
+                        cursor: item.entity_type === 'work_order' || item.entity_type === 'order' || (item.entity_type === 'quote_request' && showQuotePanel) ? 'pointer' : 'default',
+                      }}
                       onClick={() => {
                         if (item.entity_type === 'work_order' && item.entity_id) navigate(`/work-orders/${item.entity_id}`);
                         if (item.entity_type === 'order' && item.entity_id) navigate(`/orders/${item.entity_id}`);
+                        if (item.entity_type === 'quote_request' && item.entity_id && showQuotePanel) navigate(quoteActivityPath(item));
                       }}
                     >
                       {item.external_id || item.summary}
@@ -999,8 +1053,23 @@ export default function AdminBoard() {
               {visibleAlerts.length ? visibleAlerts.map((alert) => {
                 const Icon = ALERT_ICONS[alert.severity] || InfoOutlinedIcon;
                 const color = ALERT_COLORS[alert.severity] || brand.navy;
+                const quoteAlert = alert.id === 'quote-requests' || alert.id === 'quote-accepted';
                 return (
-                  <Box key={alert.id} sx={{ display: 'flex', gap: 1 }}>
+                  <Box
+                    key={alert.id}
+                    onClick={quoteAlert && showQuotePanel ? () => {
+                      if (alert.id === 'quote-accepted') {
+                        const listed = (summary?.quote_requests?.quotes || []).find((quote) => quote.status === 'Accepted');
+                        const target = alert.quote_request_id || listed?.id;
+                        if (target) {
+                          navigate(`/order?fromQuote=${target}`);
+                          return;
+                        }
+                      }
+                      navigate('/quote-requests');
+                    } : undefined}
+                    sx={{ display: 'flex', gap: 1, cursor: quoteAlert && showQuotePanel ? 'pointer' : 'default' }}
+                  >
                     <Icon sx={{ color, fontSize: 20, mt: 0.2 }} />
                     <Box>
                       <Typography sx={{ fontSize: 14, fontWeight: 700 }}>{alert.message}</Typography>
