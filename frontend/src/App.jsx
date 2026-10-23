@@ -253,10 +253,29 @@ function LoginScreen() {
   revealFormRef.current = revealForm;
 
   useEffect(() => {
-    const previous = document.body.style.backgroundColor;
-    document.body.style.backgroundColor = '#05070d';
+    const html = document.documentElement;
+    const body = document.body;
+    const previous = {
+      bodyBg: body.style.backgroundColor,
+      htmlBg: html.style.backgroundColor,
+      bodyOverflow: body.style.overflow,
+      htmlOverflow: html.style.overflow,
+      bodyScheme: body.style.colorScheme,
+      htmlScheme: html.style.colorScheme,
+    };
+    body.style.backgroundColor = '#05070d';
+    html.style.backgroundColor = '#05070d';
+    body.style.overflow = 'hidden';
+    html.style.overflow = 'hidden';
+    body.style.colorScheme = 'dark';
+    html.style.colorScheme = 'dark';
     return () => {
-      document.body.style.backgroundColor = previous;
+      body.style.backgroundColor = previous.bodyBg;
+      html.style.backgroundColor = previous.htmlBg;
+      body.style.overflow = previous.bodyOverflow;
+      html.style.overflow = previous.htmlOverflow;
+      body.style.colorScheme = previous.bodyScheme;
+      html.style.colorScheme = previous.htmlScheme;
     };
   }, []);
 
@@ -388,6 +407,11 @@ function LoginScreen() {
       component="main"
       sx={{
         minHeight: '100vh',
+        height: '100vh',
+        '@supports (height: 100dvh)': {
+          minHeight: '100dvh',
+          height: '100dvh',
+        },
         boxSizing: 'border-box',
         colorScheme: 'dark',
         bgcolor: '#05070d',
@@ -395,6 +419,9 @@ function LoginScreen() {
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
+        overflowX: 'hidden',
+        overflowY: 'auto',
+        scrollbarColor: '#2a4468 #05070d',
         px: { xs: 2, sm: 3 },
         pt: { xs: 6, sm: 5 },
         pb: 4,
