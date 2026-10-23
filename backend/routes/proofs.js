@@ -10,6 +10,7 @@ const {
   uploadErrorMessage,
   createStoredReadStream,
   finishStoredDownload,
+  sendStoredDownload,
 } = require('../fileStore');
 
 const proofRouter = express.Router();
@@ -57,9 +58,7 @@ function sendProofFile(res, file, disposition) {
     });
     return stream.pipe(res);
   }
-  return res.download(file.fullPath, file.downloadName, (downloadErr) => {
-    finishStoredDownload(res, downloadErr, path.dirname(file.fullPath));
-  });
+  return sendStoredDownload(res, file.fullPath, file.downloadName, path.dirname(file.fullPath));
 }
 
 function mount(orderRouter) {

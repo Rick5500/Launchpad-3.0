@@ -9,6 +9,11 @@ Architecture:
 - Assets: static files in `assets/`
 - Docs: project requirements and notes in `docs/`
 
+Cloud server:
+
+- One production process can serve the API and the built frontend. From the repository root, `npm run build` then `npm start` with `NODE_ENV=production`. Local development is unchanged: the backend still listens on port 3000 and the Vite dev server still listens on port 5173.
+- See `docs/CLOUD_DEPLOY.md` for Render, Railway, or a small VPS, including copying `launchpad.db` and the uploads folder and the DNS cutover for launchpad.acgprinting.com.
+
 Getting started (backend):
 
 1. Change to `backend/` and install dependencies:

@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const db = require('./db');
+const { sessionTokenFromCookie } = require('./cookies');
 
 const BCRYPT_ROUNDS = 10;
 const DEFAULT_SESSION_TTL_HOURS = 8;
@@ -223,16 +224,21 @@ function login(username, password, cb) {
   );
 }
 
-function requireAuth(req, res, next) {
+function tokenFromRequest(req) {
   const authHeader = req.headers.authorization;
-  if (!authHeader) return res.status(401).json({ error: SESSION_EXPIRED_MESSAGE });
-
-  const parts = authHeader.split(' ');
-  if (parts.length !== 2 || parts[0] !== 'Bearer') {
-    return res.status(401).json({ error: SESSION_EXPIRED_MESSAGE });
+  if (authHeader) {
+    const parts = String(authHeader).split(' ');
+    if (parts.length === 2 && parts[0] === 'Bearer' && parts[1]) return parts[1];
+    return '';
   }
+  return sessionTokenFromCookie(req);
+}
 
-  const session = getUserByToken(parts[1]);
+function requireAuth(req, res, next) {
+  const token = tokenFromRequest(req);
+  if (!token) return res.status(401).json({ error: SESSION_EXPIRED_MESSAGE });
+
+  const session = getUserByToken(token);
   if (!session) {
     return res.status(401).json({ error: SESSION_EXPIRED_MESSAGE });
   }

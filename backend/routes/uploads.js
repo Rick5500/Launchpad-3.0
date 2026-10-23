@@ -11,7 +11,7 @@ const {
   uploadErrorMessage,
   storageRootOfUpload,
   openStored,
-  finishStoredDownload,
+  sendStoredDownload,
   removeStored,
 } = require('../fileStore');
 const { maxUnattachedUploads, countUnattachedUploads } = require('../uploadMaintenance');
@@ -172,9 +172,7 @@ router.get('/:id/download', auth.requireAuth, uploadRoles, async (req, res) => {
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('Content-Type', contentTypeFor(file.stored_name));
     res.set('Cache-Control', 'private, no-store');
-    return res.download(opened.fullPath, sanitizeOriginalName(file.original_name), (downloadErr) => {
-      finishStoredDownload(res, downloadErr, path.dirname(opened.fullPath));
-    });
+    return sendStoredDownload(res, opened.fullPath, sanitizeOriginalName(file.original_name), path.dirname(opened.fullPath));
   } catch (err) {
     if (err && err.status === 503) {
       return res.status(503).json({ error: err.publicMessage || err.message });

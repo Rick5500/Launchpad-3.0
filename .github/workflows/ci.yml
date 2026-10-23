@@ -78,6 +78,9 @@ jobs:
       - name: Verify phase 19
         working-directory: backend
         run: npm run verify:phase19
+      - name: Verify cloud deploy
+        working-directory: backend
+        run: npm run verify:cloud
       - name: Build frontend
         working-directory: frontend
         run: |

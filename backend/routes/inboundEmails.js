@@ -6,7 +6,7 @@ const inboundEmail = require('../inboundEmail');
 const { OrderError } = require('../orderService');
 const { inboundEmailPollingEnabled } = require('../systemSettings');
 const { sendError } = require('../httpError');
-const { finishStoredDownload } = require('../fileStore');
+const { sendStoredDownload } = require('../fileStore');
 
 const router = express.Router();
 const staff = auth.requireRole('admin', 'manager', 'operator');
@@ -56,9 +56,7 @@ router.get('/:id/attachments/:attachmentId/download', auth.requireAuth, staff, a
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('Content-Type', file.contentType);
     res.set('Cache-Control', 'private, no-store');
-    return res.download(file.path, file.name, (err) => {
-      finishStoredDownload(res, err, path.dirname(file.path));
-    });
+    return sendStoredDownload(res, file.path, file.name, path.dirname(file.path));
   } catch (err) {
     sendError(res, err, 'INBOUND DOWNLOAD ERROR:', 'Failed to download file');
   }

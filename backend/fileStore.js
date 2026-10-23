@@ -317,13 +317,7 @@ function canPlantOriginalMarker(root) {
   const env = environmentRoot();
   const isEnv = Boolean(env && rootsEqual(root, env));
   if (!isDefault && !isEnv) return false;
-  let stat;
-  try {
-    stat = fs.statSync(root);
-  } catch (err) {
-    return false;
-  }
-  if (!stat.isDirectory()) return false;
+  if (!directoryExists(root)) return false;
   // The directory is already there. UPLOAD_DIR is marked even when it is
   // empty, because that folder is the one this process was given. A missing
   // UPLOAD_DIR is not created here. The shipped default is created separately,
@@ -495,6 +489,14 @@ function storageRootOfUpload(file) {
 
 function directoryExists(root) {
   try {
+    const driver = activeDriver();
+    if (driver && typeof driver.directoryExistsSync === 'function') {
+      return driver.directoryExistsSync(root);
+    }
+  } catch (err) {
+    return false;
+  }
+  try {
     return fs.statSync(root).isDirectory();
   } catch (err) {
     return false;
@@ -538,6 +540,29 @@ function createStoredReadStream(fullPath) {
   return activeDriver().createReadStream(fullPath);
 }
 
+function sendStoredDownload(res, fullPath, filename, root) {
+  let driver;
+  try {
+    driver = activeDriver();
+  } catch (err) {
+    return finishStoredDownload(res, err, root);
+  }
+  if (!driver || driver.id === 'local') {
+    return res.download(fullPath, filename, (err) => finishStoredDownload(res, err, root));
+  }
+  try {
+    const stat = driver.statSync(fullPath);
+    if (stat && stat.size != null) res.set('Content-Length', String(stat.size));
+    const safe = String(filename || 'download').replace(/["\r\n]/g, '').slice(0, 180) || 'download';
+    res.set('Content-Disposition', `attachment; filename="${safe}"`);
+    const stream = driver.createReadStream(fullPath);
+    stream.on('error', (err) => finishStoredDownload(res, err, root));
+    return stream.pipe(res);
+  } catch (err) {
+    return finishStoredDownload(res, err, root);
+  }
+}
+
 function removeStored(storedName, storageRoot) {
   const root = rootForStored(storageRoot);
   if (!root) return 'invalid';
@@ -559,7 +584,9 @@ function removeMovingTemps(root) {
   if (!root) return;
   let names;
   try {
-    names = fs.readdirSync(root);
+    const driver = activeDriver();
+    if (driver && typeof driver.listNamesSync === 'function') names = driver.listNamesSync(root);
+    else names = fs.readdirSync(root);
   } catch (err) {
     return;
   }
@@ -578,7 +605,9 @@ function removeUploaded(files) {
   for (const file of files || []) {
     if (!file || !file.path) continue;
     try {
-      fs.unlinkSync(file.path);
+      const driver = activeDriver();
+      if (driver && driver.id !== 'local') driver.unlinkSync(file.path);
+      else fs.unlinkSync(file.path);
     } catch (err) {
       if (err.code !== 'ENOENT') console.error('FILE CLEANUP ERROR:', err.message);
     }
@@ -764,7 +793,7 @@ function describeStorage() {
     };
   }
   const status = storageStatus(root);
-  return {
+  const described = {
     driver: found.driver.id,
     driver_label: found.driver.label,
     path: root,
@@ -777,6 +806,11 @@ function describeStorage() {
     environment_path: environmentRoot(),
     default_path: defaultRoot(),
   };
+  if (found.driver.id === 's3') {
+    described.bucket = found.driver.bucket || null;
+    described.object_prefix = found.driver.prefix || '';
+  }
+  return described;
 }
 
 const storage = multer.diskStorage({
@@ -811,10 +845,54 @@ function fileFilter(req, file, cb) {
   cb(null, true);
 }
 
+function objectStorageEngine() {
+  return {
+    _handleFile(req, file, cb) {
+      const ready = ensureUploadDir();
+      if (!ready.ok) {
+        const error = new Error(ready.error || STORAGE_DOWN_MESSAGE);
+        error.status = 503;
+        error.code = 'STORAGE_UNAVAILABLE';
+        return cb(error);
+      }
+      const ext = extensionOf(file.originalname);
+      if (!ALLOWED_EXTENSIONS.has(ext)) {
+        return cb(new Error('Allowed file types are pdf, images, dwg, zip, and plt'));
+      }
+      const filename = `${crypto.randomBytes(16).toString('hex')}.${ext}`;
+      const full = safeStoredPath(filename, ready.path);
+      if (!full) return cb(new Error('Allowed file types are pdf, images, dwg, zip, and plt'));
+      const chunks = [];
+      file.stream.on('data', (chunk) => chunks.push(chunk));
+      file.stream.on('error', (err) => cb(err));
+      file.stream.on('end', () => {
+        try {
+          const buffer = Buffer.concat(chunks);
+          activeDriver().writeFileSync(full, buffer);
+          cb(null, { path: full, filename, size: buffer.length });
+        } catch (err) {
+          const error = new Error(STORAGE_DOWN_MESSAGE);
+          error.status = 503;
+          error.code = 'STORAGE_UNAVAILABLE';
+          cb(error);
+        }
+      });
+    },
+    _removeFile(req, file, cb) {
+      try {
+        if (file && file.path) activeDriver().unlinkSync(file.path);
+      } catch (err) { /* multer is already reporting the upload error */ }
+      cb(null);
+    },
+  };
+}
+
 function uploadMiddleware() {
   const limit = maxFilesPerRequest();
+  const found = getStorageDriver();
+  const engine = found.driver && found.driver.id === 's3' ? objectStorageEngine() : storage;
   return multer({
-    storage,
+    storage: engine,
     fileFilter,
     limits: {
       fileSize: maxUploadBytes(),
@@ -887,6 +965,7 @@ module.exports = {
   openStored,
   finishStoredDownload,
   createStoredReadStream,
+  sendStoredDownload,
   removeStored,
   removeUploaded,
   writeNewFile,

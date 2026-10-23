@@ -1,8 +1,47 @@
 process.env.UV_THREADPOOL_SIZE ||= '32';
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
+require('dotenv').config({ path: path.join(__dirname, '.env') });
+const {
+  applyPathAliases,
+  shouldAutoMigrate,
+  corsOrigins,
+  isProduction,
+} = require('./runtimeConfig');
+applyPathAliases();
+
+function ensureProductionDataDirs() {
+  if (!isProduction()) return;
+  const dbFile = process.env.DATABASE_FILE && String(process.env.DATABASE_FILE).trim();
+  if (dbFile) {
+    const dir = path.dirname(path.resolve(dbFile));
+    if (dir && dir !== path.parse(dir).root) fs.mkdirSync(dir, { recursive: true });
+  }
+  const upload = process.env.UPLOAD_DIR && String(process.env.UPLOAD_DIR).trim();
+  if (upload && path.isAbsolute(upload)) fs.mkdirSync(upload, { recursive: true });
+}
+
+ensureProductionDataDirs();
+
+if (shouldAutoMigrate()) {
+  const { spawnSync } = require('child_process');
+  const initResult = spawnSync(process.execPath, [path.join(__dirname, 'init_db.js')], {
+    stdio: 'inherit',
+    env: process.env,
+  });
+  if (initResult.error) {
+    console.error('DATABASE INIT ERROR:', initResult.error);
+    process.exit(1);
+  }
+  if (initResult.status !== 0) {
+    console.error('Database initialization failed');
+    process.exit(initResult.status || 1);
+  }
+}
+
 const express = require('express');
 const cors = require('cors');
-const path = require('path');
 
 const app = express();
 
@@ -18,7 +57,7 @@ function trustProxySetting(raw) {
 app.set('trust proxy', trustProxySetting(process.env.TRUST_PROXY));
 
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:5174'],
+  origin: corsOrigins(),
   credentials: true
 }));
 
@@ -60,6 +99,9 @@ const mailer = require('./mailer');
 const userAdmin = require('./userAdmin');
 const registerLimit = require('./registerLimit');
 const { sendError } = require('./httpError');
+const { appendSessionCookie, clearSessionCookie, sessionTokenFromCookie } = require('./cookies');
+const { mountProductionFrontend } = require('./productionStatic');
+const backup = require('./backup');
 
 
 // Health check
@@ -100,6 +142,7 @@ app.post('/api/auth/register', async (req, res) => {
     const session = await userAdmin.registerCustomer(req.body);
     registerLimit.commit(ip);
     reserved = false;
+    appendSessionCookie(res, req, session && session.token);
     return res.status(201).json(session);
   } catch (err) {
     if (reserved) {
@@ -132,6 +175,7 @@ app.post('/api/auth/login', (req, res) => {
       return res.status(401).json({ error: 'invalid credentials' });
     }
     auth.clearLoginFailures(ip, username);
+    appendSessionCookie(res, req, result.token);
     res.json(result);
   });
 });
@@ -140,7 +184,10 @@ app.post('/api/auth/logout', (req, res) => {
   const header = req.headers.authorization || '';
   const parts = header.split(' ');
   const token = parts.length === 2 && parts[0] === 'Bearer' ? parts[1] : null;
+  const cookieToken = sessionTokenFromCookie(req);
   auth.clearSession(token);
+  if (cookieToken && cookieToken !== token) auth.clearSession(cookieToken);
+  clearSessionCookie(res, req);
   res.json({ ok: true });
 });
 
@@ -210,6 +257,8 @@ app.get('/api/admin', auth.requireAuth, auth.requireRole('admin'), (req, res) =>
 // Customer placeholder
 app.get('/api/customer', auth.requireAuth, (req, res) => res.json({ message: 'customer endpoint (placeholder)', user: req.user }));
 
+const frontend = mountProductionFrontend(app);
+
 systemSettings.loadRuntimeCache()
   .catch((err) => {
     console.error('SETTINGS CACHE ERROR:', err);
@@ -220,8 +269,10 @@ systemSettings.loadRuntimeCache()
     mailer.warnTestJsonTransport();
     app.listen(port, () => {
       console.log(`Launchpad backend listening on port ${port}`);
+      if (frontend.enabled) console.log(`Serving frontend from ${frontend.dist}`);
       notificationScheduler.start();
       startOrphanSweep();
       inboundEmailPoller.start();
+      backup.start();
     });
   });

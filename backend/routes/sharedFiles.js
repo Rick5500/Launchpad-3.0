@@ -8,7 +8,7 @@ const {
   uploadMiddleware,
   uploadErrorStatus,
   uploadErrorMessage,
-  finishStoredDownload,
+  sendStoredDownload,
 } = require('../fileStore');
 
 const fileRouter = express.Router();
@@ -75,9 +75,7 @@ fileRouter.get('/:id/download', auth.requireAuth, readers, async (req, res) => {
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('Content-Type', file.contentType);
     res.set('Cache-Control', 'private, no-store');
-    return res.download(file.fullPath, file.downloadName, (downloadErr) => {
-      finishStoredDownload(res, downloadErr, path.dirname(file.fullPath));
-    });
+    return sendStoredDownload(res, file.fullPath, file.downloadName, path.dirname(file.fullPath));
   } catch (err) {
     return fail(res, err, 'SHARED DOWNLOAD ERROR:', 'Failed to download file');
   }

@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const sqlite3 = require('sqlite3').verbose();
+require('./runtimeConfig').applyPathAliases();
 
 const { seedServiceFields } = require('./serviceFields');
 const {

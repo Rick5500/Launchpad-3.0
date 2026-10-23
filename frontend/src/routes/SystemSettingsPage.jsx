@@ -241,7 +241,9 @@ export default function SystemSettingsPage() {
 
       <SectionCard
         title="File storage"
-        subtitle={'Uploads, shared files, proofs, and email attachments are stored in this folder. A mapped drive such as Z:\\launchpad or a network share such as \\\\server\\share\\launchpad is allowed. OneDrive and SharePoint are not connected.'}
+        subtitle={storage.driver === 's3'
+          ? 'New uploads, shared files, proofs, and email attachments are stored in the S3-compatible bucket from the server environment. OneDrive and SharePoint are not connected.'
+          : 'Uploads, shared files, proofs, and email attachments are stored in this folder. A mapped drive such as Z:\\launchpad or a network share such as \\\\server\\share\\launchpad is allowed. OneDrive and SharePoint are not connected.'}
       >
         <Box component="form" onSubmit={saveStorage} data-testid="file-storage-section" sx={{ display: 'grid', gap: 2, maxWidth: 720 }}>
           {storage.caution ? <Alert severity="warning" data-testid="file-storage-caution">{storage.caution}</Alert> : null}
@@ -256,6 +258,9 @@ export default function SystemSettingsPage() {
             <Typography variant="body2" color="text.secondary" data-testid="file-storage-source">
               {storage.source === 'settings' ? 'Saved in system settings.' : storage.source === 'environment' ? 'From UPLOAD_DIR.' : 'Default folder.'}
               {storage.driver_label ? ` Driver: ${storage.driver_label}.` : ''}
+              {storage.driver === 's3' && storage.bucket
+                ? ` Files are stored in s3://${storage.bucket}${storage.object_prefix ? `/${storage.object_prefix}` : ''}.`
+                : ''}
             </Typography>
           </Box>
           <Typography data-testid="file-storage-free">
