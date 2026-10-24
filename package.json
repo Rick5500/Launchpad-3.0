@@ -1,0 +1,10 @@
+{
+  "name": "launchpad",
+  "private": true,
+  "description": "Launchpad 3.0. Root scripts are for a production build. Local development still uses backend/ and frontend/.",
+  "scripts": {
+    "build": "npm ci --prefix frontend && npm run build --prefix frontend",
+    "start": "node backend/server.js",
+    "verify:cloud": "npm run verify:cloud --prefix backend"
+  }
+}

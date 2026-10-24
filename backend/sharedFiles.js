@@ -401,7 +401,7 @@ async function loadVisible(user, id) {
 
 async function prepareDownload(user, id) {
   const file = await loadVisible(user, id);
-  const opened = openStored(file.stored_name, file.storage_root);
+  const opened = await Promise.resolve(openStored(file.stored_name, file.storage_root));
   if (!opened) throw httpError(404, 'File not found');
   if (user.role === 'customer') {
     await run(

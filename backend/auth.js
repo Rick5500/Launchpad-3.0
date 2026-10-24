@@ -223,16 +223,19 @@ function login(username, password, cb) {
   );
 }
 
-function requireAuth(req, res, next) {
+function tokenFromRequest(req) {
   const authHeader = req.headers.authorization;
-  if (!authHeader) return res.status(401).json({ error: SESSION_EXPIRED_MESSAGE });
+  if (!authHeader) return '';
+  const parts = String(authHeader).split(' ');
+  if (parts.length === 2 && parts[0] === 'Bearer' && parts[1]) return parts[1];
+  return '';
+}
 
-  const parts = authHeader.split(' ');
-  if (parts.length !== 2 || parts[0] !== 'Bearer') {
-    return res.status(401).json({ error: SESSION_EXPIRED_MESSAGE });
-  }
+function requireAuth(req, res, next) {
+  const token = tokenFromRequest(req);
+  if (!token) return res.status(401).json({ error: SESSION_EXPIRED_MESSAGE });
 
-  const session = getUserByToken(parts[1]);
+  const session = getUserByToken(token);
   if (!session) {
     return res.status(401).json({ error: SESSION_EXPIRED_MESSAGE });
   }

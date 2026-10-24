@@ -11,7 +11,7 @@ const {
   uploadErrorMessage,
   storageRootOfUpload,
   openStored,
-  finishStoredDownload,
+  sendStoredDownload,
   removeStored,
 } = require('../fileStore');
 const { maxUnattachedUploads, countUnattachedUploads } = require('../uploadMaintenance');
@@ -72,7 +72,7 @@ async function canAccessFile(user, file) {
 router.post('/', auth.requireAuth, uploadRoles, (req, res) => {
   uploadMiddleware()(req, res, async (err) => {
     if (err) {
-      removeUploaded(req.files);
+      await Promise.resolve(removeUploaded(req.files));
       return res.status(uploadErrorStatus(err)).json({ error: uploadErrorMessage(err) });
     }
 
@@ -102,7 +102,7 @@ router.post('/', auth.requireAuth, uploadRoles, (req, res) => {
       const waiting = await countUnattachedUploads(Number(req.user.userId));
       const limit = maxUnattachedUploads();
       if (waiting + files.length > limit) {
-        removeUploaded(files);
+        await Promise.resolve(removeUploaded(files));
         return res.status(400).json({
           error: `You can have at most ${limit} files waiting to be attached to an order`,
         });
@@ -111,7 +111,7 @@ router.post('/', auth.requireAuth, uploadRoles, (req, res) => {
       const saved = [];
       for (const file of files) {
         if (!file.size) {
-          removeUploaded([file]);
+          await Promise.resolve(removeUploaded([file]));
           throw Object.assign(new Error('Empty files are not allowed'), { status: 400 });
         }
         const storedName = path.basename(file.filename);
@@ -139,7 +139,7 @@ router.post('/', auth.requireAuth, uploadRoles, (req, res) => {
       }
       return res.status(201).json({ files: saved });
     } catch (insertErr) {
-      removeUploaded(files);
+      await Promise.resolve(removeUploaded(files));
       if (insertedIds.length) {
         const placeholders = insertedIds.map(() => '?').join(', ');
         await run(`DELETE FROM order_files WHERE id IN (${placeholders})`, insertedIds).catch(() => {});
@@ -165,16 +165,14 @@ router.get('/:id/download', auth.requireAuth, uploadRoles, async (req, res) => {
     if (!file || !(await canAccessFile(req.user, file))) {
       return res.status(404).json({ error: 'File not found' });
     }
-    const opened = openStored(file.stored_name, file.storage_root);
+    const opened = await Promise.resolve(openStored(file.stored_name, file.storage_root));
     if (!opened) {
       return res.status(404).json({ error: 'File not found' });
     }
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('Content-Type', contentTypeFor(file.stored_name));
     res.set('Cache-Control', 'private, no-store');
-    return res.download(opened.fullPath, sanitizeOriginalName(file.original_name), (downloadErr) => {
-      finishStoredDownload(res, downloadErr, path.dirname(opened.fullPath));
-    });
+    return await Promise.resolve(sendStoredDownload(res, opened.fullPath, sanitizeOriginalName(file.original_name), path.dirname(opened.fullPath)));
   } catch (err) {
     if (err && err.status === 503) {
       return res.status(503).json({ error: err.publicMessage || err.message });
@@ -201,7 +199,7 @@ router.delete('/:id', auth.requireAuth, uploadRoles, async (req, res) => {
       return res.status(403).json({ error: 'Files attached to a quote or an order cannot be deleted' });
     }
     await run('DELETE FROM order_files WHERE id = ?', [id]);
-    removeStored(file.stored_name, file.storage_root);
+    await Promise.resolve(removeStored(file.stored_name, file.storage_root));
     return res.json({ ok: true, id });
   } catch (err) {
     console.error('UPLOAD DELETE ERROR:', err);
