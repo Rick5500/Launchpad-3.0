@@ -56,7 +56,7 @@ router.get('/:id/attachments/:attachmentId/download', auth.requireAuth, staff, a
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('Content-Type', file.contentType);
     res.set('Cache-Control', 'private, no-store');
-    return sendStoredDownload(res, file.path, file.name, path.dirname(file.path));
+    return await Promise.resolve(sendStoredDownload(res, file.path, file.name, path.dirname(file.path)));
   } catch (err) {
     sendError(res, err, 'INBOUND DOWNLOAD ERROR:', 'Failed to download file');
   }

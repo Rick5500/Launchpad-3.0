@@ -1,7 +1,6 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const db = require('./db');
-const { sessionTokenFromCookie } = require('./cookies');
 
 const BCRYPT_ROUNDS = 10;
 const DEFAULT_SESSION_TTL_HOURS = 8;
@@ -226,12 +225,10 @@ function login(username, password, cb) {
 
 function tokenFromRequest(req) {
   const authHeader = req.headers.authorization;
-  if (authHeader) {
-    const parts = String(authHeader).split(' ');
-    if (parts.length === 2 && parts[0] === 'Bearer' && parts[1]) return parts[1];
-    return '';
-  }
-  return sessionTokenFromCookie(req);
+  if (!authHeader) return '';
+  const parts = String(authHeader).split(' ');
+  if (parts.length === 2 && parts[0] === 'Bearer' && parts[1]) return parts[1];
+  return '';
 }
 
 function requireAuth(req, res, next) {

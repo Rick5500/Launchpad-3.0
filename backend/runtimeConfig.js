@@ -29,7 +29,6 @@ function shouldAutoMigrate() {
 }
 
 function corsOrigins() {
-  const defaults = ['http://localhost:5173', 'http://localhost:5174'];
   const extra = [];
   const raw = process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || '';
   for (const part of String(raw).split(',')) {
@@ -38,26 +37,9 @@ function corsOrigins() {
   }
   const appUrl = String(process.env.PUBLIC_APP_URL || '').trim().replace(/\/$/, '');
   if (appUrl) extra.push(appUrl);
+  if (isProduction()) return [...new Set(extra)];
+  const defaults = ['http://localhost:5173', 'http://localhost:5174'];
   return [...new Set([...defaults, ...extra])];
-}
-
-function cookieSecure(req) {
-  const raw = process.env.COOKIE_SECURE;
-  if (raw != null && String(raw).trim() !== '') return flagOn(raw);
-  const appUrl = String(process.env.PUBLIC_APP_URL || '').trim().toLowerCase();
-  if (appUrl.startsWith('https://')) return true;
-  if (req && req.secure) return true;
-  return false;
-}
-
-// Local dev keeps bearer tokens only. A session cookie is set in production,
-// or when the public site is HTTPS, so the Windows dev servers stay the same.
-function sessionCookiesEnabled() {
-  if (isProduction()) return true;
-  const raw = process.env.COOKIE_SECURE;
-  if (raw != null && String(raw).trim() !== '') return true;
-  const appUrl = String(process.env.PUBLIC_APP_URL || '').trim().toLowerCase();
-  return appUrl.startsWith('https://');
 }
 
 function frontendDistDir() {
@@ -78,8 +60,6 @@ module.exports = {
   isProduction,
   shouldAutoMigrate,
   corsOrigins,
-  cookieSecure,
-  sessionCookiesEnabled,
   frontendDistDir,
   databaseFile,
   flagOn,

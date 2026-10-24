@@ -99,7 +99,6 @@ const mailer = require('./mailer');
 const userAdmin = require('./userAdmin');
 const registerLimit = require('./registerLimit');
 const { sendError } = require('./httpError');
-const { appendSessionCookie, clearSessionCookie, sessionTokenFromCookie } = require('./cookies');
 const { mountProductionFrontend } = require('./productionStatic');
 const backup = require('./backup');
 
@@ -142,7 +141,6 @@ app.post('/api/auth/register', async (req, res) => {
     const session = await userAdmin.registerCustomer(req.body);
     registerLimit.commit(ip);
     reserved = false;
-    appendSessionCookie(res, req, session && session.token);
     return res.status(201).json(session);
   } catch (err) {
     if (reserved) {
@@ -175,7 +173,6 @@ app.post('/api/auth/login', (req, res) => {
       return res.status(401).json({ error: 'invalid credentials' });
     }
     auth.clearLoginFailures(ip, username);
-    appendSessionCookie(res, req, result.token);
     res.json(result);
   });
 });
@@ -184,10 +181,7 @@ app.post('/api/auth/logout', (req, res) => {
   const header = req.headers.authorization || '';
   const parts = header.split(' ');
   const token = parts.length === 2 && parts[0] === 'Bearer' ? parts[1] : null;
-  const cookieToken = sessionTokenFromCookie(req);
   auth.clearSession(token);
-  if (cookieToken && cookieToken !== token) auth.clearSession(cookieToken);
-  clearSessionCookie(res, req);
   res.json({ ok: true });
 });
 
@@ -263,8 +257,8 @@ systemSettings.loadRuntimeCache()
   .catch((err) => {
     console.error('SETTINGS CACHE ERROR:', err);
   })
-  .finally(() => {
-    const storageReady = ensureUploadDir();
+  .finally(async () => {
+    const storageReady = await Promise.resolve(ensureUploadDir());
     if (!storageReady.ok) console.error('UPLOAD DIR ERROR:', storageReady.error);
     mailer.warnTestJsonTransport();
     app.listen(port, () => {

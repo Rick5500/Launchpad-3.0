@@ -4,6 +4,7 @@ const auth = require('../auth');
 const proofs = require('../proofs');
 const { sendError } = require('../httpError');
 const {
+  finishRemoveUploaded,
   removeUploaded,
   uploadMiddleware,
   uploadErrorStatus,
@@ -37,14 +38,16 @@ function fail(res, err, label, fallback) {
 function acceptUpload(req, res, next) {
   uploadMiddleware()(req, res, (err) => {
     if (err) {
-      removeUploaded(req.files);
-      return res.status(uploadErrorStatus(err)).json({ error: uploadErrorMessage(err) });
+      finishRemoveUploaded(req.files, () => {
+        res.status(uploadErrorStatus(err)).json({ error: uploadErrorMessage(err) });
+      });
+      return;
     }
     return next();
   });
 }
 
-function sendProofFile(res, file, disposition) {
+async function sendProofFile(res, file, disposition) {
   res.set('X-Content-Type-Options', 'nosniff');
   res.set('Content-Type', file.contentType);
   res.set('Cache-Control', 'private, no-store');
@@ -52,7 +55,7 @@ function sendProofFile(res, file, disposition) {
     const name = String(file.downloadName || 'proof').replace(/["\r\n]/g, '');
     res.set('Content-Disposition', `inline; filename="${name}"`);
     res.set('Content-Length', file.size);
-    const stream = createStoredReadStream(file.fullPath);
+    const stream = await Promise.resolve(createStoredReadStream(file.fullPath));
     stream.on('error', (streamErr) => {
       finishStoredDownload(res, streamErr, path.dirname(file.fullPath));
     });
@@ -75,14 +78,14 @@ function mount(orderRouter) {
   orderRouter.post('/:id/proofs', auth.requireAuth, staff, acceptUpload, async (req, res) => {
     const id = parseId(req.params.id);
     if (!id) {
-      removeUploaded(req.files);
+      await Promise.resolve(removeUploaded(req.files));
       return res.status(400).json({ error: 'id must be a positive integer' });
     }
     try {
       const result = await proofs.sendProof(req.user, id, req.body || {}, req.files || []);
       return res.status(201).json(result);
     } catch (err) {
-      if (!err.filesCommitted) removeUploaded(req.files);
+      if (!err.filesCommitted) await Promise.resolve(removeUploaded(req.files));
       return fail(res, err, 'PROOF SEND ERROR:', 'Failed to send proof');
     }
   });
@@ -120,7 +123,7 @@ fileRouter.get('/:id/download', auth.requireAuth, readers, async (req, res) => {
   const id = parseId(req.params.id);
   if (!id) return res.status(400).json({ error: 'id must be a positive integer' });
   try {
-    sendProofFile(res, await proofs.prepareFile(req.user, id), 'attachment');
+    await sendProofFile(res, await proofs.prepareFile(req.user, id), 'attachment');
   } catch (err) {
     fail(res, err, 'PROOF DOWNLOAD ERROR:', 'Failed to download file');
   }
@@ -130,7 +133,7 @@ fileRouter.get('/:id/view', auth.requireAuth, readers, async (req, res) => {
   const id = parseId(req.params.id);
   if (!id) return res.status(400).json({ error: 'id must be a positive integer' });
   try {
-    sendProofFile(res, await proofs.prepareFile(req.user, id), 'inline');
+    await sendProofFile(res, await proofs.prepareFile(req.user, id), 'inline');
   } catch (err) {
     fail(res, err, 'PROOF VIEW ERROR:', 'Failed to open file');
   }

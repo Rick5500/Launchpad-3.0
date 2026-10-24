@@ -20,7 +20,7 @@ async function withMail(body) {
   }
   let fileStorage = null;
   try {
-    fileStorage = describeStorage();
+    fileStorage = await Promise.resolve(describeStorage());
     fileStorage.outside_current_folder = await fileStorageMove.countOutside();
   } catch (err) {
     fileStorage = {
@@ -85,7 +85,7 @@ router.post('/file-storage/move', auth.requireAuth, auth.requireRole('admin'), a
     }
     let fileStorage = null;
     try {
-      fileStorage = describeStorage();
+      fileStorage = await Promise.resolve(describeStorage());
       fileStorage.outside_current_folder = await fileStorageMove.countOutside();
     } catch (err) {
       fileStorage = null;

@@ -11,7 +11,11 @@ COPY frontend/package.json frontend/package-lock.json frontend/
 RUN npm ci --prefix frontend
 
 COPY . .
-RUN npm run build --prefix frontend && rm -rf frontend/node_modules
+RUN npm run build --prefix frontend \
+ && rm -rf frontend/node_modules \
+ && chown -R node:node /app
+
+USER node
 
 ENV NODE_ENV=production
 ENV PORT=3000

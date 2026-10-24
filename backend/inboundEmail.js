@@ -278,7 +278,7 @@ async function storeAttachment(emailId, attachment) {
     await insertSkipped(emailId, attachment, `File exceeds the ${maxUploadMb()} MB limit`);
     return;
   }
-  const written = writeNewFile(ext, bytes);
+  const written = await Promise.resolve(writeNewFile(ext, bytes));
   await run(
     `INSERT OR IGNORE INTO inbound_email_attachments (
       inbound_email_id, graph_attachment_id, original_name, stored_name, mime_type, size_bytes, storage_root
@@ -475,7 +475,7 @@ async function attachmentDownload(user, emailId, attachmentId) {
     [parseId(attachmentId), parseId(emailId)]
   );
   if (!file || file.skipped_reason || !file.stored_name) return null;
-  const opened = openStored(file.stored_name, file.storage_root);
+  const opened = await Promise.resolve(openStored(file.stored_name, file.storage_root));
   if (!opened) return null;
   return {
     path: opened.fullPath,
@@ -496,8 +496,8 @@ function parseAttachmentIds(body) {
   });
 }
 
-function removeStoredCopy(storedName, storageRoot) {
-  removeStored(storedName, storageRoot);
+async function removeStoredCopy(storedName, storageRoot) {
+  await Promise.resolve(removeStored(storedName, storageRoot));
 }
 
 async function discardMaterialized(created) {
@@ -510,7 +510,7 @@ async function discardMaterialized(created) {
       'UPDATE inbound_email_attachments SET order_file_id = NULL WHERE id = ? AND order_file_id = ?',
       [item.attachmentId, item.orderFileId]
     );
-    if (removed.changes) removeStoredCopy(item.storedName, item.storageRoot);
+    if (removed.changes) await removeStoredCopy(item.storedName, item.storageRoot);
   }
 }
 
@@ -543,7 +543,7 @@ async function materializeAttachments(user, emailId, customerId, attachmentIds) 
           && !existing.order_id
           && existing.stored_name
           && existing.stored_name !== row.stored_name
-          && openStored(existing.stored_name, existing.storage_root);
+          && await Promise.resolve(openStored(existing.stored_name, existing.storage_root));
         if (reusable) {
           await run(
             'UPDATE order_files SET customer_id = ?, uploaded_by = ? WHERE id = ? AND order_id IS NULL',
@@ -561,7 +561,7 @@ async function materializeAttachments(user, emailId, customerId, attachmentIds) 
         if (existing && !existing.order_id) {
           await run('DELETE FROM order_files WHERE id = ? AND order_id IS NULL', [existing.id]);
           if (existing.stored_name && existing.stored_name !== row.stored_name) {
-            removeStoredCopy(existing.stored_name, existing.storage_root);
+            await removeStoredCopy(existing.stored_name, existing.storage_root);
           }
         }
         await run(
@@ -569,7 +569,7 @@ async function materializeAttachments(user, emailId, customerId, attachmentIds) 
           [row.id]
         );
       }
-      const copied = copyStoredFile(row.stored_name, row.storage_root);
+      const copied = await Promise.resolve(copyStoredFile(row.stored_name, row.storage_root));
       if (!copied) continue;
       try {
         const inserted = await run(
@@ -598,7 +598,7 @@ async function materializeAttachments(user, emailId, customerId, attachmentIds) 
         });
         ids.push(inserted.lastID);
       } catch (err) {
-        removeStoredCopy(copied.storedName, copied.storageRoot);
+        await removeStoredCopy(copied.storedName, copied.storageRoot);
         throw err;
       }
     }

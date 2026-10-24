@@ -24,18 +24,17 @@ Copy the names from `backend/.env.example`. For a single HTTPS service:
 
 | Variable | Example | Why |
 | --- | --- | --- |
-| `NODE_ENV` | `production` | Serves `frontend/dist`, runs migrations on startup, sets the session cookie |
+| `NODE_ENV` | `production` | Serves `frontend/dist` and runs migrations on startup |
 | `PORT` | set by the host | One public port |
 | `DATABASE_PATH` | `/var/data/launchpad.db` | SQLite file on the persistent disk. Wins over `DATABASE_FILE` |
 | `UPLOADS_DIR` | `/var/data/uploads` | Local upload folder on that disk. Wins over `UPLOAD_DIR` |
-| `PUBLIC_APP_URL` | `https://launchpad.acgprinting.com` | Links in email, and the cookie is Secure |
+| `PUBLIC_APP_URL` | `https://launchpad.acgprinting.com` | Links in email |
 | `TRUST_PROXY` | `1` | The HTTPS proxy's client IP is used for rate limits |
-| `COOKIE_SECURE` | `true` | Session cookie is `Secure`, `HttpOnly`, and `SameSite=Lax` |
 | `DELIVERY_TIMEZONE` | `America/New_York` | Same shop clock as the PC |
 | `INIT_ADMIN_PASSWORD` | choose one | Used only when the admin user does not exist yet |
 | `BACKUP_ENABLED` | `false` until you want it | Nightly SQLite online backup |
 
-`CORS_ORIGINS` can stay unset. The browser loads the app and the API from the same host. `http://localhost:5173` stays allowed so a dev server is not blocked if you ever point it at this API.
+`CORS_ORIGINS` can stay unset. The browser loads the app and the API from the same host. Production does not allow `http://localhost:5173` unless you list it in `CORS_ORIGINS`. Development still allows the Vite origins. Sign-in uses the bearer token in the browser. The server does not set a session cookie. `COOKIE_SECURE` is unused.
 
 Leave `FILE_STORAGE_DRIVER` unset or set it to `local` to keep files on `UPLOADS_DIR`. Production creates that absolute folder at startup. Development on the PC does not.
 
@@ -52,7 +51,7 @@ NODE_ENV=production npm start
 
 `npm run build` installs the frontend and writes `frontend/dist`. `npm start` runs `node backend/server.js`.
 
-`Dockerfile` builds that image. `render.yaml` is a Render blueprint: one web service, health check `/health`, and a 10 GB disk mounted at `/var/data`.
+`Dockerfile` builds that image and runs it as the `node` user (uid 1000). `render.yaml` is a Render blueprint: one web service, health check `/health`, and a 10 GB disk mounted at `/var/data`. The disk must be writable by uid 1000. On a VM, `sudo chown -R 1000:1000 /var/data` before the first start.
 
 ### Render
 
@@ -80,7 +79,6 @@ docker run -d --name launchpad --restart unless-stopped \
   -e UPLOADS_DIR=/var/data/uploads \
   -e PUBLIC_APP_URL=https://launchpad.acgprinting.com \
   -e TRUST_PROXY=1 \
-  -e COOKIE_SECURE=true \
   -e DELIVERY_TIMEZONE=America/New_York \
   launchpad
 ```
@@ -130,7 +128,7 @@ S3_PREFIX=launchpad
 - DigitalOcean Spaces: endpoint `https://<region>.digitaloceanspaces.com`, region such as `nyc3`.
 - Backblaze B2: endpoint `https://s3.<region>.backblazeb2.com`, region such as `us-west-004`.
 
-`S3_FORCE_PATH_STYLE` defaults to true when `S3_ENDPOINT` is set. The key needs `s3:ListBucket`, `s3:GetObject`, `s3:PutObject`, and `s3:DeleteObject` on that bucket. New uploads go to the bucket. Existing files stay on disk until you copy them and switch the driver. Keep a disk for `launchpad.db` either way.
+`S3_FORCE_PATH_STYLE` defaults to true when `S3_ENDPOINT` is set. The key needs `s3:ListBucket`, `s3:GetObject`, `s3:PutObject`, and `s3:DeleteObject` on that bucket. New uploads stream to the bucket. Downloads stream back. Existing files stay on disk until you copy them and switch the driver. Keep a disk for `launchpad.db` either way.
 
 ## Nightly backup (optional)
 
@@ -138,8 +136,8 @@ S3_PREFIX=launchpad
 
 The job uses SQLite's online backup API, so it does not copy a half-written file. It runs once each shop day, at or after `BACKUP_HOUR` (default 2) in `DELIVERY_TIMEZONE`. A restart later that day still catches up. It keeps `BACKUP_RETENTION_DAYS` files (default 14).
 
-- Local storage: `/var/data/uploads/backups/launchpad-YYYYMMDD-HHMMSS.db`
-- S3 storage: the same file name under the bucket prefix `backups/`
+- Local storage: `/var/data/backups/launchpad-YYYYMMDD-HHMMSS.db`, the `backups` folder next to `launchpad.db`. That folder is not inside `UPLOADS_DIR`. Set `BACKUP_DIR` only when you want a different directory.
+- S3 storage: the same file name under the bucket prefix `backups/`. The snapshot is streamed to the bucket.
 
 A successful run stores `last_backup_at`. The admin board backup alert reads that value.
 

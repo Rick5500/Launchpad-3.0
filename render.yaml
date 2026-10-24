@@ -18,8 +18,6 @@ services:
         value: "1"
       - key: PUBLIC_APP_URL
         value: https://launchpad.acgprinting.com
-      - key: COOKIE_SECURE
-        value: "true"
       - key: DELIVERY_TIMEZONE
         value: America/New_York
       - key: BACKUP_ENABLED

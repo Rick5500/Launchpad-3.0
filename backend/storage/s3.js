@@ -1,9 +1,9 @@
 const crypto = require('crypto');
 const path = require('path');
-const { Readable } = require('stream');
-const { createRemoteClient } = require('./s3Remote');
+const { Readable, Transform } = require('stream');
 
 const DOWN = 'File storage is unavailable. The storage folder cannot be reached, so uploads are paused.';
+const BUCKET_TTL_MS = 10000;
 let testClient = null;
 
 function flagOn(value) {
@@ -49,31 +49,77 @@ function setTestClient(client) {
   testClient = client || null;
 }
 
+function isByteStream(body) {
+  return Boolean(body) && typeof body.pipe === 'function' && !Buffer.isBuffer(body);
+}
+
+async function readBody(body) {
+  if (body == null) return Buffer.alloc(0);
+  if (Buffer.isBuffer(body)) return Buffer.from(body);
+  if (typeof body === 'string') return Buffer.from(body);
+  const chunks = [];
+  for await (const chunk of body) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks);
+}
+
+// Follows every continuation token. A repeated token stops the loop so a
+// broken service cannot spin, and there is no page limit.
+async function listAllPages(listPage) {
+  const keys = [];
+  let token;
+  const seen = new Set();
+  for (;;) {
+    const page = await listPage(token);
+    for (const item of page && page.keys ? page.keys : []) keys.push(item);
+    if (!page || !page.truncated) break;
+    const next = page.token ? String(page.token) : '';
+    if (!next || seen.has(next)) break;
+    seen.add(next);
+    token = next;
+  }
+  return keys;
+}
+
 function createMemoryClient() {
   const objects = new Map();
   let bucketUp = true;
-  return {
+  let headBucketCalls = 0;
+  let lastPutWasStream = false;
+  const client = {
     objects,
+    get headBucketCalls() { return headBucketCalls; },
+    get lastPutWasStream() { return lastPutWasStream; },
     setBucketUp(value) { bucketUp = Boolean(value); },
-    headBucket() { return bucketUp; },
-    put(key, body) {
+    async headBucket() {
+      headBucketCalls += 1;
+      return bucketUp;
+    },
+    async put(key, body) {
+      return client.putStream(key, body);
+    },
+    async putStream(key, body) {
       if (!bucketUp) {
         const error = new Error('bucket unavailable');
         error.code = 'ES3';
         throw error;
       }
-      objects.set(key, Buffer.from(body));
+      lastPutWasStream = isByteStream(body);
+      objects.set(key, await readBody(body));
     },
-    get(key) {
+    async get(key) {
       if (!objects.has(key)) return null;
       return Buffer.from(objects.get(key));
     },
-    head(key) {
+    async getStream(key) {
+      if (!objects.has(key)) return null;
+      return Readable.from(Buffer.from(objects.get(key)));
+    },
+    async head(key) {
       if (!objects.has(key)) return null;
       return { size: objects.get(key).length };
     },
-    del(key) { objects.delete(key); },
-    copy(source, dest) {
+    async del(key) { objects.delete(key); },
+    async copy(source, dest) {
       if (!objects.has(source)) {
         const error = new Error('not found');
         error.code = 'ENOENT';
@@ -81,12 +127,132 @@ function createMemoryClient() {
       }
       objects.set(dest, Buffer.from(objects.get(source)));
     },
-    list(prefix) {
+    async list(prefix) {
       const keys = [];
       for (const [key, body] of objects) {
         if (!prefix || key.startsWith(prefix)) keys.push({ key, size: body.length });
       }
       return keys;
+    },
+  };
+  return client;
+}
+
+function missingObject(err) {
+  const status = err && err.$metadata ? err.$metadata.httpStatusCode : 0;
+  const name = err && (err.name || err.Code || err.code) ? (err.name || err.Code || err.code) : '';
+  return status === 404 || name === 'NotFound' || name === 'NoSuchKey';
+}
+
+function encodeCopySource(bucket, sourceKey) {
+  return `${encodeURIComponent(bucket)}/${String(sourceKey).split('/').map((part) => encodeURIComponent(part)).join('/')}`;
+}
+
+function createAwsClient(config) {
+  const {
+    S3Client,
+    HeadBucketCommand,
+    GetObjectCommand,
+    HeadObjectCommand,
+    DeleteObjectCommand,
+    CopyObjectCommand,
+    ListObjectsV2Command,
+  } = require('@aws-sdk/client-s3');
+  const { Upload } = require('@aws-sdk/lib-storage');
+  const options = {
+    region: config.region || 'us-east-1',
+    forcePathStyle: Boolean(config.forcePathStyle),
+    credentials: {
+      accessKeyId: config.accessKeyId,
+      secretAccessKey: config.secretAccessKey,
+    },
+  };
+  if (config.endpoint) options.endpoint = config.endpoint;
+  const s3 = new S3Client(options);
+  const bucket = config.bucket;
+
+  return {
+    async headBucket() {
+      try {
+        await s3.send(new HeadBucketCommand({ Bucket: bucket }));
+        return true;
+      } catch (err) {
+        if (err && err.$metadata && err.$metadata.httpStatusCode === 404) return false;
+        try {
+          await s3.send(new ListObjectsV2Command({ Bucket: bucket, MaxKeys: 1 }));
+          return true;
+        } catch (listErr) {
+          return false;
+        }
+      }
+    },
+    async put(key, body) {
+      return this.putStream(key, body);
+    },
+    async putStream(key, body) {
+      const upload = new Upload({
+        client: s3,
+        params: { Bucket: bucket, Key: key, Body: body },
+      });
+      await upload.done();
+    },
+    async get(key) {
+      try {
+        const result = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+        if (!result.Body) return Buffer.alloc(0);
+        if (typeof result.Body.transformToByteArray === 'function') {
+          return Buffer.from(await result.Body.transformToByteArray());
+        }
+        return readBody(result.Body);
+      } catch (err) {
+        if (missingObject(err)) return null;
+        throw err;
+      }
+    },
+    async getStream(key) {
+      try {
+        const result = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+        if (!result.Body) return Readable.from([]);
+        if (typeof result.Body.pipe === 'function') return result.Body;
+        return Readable.from(result.Body);
+      } catch (err) {
+        if (missingObject(err)) return null;
+        throw err;
+      }
+    },
+    async head(key) {
+      try {
+        const result = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+        return { size: Number(result.ContentLength) || 0 };
+      } catch (err) {
+        if (missingObject(err)) return null;
+        throw err;
+      }
+    },
+    async del(key) {
+      await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    },
+    async copy(source, dest) {
+      await s3.send(new CopyObjectCommand({
+        Bucket: bucket,
+        Key: dest,
+        CopySource: encodeCopySource(bucket, source),
+      }));
+    },
+    async list(prefix) {
+      return listAllPages(async (token) => {
+        const result = await s3.send(new ListObjectsV2Command({
+          Bucket: bucket,
+          Prefix: prefix || '',
+          ContinuationToken: token,
+          MaxKeys: 1000,
+        }));
+        return {
+          keys: (result.Contents || []).map((item) => ({ key: item.Key, size: Number(item.Size) || 0 })),
+          truncated: Boolean(result.IsTruncated),
+          token: result.NextContinuationToken || '',
+        };
+      });
     },
   };
 }
@@ -119,11 +285,11 @@ function createS3Driver(options) {
   let bucketCheckedAt = 0;
   let bucketUp = false;
 
-  function bucketReady() {
+  async function bucketReady() {
     const now = Date.now();
-    if (bucketCheckedAt && now - bucketCheckedAt < 10000) return bucketUp;
+    if (bucketCheckedAt && now - bucketCheckedAt < BUCKET_TTL_MS) return bucketUp;
     try {
-      bucketUp = Boolean(client.headBucket());
+      bucketUp = Boolean(await client.headBucket());
     } catch (err) {
       bucketUp = false;
     }
@@ -177,6 +343,7 @@ function createS3Driver(options) {
 
   const driver = {
     id: 's3',
+    async: true,
     bucket,
     prefix,
     label: 'S3-compatible object storage',
@@ -185,12 +352,12 @@ function createS3Driver(options) {
       return prefix ? `s3://${bucket}/${prefix}` : `s3://${bucket}`;
     },
 
-    status(root, expectedMarkerId) {
-      if (!bucketReady()) {
+    async status(root, expectedMarkerId) {
+      if (!await bucketReady()) {
         return { reachable: false, free_bytes: null, error: DOWN };
       }
       if (expectedMarkerId !== undefined) {
-        const marker = driver.readMarkerSync(root);
+        const marker = await driver.readMarker(root);
         if (!expectedMarkerId || marker !== expectedMarkerId) {
           return { reachable: false, free_bytes: null, error: DOWN };
         }
@@ -198,8 +365,8 @@ function createS3Driver(options) {
       return { reachable: true, free_bytes: null, error: null };
     },
 
-    ensureSync() {
-      if (!bucketReady()) {
+    async ensure() {
+      if (!await bucketReady()) {
         const error = new Error(DOWN);
         error.code = 'ES3';
         throw error;
@@ -207,16 +374,16 @@ function createS3Driver(options) {
     },
 
     async checkNewFolder() {
-      driver.probeSync(primaryRoot);
+      await driver.probe(primaryRoot);
     },
 
-    probeSync(root) {
+    async probe(root) {
       const probe = api.join(root, `.launchpad-write-test-${crypto.randomBytes(8).toString('hex')}`);
       const payload = Buffer.from(`launchpad ${Date.now()}`);
       const key = keyFor(probe);
-      client.put(key, payload);
-      const read = client.get(key);
-      client.del(key);
+      await client.put(key, payload);
+      const read = await client.get(key);
+      await client.del(key);
       if (!read || !read.equals(payload)) {
         const error = new Error('read-back mismatch');
         error.code = 'EREADBACK';
@@ -224,47 +391,49 @@ function createS3Driver(options) {
       }
     },
 
-    readMarkerSync(root) {
-      const body = client.get(keyFor(markerFile(root)));
+    async readMarker(root) {
+      const body = await client.get(keyFor(markerFile(root)));
       if (!body || body.length > 256) return null;
       const text = body.toString('utf8').trim();
       if (!/^[a-f0-9]{32}$/.test(text)) return null;
       return text;
     },
 
-    writeMarkerSync(root, id) {
+    async writeMarker(root, id) {
       if (!/^[a-f0-9]{32}$/.test(String(id || ''))) {
         const error = new Error('marker id is invalid');
         error.code = 'EINVAL';
         throw error;
       }
-      client.put(keyFor(markerFile(root)), Buffer.from(`${id}\n`));
+      await client.put(keyFor(markerFile(root)), Buffer.from(`${id}\n`));
     },
 
-    hashFileSync(fullPath) {
-      const body = client.get(keyFor(fullPath));
-      if (!body) throw notFound();
-      return crypto.createHash('sha256').update(body).digest('hex');
+    async hashFile(fullPath) {
+      const stream = await client.getStream(keyFor(fullPath));
+      if (!stream) throw notFound();
+      const hash = crypto.createHash('sha256');
+      for await (const chunk of stream) hash.update(chunk);
+      return hash.digest('hex');
     },
 
-    statSync(fullPath) {
-      const head = client.head(keyFor(fullPath));
+    async stat(fullPath) {
+      const head = await client.head(keyFor(fullPath));
       if (!head) throw notFound();
       return fileStat(head.size);
     },
 
-    existsSync(fullPath) {
-      return Boolean(client.head(keyFor(fullPath)));
+    async exists(fullPath) {
+      return Boolean(await client.head(keyFor(fullPath)));
     },
 
-    directoryExistsSync() {
+    async directoryExists() {
       return bucketReady();
     },
 
-    listNamesSync(root) {
+    async listNames(root) {
       const prefixKey = dirPrefix(root);
       const names = [];
-      for (const item of client.list(prefixKey)) {
+      for (const item of await client.list(prefixKey)) {
         const rest = String(item.key || '').slice(prefixKey.length);
         if (!rest || rest.includes('/')) continue;
         names.push(rest);
@@ -272,34 +441,49 @@ function createS3Driver(options) {
       return names;
     },
 
-    writeFileSync(fullPath, data) {
-      client.put(keyFor(fullPath), Buffer.from(data));
+    async writeFile(fullPath, data) {
+      const body = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      await client.put(keyFor(fullPath), body);
     },
 
-    copyFileSync(source, dest) {
-      client.copy(keyFor(source), keyFor(dest));
+    async uploadStream(fullPath, stream) {
+      let size = 0;
+      const counter = new Transform({
+        transform(chunk, encoding, callback) {
+          size += chunk.length;
+          callback(null, chunk);
+        },
+      });
+      stream.on('error', (err) => counter.destroy(err));
+      stream.pipe(counter);
+      await client.putStream(keyFor(fullPath), counter);
+      return { size };
     },
 
-    renameSync(source, dest) {
-      client.copy(keyFor(source), keyFor(dest));
-      client.del(keyFor(source));
+    async copyFile(source, dest) {
+      await client.copy(keyFor(source), keyFor(dest));
     },
 
-    unlinkSync(fullPath) {
+    async rename(source, dest) {
+      await client.copy(keyFor(source), keyFor(dest));
+      await client.del(keyFor(source));
+    },
+
+    async unlink(fullPath) {
       const key = keyFor(fullPath);
-      if (!client.head(key)) throw notFound();
-      client.del(key);
+      if (!await client.head(key)) throw notFound();
+      await client.del(key);
     },
 
-    createReadStream(fullPath) {
+    async createReadStream(fullPath) {
       try {
-        const body = client.get(keyFor(fullPath));
+        const body = await client.getStream(keyFor(fullPath));
         if (!body) {
           const stream = new Readable({ read() {} });
           process.nextTick(() => stream.emit('error', notFound()));
           return stream;
         }
-        return Readable.from(body);
+        return body;
       } catch (err) {
         const stream = new Readable({ read() {} });
         process.nextTick(() => stream.emit('error', err));
@@ -323,7 +507,7 @@ function createS3DriverFromEnv() {
     }
     return { driver: createS3Driver({ ...config, client: testClient }), error: null };
   }
-  return { driver: createS3Driver({ ...config, client: createRemoteClient(config) }), error: null };
+  return { driver: createS3Driver({ ...config, client: createAwsClient(config) }), error: null };
 }
 
 module.exports = {
@@ -332,4 +516,5 @@ module.exports = {
   createMemoryClient,
   createS3Driver,
   createS3DriverFromEnv,
+  listAllPages,
 };

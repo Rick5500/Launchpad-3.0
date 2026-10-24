@@ -2,7 +2,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { flagOn } = require('./runtimeConfig');
+const { databaseFile, flagOn } = require('./runtimeConfig');
 
 const NAME_RE = /^launchpad-(\d{8})-(\d{6})\.db$/;
 const CHECK_MS = 15 * 60 * 1000;
@@ -118,14 +118,35 @@ function readLastBackup(database) {
   });
 }
 
-function recordBackupTimestamp(database, stamp) {
+function settingsColumns(database) {
   return new Promise((resolve, reject) => {
-    database.run(
-      `INSERT INTO system_settings (key, value, updated_at) VALUES ('last_backup_at', ?, datetime('now'))
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
-      [stamp],
-      (err) => (err ? reject(err) : resolve())
-    );
+    database.all('PRAGMA table_info(system_settings)', (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows || []);
+    });
+  });
+}
+
+function localBackupDirectory(database, overrideDir) {
+  if (overrideDir) return overrideDir;
+  const fromEnv = process.env.BACKUP_DIR == null ? '' : String(process.env.BACKUP_DIR).trim();
+  if (fromEnv) return path.resolve(fromEnv);
+  const named = database && typeof database.filename === 'string' && database.filename
+    ? database.filename
+    : databaseFile();
+  return path.join(path.dirname(path.resolve(named)), 'backups');
+}
+
+async function recordBackupTimestamp(database, stamp) {
+  const columns = await settingsColumns(database);
+  const hasUpdated = columns.some((row) => row.name === 'updated_at');
+  const sql = hasUpdated
+    ? `INSERT INTO system_settings (key, value, updated_at) VALUES ('last_backup_at', ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
+    : `INSERT INTO system_settings (key, value) VALUES ('last_backup_at', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`;
+  return new Promise((resolve, reject) => {
+    database.run(sql, [stamp], (err) => (err ? reject(err) : resolve()));
   });
 }
 
@@ -152,12 +173,11 @@ async function runBackup(options = {}) {
     const tmp = path.join(os.tmpdir(), `lp-backup-${crypto.randomBytes(6).toString('hex')}.db`);
     try {
       await backupDatabase(database, tmp);
-      const body = fs.readFileSync(tmp);
       const backupDir = path.join(root, 'backups');
-      found.driver.writeFileSync(path.join(backupDir, filename), body);
-      const names = found.driver.listNamesSync(backupDir);
+      await found.driver.uploadStream(path.join(backupDir, filename), fs.createReadStream(tmp));
+      const names = await found.driver.listNames(backupDir);
       for (const old of selectExpired(names, keep)) {
-        try { found.driver.unlinkSync(path.join(backupDir, old)); } catch (err) {
+        try { await found.driver.unlink(path.join(backupDir, old)); } catch (err) {
           if (!err || err.code !== 'ENOENT') throw err;
         }
       }
@@ -165,15 +185,10 @@ async function runBackup(options = {}) {
       try { fs.unlinkSync(tmp); } catch (err) { /* temp backup is removed when it is still there */ }
     }
   } else {
-    if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
-      throw new Error('Backup was not written because the file storage folder is unavailable');
-    }
-    const backupDir = path.join(root, 'backups');
-    try {
-      fs.mkdirSync(backupDir);
-    } catch (err) {
-      if (!err || err.code !== 'EEXIST') throw err;
-      if (!fs.statSync(backupDir).isDirectory()) throw err;
+    const backupDir = localBackupDirectory(database, options.backupDir);
+    fs.mkdirSync(backupDir, { recursive: true });
+    if (!fs.statSync(backupDir).isDirectory()) {
+      throw new Error('Backup folder is not a directory');
     }
     const dest = path.join(backupDir, filename);
     await backupDatabase(database, dest);
@@ -224,6 +239,7 @@ module.exports = {
   selectExpired,
   backupDatabase,
   readLastBackup,
+  localBackupDirectory,
   recordBackupTimestamp,
   runBackup,
   runScheduled,

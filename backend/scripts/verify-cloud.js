@@ -15,36 +15,77 @@ const backendDir = path.join(__dirname, '..');
 
 if (process.argv[2] === 's3-filestore') {
   process.env.NODE_ENV = 'test';
+  const { Readable, PassThrough } = require('stream');
   const s3 = require('../storage/s3');
-  s3.setTestClient(s3.createMemoryClient());
+  const memory = s3.createMemoryClient();
+  s3.setTestClient(memory);
   const fileStore = require('../fileStore');
-  const payload = Buffer.from('%PDF-1.4 cloud');
-  const written = fileStore.writeNewFile('pdf', payload);
-  if (!written || !written.storedName) {
-    console.error('writeNewFile did not return a stored name');
+  (async () => {
+    const payload = Buffer.from('%PDF-1.4 cloud');
+    const written = await fileStore.writeNewFile('pdf', payload);
+    if (!written || !written.storedName) {
+      console.error('writeNewFile did not return a stored name');
+      process.exit(1);
+    }
+    const opened = await fileStore.openStored(written.storedName, written.storageRoot);
+    if (!opened || opened.size !== payload.length) {
+      console.error('openStored did not read the S3 object');
+      process.exit(1);
+    }
+    const hash = await fileStore.getStorageDriver('s3').driver.hashFile(opened.fullPath);
+    const expect = crypto.createHash('sha256').update(payload).digest('hex');
+    if (hash !== expect) {
+      console.error('S3 hash mismatch');
+      process.exit(1);
+    }
+    if (await fileStore.removeStored(written.storedName, written.storageRoot) !== 'removed') {
+      console.error('removeStored did not delete the S3 object');
+      process.exit(1);
+    }
+    if (await fileStore.openStored(written.storedName, written.storageRoot)) {
+      console.error('deleted S3 object should be gone');
+      process.exit(1);
+    }
+    const uploadBody = Buffer.from('%PDF-stream');
+    const engine = fileStore.objectStorageEngine();
+    const stored = await new Promise((resolve, reject) => {
+      engine._handleFile({}, {
+        originalname: 'job.pdf',
+        mimetype: 'application/pdf',
+        stream: Readable.from([uploadBody]),
+      }, (err, info) => (err ? reject(err) : resolve(info)));
+    });
+    if (!stored || stored.size !== uploadBody.length || !memory.lastPutWasStream) {
+      console.error('multer storage should stream the upload to S3');
+      process.exit(1);
+    }
+    const downloaded = await fileStore.getStorageDriver('s3').driver.createReadStream(stored.path);
+    const bytes = await new Promise((resolve, reject) => {
+      const chunks = [];
+      downloaded.on('data', (chunk) => chunks.push(chunk));
+      downloaded.on('end', () => resolve(Buffer.concat(chunks)));
+      downloaded.on('error', reject);
+    });
+    if (!bytes.equals(uploadBody)) {
+      console.error('S3 download should pipe the object body');
+      process.exit(1);
+    }
+    const res = new PassThrough();
+    res.headers = {};
+    res.set = (name, value) => { res.headers[String(name).toLowerCase()] = value; };
+    await fileStore.sendStoredDownload(res, stored.path, 'quote 文件.pdf', path.posix.dirname(stored.path));
+    const disposition = res.headers['content-disposition'] || '';
+    if (!/filename\*=UTF-8''quote%20%E6%96%87%E4%BB%B6\.pdf/i.test(disposition)) {
+      console.error(`S3 download should use RFC 5987 filename*, got ${disposition}`);
+      process.exit(1);
+    }
+    console.log('PASS s3 fileStore');
+    process.exit(0);
+  })().catch((err) => {
+    console.error(err && err.stack ? err.stack : err);
     process.exit(1);
-  }
-  const opened = fileStore.openStored(written.storedName, written.storageRoot);
-  if (!opened || opened.size !== payload.length) {
-    console.error('openStored did not read the S3 object');
-    process.exit(1);
-  }
-  const hash = fileStore.getStorageDriver('s3').driver.hashFileSync(opened.fullPath);
-  const expect = crypto.createHash('sha256').update(payload).digest('hex');
-  if (hash !== expect) {
-    console.error('S3 hash mismatch');
-    process.exit(1);
-  }
-  if (fileStore.removeStored(written.storedName, written.storageRoot) !== 'removed') {
-    console.error('removeStored did not delete the S3 object');
-    process.exit(1);
-  }
-  if (fileStore.openStored(written.storedName, written.storageRoot)) {
-    console.error('deleted S3 object should be gone');
-    process.exit(1);
-  }
-  console.log('PASS s3 fileStore');
-  process.exit(0);
+  });
+  return;
 }
 
 function assert(condition, message) {
@@ -178,7 +219,6 @@ function cookieHeader(res) {
 
 async function checkConfig() {
   const runtime = require('../runtimeConfig');
-  const cookies = require('../cookies');
   withEnv({
     DATABASE_PATH: '/var/data/launchpad.db',
     DATABASE_FILE: 'database/launchpad.db',
@@ -197,29 +237,35 @@ async function checkConfig() {
     CORS_ORIGIN: '',
   }, () => {
     assert(runtime.corsOrigins().join(',') === 'http://localhost:5173,http://localhost:5174', 'local origins should stay the default');
-    assert(runtime.sessionCookiesEnabled() === false, 'development should not set a session cookie');
-    assert(runtime.cookieSecure({}) === false, 'development http should not mark the cookie Secure');
+    assert(typeof runtime.sessionCookiesEnabled !== 'function', 'development should not grow a session cookie switch');
     assert(runtime.shouldAutoMigrate() === false, 'development should not auto-migrate');
   });
   withEnv({
     NODE_ENV: 'production',
     PUBLIC_APP_URL: 'https://launchpad.acgprinting.com',
-    COOKIE_SECURE: 'true',
+    COOKIE_SECURE: 'false',
     CORS_ORIGINS: 'https://shop.example',
   }, () => {
     const origins = runtime.corsOrigins();
-    assert(origins.includes('http://localhost:5173'), 'localhost should remain allowed');
+    assert(!origins.includes('http://localhost:5173'), 'production should not add localhost');
+    assert(!origins.includes('http://localhost:5174'), 'production should not add the Vite preview origin');
     assert(origins.includes('https://launchpad.acgprinting.com'), 'PUBLIC_APP_URL should be allowed');
     assert(origins.includes('https://shop.example'), 'CORS_ORIGINS should be allowed');
-    assert(runtime.cookieSecure({}) === true, 'COOKIE_SECURE should force the Secure flag');
-    assert(runtime.sessionCookiesEnabled() === true, 'production should set a session cookie');
     assert(runtime.shouldAutoMigrate() === true, 'production should auto-migrate');
-    assert(cookies.sessionMaxAgeSeconds() >= 60, 'cookie lifetime should follow the session');
   });
-  console.log('PASS config aliases, CORS, cookies, migrate flag');
+  withEnv({
+    NODE_ENV: 'production',
+    PUBLIC_APP_URL: '',
+    COOKIE_SECURE: 'false',
+    CORS_ORIGINS: 'http://localhost:5173',
+    CORS_ORIGIN: '',
+  }, () => {
+    assert(runtime.corsOrigins().includes('http://localhost:5173'), 'CORS_ORIGINS can still name localhost in production');
+  });
+  console.log('PASS config aliases, CORS, migrate flag');
 }
 
-function checkS3Driver() {
+async function checkS3Driver() {
   const previousNodeEnv = process.env.NODE_ENV;
   process.env.NODE_ENV = 'test';
   const s3 = require('../storage/s3');
@@ -262,26 +308,56 @@ function checkS3Driver() {
     prefix: 'launchpad',
     root,
   });
+  assert(driver.async === true, 'the S3 driver should be asynchronous');
   assert(driver.locationLabel() === 's3://lp/launchpad', `location should name the bucket, got ${driver.locationLabel()}`);
+  const cold = await driver.status(root);
+  const warm = await driver.status(root);
+  assert(cold.reachable === true && warm.reachable === true, 'status should report the bucket');
+  assert(memory.headBucketCalls === 1, `status should cache HeadBucket, got ${memory.headBucketCalls} calls`);
   const file = path.posix.join(root, `${'a'.repeat(32)}.pdf`);
   const body = Buffer.from('pdf-bytes');
-  driver.writeFileSync(file, body);
-  assert(driver.statSync(file).size === body.length, 'stat should report the object size');
-  assert(driver.hashFileSync(file) === crypto.createHash('sha256').update(body).digest('hex'), 'hash should match the bytes');
+  await driver.writeFile(file, body);
+  assert((await driver.stat(file)).size === body.length, 'stat should report the object size');
+  assert(await driver.hashFile(file) === crypto.createHash('sha256').update(body).digest('hex'), 'hash should match the bytes');
   const copy = path.posix.join(root, `${'b'.repeat(32)}.pdf`);
-  driver.copyFileSync(file, copy);
-  assert(driver.existsSync(copy), 'copy should write the destination');
+  await driver.copyFile(file, copy);
+  assert(await driver.exists(copy), 'copy should write the destination');
   const renamed = path.posix.join(root, `${'c'.repeat(32)}.pdf`);
-  driver.renameSync(copy, renamed);
-  assert(!driver.existsSync(copy) && driver.existsSync(renamed), 'rename should move the object');
+  await driver.rename(copy, renamed);
+  assert(!await driver.exists(copy) && await driver.exists(renamed), 'rename should move the object');
   const id = crypto.randomBytes(16).toString('hex');
-  driver.writeMarkerSync(root, id);
-  assert(driver.readMarkerSync(root) === id, 'marker should round-trip');
-  assert(driver.status(root, id).reachable === true, 'a matching marker should be reachable');
-  assert(driver.listNamesSync(root).includes(`${'a'.repeat(32)}.pdf`), 'list should include the file name');
+  await driver.writeMarker(root, id);
+  assert(await driver.readMarker(root) === id, 'marker should round-trip');
+  assert((await driver.status(root, id)).reachable === true, 'a matching marker should be reachable');
+  assert(memory.headBucketCalls === 1, 'a cached status should not call HeadBucket again');
+  assert((await driver.listNames(root)).includes(`${'a'.repeat(32)}.pdf`), 'list should include the file name');
   let missingFile = false;
-  try { driver.statSync(path.posix.join(root, `${'d'.repeat(32)}.pdf`)); } catch (err) { missingFile = err.code === 'ENOENT'; }
+  try { await driver.stat(path.posix.join(root, `${'d'.repeat(32)}.pdf`)); } catch (err) { missingFile = err.code === 'ENOENT'; }
   assert(missingFile, 'a missing object should be ENOENT');
+  const { Readable } = require('stream');
+  const streamed = path.posix.join(root, `${'e'.repeat(32)}.pdf`);
+  const streamedBody = Buffer.from('streamed-bytes');
+  const uploaded = await driver.uploadStream(streamed, Readable.from([streamedBody]));
+  assert(memory.lastPutWasStream === true, 'uploadStream should pass a stream to the client');
+  assert(uploaded.size === streamedBody.length, 'uploadStream should count bytes without buffering first');
+  const download = await driver.createReadStream(streamed);
+  const collected = await new Promise((resolve, reject) => {
+    const chunks = [];
+    download.on('data', (chunk) => chunks.push(chunk));
+    download.on('end', () => resolve(Buffer.concat(chunks)));
+    download.on('error', reject);
+  });
+  assert(collected.equals(streamedBody), 'createReadStream should yield the object body');
+  const pages = await s3.listAllPages(async (token) => {
+    const index = token ? Number(token) : 0;
+    const last = index >= 24;
+    return {
+      keys: [{ key: `page-${index}`, size: 1 }],
+      truncated: !last,
+      token: last ? '' : String(index + 1),
+    };
+  });
+  assert(pages.length === 25, `list should follow every continuation page, got ${pages.length}`);
   const unknown = getStorageDriver('sharepoint');
   assert(unknown.error && /SharePoint/i.test(unknown.error.message) && /OneDrive/i.test(unknown.error.message), 'an unknown driver should still name OneDrive and SharePoint');
   const readme = fs.readFileSync(path.join(backendDir, 'storage', 'README.md'), 'utf8');
@@ -322,6 +398,7 @@ async function checkBackup() {
   await runSql(copy, 'run', 'CREATE TABLE system_settings (key TEXT PRIMARY KEY, value TEXT, updated_at DATETIME)');
   await new Promise((resolve) => copy.close(() => resolve()));
 
+  delete process.env.BACKUP_DIR;
   const uploadRoot = path.join(tmp, 'uploads');
   fs.mkdirSync(uploadRoot);
   const localDb = new sqlite3.Database(path.join(tmp, 'local.db'));
@@ -336,16 +413,41 @@ async function checkBackup() {
     timeZone: 'UTC',
     keep: 2,
   });
-  assert(fs.existsSync(path.join(uploadRoot, 'backups', localResult.filename)), 'local backup file should be in uploads/backups');
+  const backupDir = path.join(tmp, 'backups');
+  assert(fs.existsSync(path.join(backupDir, localResult.filename)), 'local backup should sit beside the database');
+  assert(!fs.existsSync(path.join(uploadRoot, 'backups')), 'local backup should not write inside the uploads folder');
+  const absentUploads = path.join(tmp, 'absent-uploads');
+  await backup.runBackup({
+    db: localDb,
+    destination: 'dir',
+    root: absentUploads,
+    now: new Date('2026-06-09T09:00:00Z'),
+    timeZone: 'UTC',
+    keep: 2,
+  });
+  assert(!fs.existsSync(absentUploads), 'local backup should not create the uploads folder');
   const recorded = await backup.readLastBackup(localDb);
-  assert(recorded === '2026-06-09 08:00:00', `last_backup_at should be stored, got ${recorded}`);
+  assert(recorded === '2026-06-09 09:00:00', `last_backup_at should be stored, got ${recorded}`);
+
+  const oldDb = new sqlite3.Database(path.join(tmp, 'old.db'));
+  await runSql(oldDb, 'run', 'CREATE TABLE system_settings (key TEXT PRIMARY KEY, value TEXT)');
+  await runSql(oldDb, 'run', 'CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)');
+  await runSql(oldDb, 'run', 'INSERT INTO notes (body) VALUES (?)', ['legacy']);
+  const legacy = await backup.runBackup({
+    db: oldDb,
+    destination: 'dir',
+    now: new Date('2026-06-09T10:00:00Z'),
+    timeZone: 'UTC',
+    keep: 2,
+  });
+  assert(fs.existsSync(path.join(tmp, 'backups', legacy.filename)), 'backup should work without system_settings.updated_at');
+  assert(await backup.readLastBackup(oldDb) === '2026-06-09 10:00:00', 'last_backup_at should store without updated_at');
 
   const s3 = require('../storage/s3');
   const memory = s3.createMemoryClient();
   const driver = s3.createS3Driver({ client: memory, bucket: 'lp', prefix: 'launchpad', root: uploadRoot });
-  fs.writeFileSync(path.join(uploadRoot, 'backups', 'launchpad-20260101-010101.db'), 'old');
-  driver.writeFileSync(path.join(uploadRoot, 'backups', 'launchpad-20260101-010101.db'), Buffer.from('old'));
-  driver.writeFileSync(path.join(uploadRoot, 'backups', 'launchpad-20260102-010101.db'), Buffer.from('older'));
+  await driver.writeFile(path.join(uploadRoot, 'backups', 'launchpad-20260101-010101.db'), Buffer.from('old'));
+  await driver.writeFile(path.join(uploadRoot, 'backups', 'launchpad-20260102-010101.db'), Buffer.from('older'));
   const s3Db = new sqlite3.Database(path.join(tmp, 's3.db'));
   await runSql(s3Db, 'run', 'CREATE TABLE system_settings (key TEXT PRIMARY KEY, value TEXT, updated_at DATETIME)');
   await runSql(s3Db, 'run', 'CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)');
@@ -359,12 +461,14 @@ async function checkBackup() {
     timeZone: 'UTC',
     keep: 2,
   });
-  const names = driver.listNamesSync(path.join(uploadRoot, 'backups'));
+  const names = await driver.listNames(path.join(uploadRoot, 'backups'));
+  assert(memory.lastPutWasStream === true, 'S3 backup should upload the snapshot as a stream');
   assert(names.includes(remote.filename), `S3 backup should be listed, got ${names.join(',')}`);
   assert(!names.includes('launchpad-20260101-010101.db'), 'S3 retention should delete the oldest backup');
   assert(names.includes('launchpad-20260102-010101.db'), 'S3 retention should keep the newer existing backup');
   await new Promise((resolve) => db.close(() => resolve()));
   await new Promise((resolve) => localDb.close(() => resolve()));
+  await new Promise((resolve) => oldDb.close(() => resolve()));
   await new Promise((resolve) => s3Db.close(() => resolve()));
   console.log('PASS sqlite backup and retention');
 }
@@ -428,7 +532,7 @@ async function checkServers() {
     UPLOAD_DIR: '',
     PUBLIC_APP_URL: 'https://launchpad.acgprinting.com',
     TRUST_PROXY: '1',
-    COOKIE_SECURE: 'true',
+    COOKIE_SECURE: 'false',
     FRONTEND_DIST: dist,
     INIT_ADMIN_PASSWORD: 'AdminPass123',
     DELIVERY_TIMEZONE: 'UTC',
@@ -464,7 +568,7 @@ async function checkServers() {
       path: '/api/health',
       headers: { Origin: 'http://localhost:5173' },
     });
-    assert(localOrigin.headers['access-control-allow-origin'] === 'http://localhost:5173', 'the Vite origin should stay allowed');
+    assert(localOrigin.headers['access-control-allow-origin'] !== 'http://localhost:5173', 'production should not allow localhost unless CORS_ORIGINS lists it');
     const blocked = await request(prodPort, {
       path: '/api/health',
       headers: { Origin: 'https://evil.example' },
@@ -477,24 +581,27 @@ async function checkServers() {
       body: { username: 'admin', password: 'AdminPass123' },
     });
     assert(login.status === 200 && login.json && login.json.token, `admin login failed: ${login.status} ${login.text}`);
-    const setCookie = cookieHeader(login);
-    assert(/lp_session=/.test(setCookie), `login should set a session cookie, got ${setCookie}`);
-    assert(/HttpOnly/i.test(setCookie) && /Secure/i.test(setCookie) && /SameSite=Lax/i.test(setCookie), `cookie should be HttpOnly, Secure, and SameSite=Lax, got ${setCookie}`);
-    const token = /lp_session=([^;]+)/.exec(setCookie)[1];
+    assert(!/lp_session=/.test(cookieHeader(login)), `login should not set a session cookie, got ${cookieHeader(login)}`);
     const me = await request(prodPort, {
       path: '/api/auth/me',
-      headers: { Cookie: `lp_session=${token}` },
+      headers: { Authorization: `Bearer ${login.json.token}` },
     });
-    assert(me.status === 200 && me.json && me.json.user && me.json.user.username === 'admin', `cookie should authenticate, got ${me.status} ${me.text}`);
+    assert(me.status === 200 && me.json && me.json.user && me.json.user.username === 'admin', `bearer token should authenticate, got ${me.status} ${me.text}`);
+    const cookieOnly = await request(prodPort, {
+      path: '/api/auth/me',
+      headers: { Cookie: `lp_session=${login.json.token}` },
+    });
+    assert(cookieOnly.status === 401, `COOKIE_SECURE=false must not accept a session cookie, got ${cookieOnly.status}`);
     const logout = await request(prodPort, {
       method: 'POST',
       path: '/api/auth/logout',
-      headers: { Cookie: `lp_session=${token}` },
+      headers: { Authorization: `Bearer ${login.json.token}` },
     });
-    assert(/Max-Age=0/.test(cookieHeader(logout)), 'logout should clear the cookie');
+    assert(logout.status === 200, 'logout should accept the bearer token');
+    assert(!/lp_session=/.test(cookieHeader(logout)), 'logout should not set a cookie');
     const after = await request(prodPort, {
       path: '/api/auth/me',
-      headers: { Cookie: `lp_session=${token}` },
+      headers: { Authorization: `Bearer ${login.json.token}` },
     });
     assert(after.status === 401, 'the cleared session should not authenticate');
     console.log('PASS production server');
@@ -548,12 +655,7 @@ async function checkServers() {
 
 async function main() {
   await checkConfig();
-  checkS3Driver();
-  const remote = require('../storage/s3Remote');
-  const ping = remote.syncCall('ping', {}, {});
-  assert(ping.meta && ping.meta.pong === true, 'S3 worker bridge should answer a ping');
-  remote.closeRemote();
-  console.log('PASS s3 worker bridge');
+  await checkS3Driver();
   await checkBackup();
   await checkRelocate();
   const integrated = await spawnNode([path.join('scripts', 'verify-cloud.js'), 's3-filestore'], {
