@@ -28,8 +28,8 @@ router.get('/', (req, res) => {
   }
 
   shopLocations.loadAccess(req.user.userId).then((access) => {
-    const pred = shopLocations.predicate('wo.location_id', access);
-    const plain = shopLocations.predicate('location_id', access);
+    const pred = shopLocations.predicate('COALESCE(wo.location_id, o.location_id)', access);
+    const plain = shopLocations.predicate('COALESCE(wo.location_id, o.location_id)', access);
     const where = pred.sql ? `WHERE ${pred.sql}` : '';
     const andPlain = plain.sql ? `AND ${plain.sql}` : '';
   db.all(
@@ -50,7 +50,7 @@ router.get('/', (req, res) => {
           wo.estimated_hours,
           wo.actual_hours,
           wo.created_at,
-          wo.location_id,
+          COALESCE(wo.location_id, o.location_id) AS location_id,
           l.name AS location_name,
           ps.name AS stage_name,
           ps.color AS stage_color,
@@ -64,7 +64,8 @@ router.get('/', (req, res) => {
         LEFT JOIN users u ON wo.customer_id = u.id
         LEFT JOIN users au ON wo.assigned_user_id = au.id
         LEFT JOIN departments d ON wo.assigned_department_id = d.id
-        LEFT JOIN locations l ON l.id = wo.location_id
+        LEFT JOIN orders o ON o.id = wo.order_id
+        LEFT JOIN locations l ON l.id = COALESCE(wo.location_id, o.location_id)
         ${where}
         ORDER BY ps.sort_order ASC, wo.due_date ASC, wo.created_at DESC`,
         pred.params,
@@ -74,6 +75,7 @@ router.get('/', (req, res) => {
               db.all(
             `SELECT ps.name AS stage_name, COUNT(*) AS count
              FROM work_orders wo
+             LEFT JOIN orders o ON o.id = wo.order_id
              LEFT JOIN production_stages ps ON wo.stage_id = ps.id
              ${where}
              GROUP BY ps.id, ps.name
@@ -82,11 +84,11 @@ router.get('/', (req, res) => {
             (err3, stageCounts) => {
               if (err3) return res.status(500).json({ error: 'Failed to load stage counts' });
 
-              db.get(`SELECT COUNT(*) AS count FROM work_orders WHERE priority = 'Rush' ${andPlain}`, plain.params, (err4, rushRow) => {
+              db.get(`SELECT COUNT(*) AS count FROM work_orders wo LEFT JOIN orders o ON o.id = wo.order_id WHERE wo.priority = 'Rush' ${andPlain}`, plain.params, (err4, rushRow) => {
                 if (err4) return res.status(500).json({ error: 'Failed to load rush order count' });
 
                 db.get(
-                  `SELECT COUNT(*) AS count FROM work_orders WHERE due_date IS NOT NULL AND date(due_date) < date('now') AND lower(status) NOT IN (${sqlStringList(FINISHED_WORK_ORDER_STATUSES)}) ${andPlain}`,
+                  `SELECT COUNT(*) AS count FROM work_orders wo LEFT JOIN orders o ON o.id = wo.order_id WHERE wo.due_date IS NOT NULL AND date(wo.due_date) < date('now') AND lower(wo.status) NOT IN (${sqlStringList(FINISHED_WORK_ORDER_STATUSES)}) ${andPlain}`,
                   plain.params,
                   (err5, lateRow) => {
                     if (err5) return res.status(500).json({ error: 'Failed to load late order count' });
@@ -95,6 +97,7 @@ router.get('/', (req, res) => {
                       `SELECT COUNT(*) AS count
                        FROM deliveries d
                        LEFT JOIN work_orders wo ON wo.id = d.work_order_id
+                       LEFT JOIN orders o ON o.id = COALESCE(d.order_id, wo.order_id)
                        WHERE date(d.due_time) = date('now') AND lower(d.status) != 'complete'
                        ${pred.sql ? `AND ${pred.sql}` : ''}`,
                       pred.params,

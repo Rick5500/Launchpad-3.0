@@ -1491,6 +1491,16 @@ async function listBillTos(user, query) {
     );
     if (!customer) throw new OrderError('customer_id must be an existing customer', 404);
   }
+  const params = [customerId];
+  let locationSql = '';
+  if (user.role !== 'customer') {
+    const access = await shopLocations.loadAccess(Number(user.userId || user.id));
+    const pred = shopLocations.predicate('location_id', access);
+    if (pred.sql) {
+      locationSql = ` AND ${pred.sql}`;
+      params.push(...pred.params);
+    }
+  }
   const rows = await allOn(
     db,
     `SELECT bill_to_name, bill_to_phone, bill_to_email, bill_to_company,
@@ -1504,12 +1514,12 @@ async function listBillTos(user, query) {
          OR IFNULL(trim(bill_to_email), '') != ''
          OR IFNULL(trim(bill_to_company), '') != ''
          OR IFNULL(trim(bill_to_address_line1), '') != ''
-       )
+       )${locationSql}
      GROUP BY bill_to_name, bill_to_phone, bill_to_email, bill_to_company,
               bill_to_address_line1, bill_to_address_line2, bill_to_city, bill_to_state, bill_to_zip
      ORDER BY id DESC
      LIMIT 20`,
-    [customerId]
+    params
   );
   return {
     bill_tos: rows.map((row) => ({ id: row.id, ...billToPresent(row) })),
@@ -1541,6 +1551,20 @@ async function transferOrder(user, rawId, body) {
     );
     await tx.run(
       `UPDATE work_orders SET location_id = ?, updated_at = datetime('now') WHERE order_id = ?`,
+      [target.value, existing.id]
+    );
+    await tx.run(
+      `UPDATE notifications SET location_id = ?
+       WHERE order_id = ?
+          OR work_order_id IN (SELECT id FROM work_orders WHERE order_id = ?)`,
+      [target.value, existing.id, existing.id]
+    );
+    await tx.run(
+      `UPDATE inbound_emails SET location_id = ?, updated_at = datetime('now') WHERE order_id = ?`,
+      [target.value, existing.id]
+    );
+    await tx.run(
+      `UPDATE quote_requests SET location_id = ?, updated_at = datetime('now') WHERE converted_order_id = ?`,
       [target.value, existing.id]
     );
     await activityLog.recordOn(tx, Number(user.userId || user.id), 'order.transferred', 'order', existing.id, {

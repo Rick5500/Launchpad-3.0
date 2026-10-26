@@ -57,6 +57,40 @@ async function staffSeesLocation(user, locationId) {
   return shopLocations.matches(access, locationId);
 }
 
+// An unattached file has no shop of its own. Use the customer's default shop,
+// then the uploader's home shop. A null customer or operator shop is Raleigh.
+async function unattachedLocationId(file) {
+  if (file.customer_id) {
+    const customer = await get(`SELECT location_id FROM users WHERE id = ?`, [file.customer_id]);
+    if (customer && customer.location_id != null) return customer.location_id;
+    return shopLocations.defaultLocationId();
+  }
+  if (file.uploaded_by) {
+    const uploader = await get(`SELECT location_id, role FROM users WHERE id = ?`, [file.uploaded_by]);
+    if (!uploader) return null;
+    if (uploader.location_id != null) return uploader.location_id;
+    if (uploader.role === 'operator' || uploader.role === 'customer') return shopLocations.defaultLocationId();
+    return null;
+  }
+  return null;
+}
+
+async function canAccessUnattached(user, file) {
+  const userId = Number(user.userId || user.id);
+  if (user.role === 'operator') return false;
+  if (user.role === 'customer') {
+    return Number(file.customer_id) === userId || Number(file.uploaded_by) === userId;
+  }
+  if (Number(file.uploaded_by) === userId) return true;
+  if (user.role !== 'admin' && user.role !== 'manager') return false;
+  const locationId = await unattachedLocationId(file);
+  if (locationId == null) {
+    const access = await shopLocations.loadAccess(userId);
+    return shopLocations.seesAll(access);
+  }
+  return staffSeesLocation(user, locationId);
+}
+
 async function canAccessFile(user, file) {
   if (!file) return false;
   // A quote attachment that is not on an order is visible only to the owning
@@ -71,14 +105,20 @@ async function canAccessFile(user, file) {
     if (user.role !== 'customer') return false;
     return Number(file.customer_id) === Number(user.userId || user.id);
   }
+  if (!file.order_id && !file.work_order_id) return canAccessUnattached(user, file);
   if (user.role === 'admin' || user.role === 'manager' || user.role === 'operator') {
-    if (!file.order_id && !file.work_order_id) return true;
     if (file.order_id) {
       const order = await get('SELECT location_id FROM orders WHERE id = ?', [file.order_id]);
       if (!order) return false;
       return staffSeesLocation(user, order.location_id);
     }
-    const workOrder = await get('SELECT location_id FROM work_orders WHERE id = ?', [file.work_order_id]);
+    const workOrder = await get(
+      `SELECT COALESCE(wo.location_id, o.location_id) AS location_id
+       FROM work_orders wo
+       LEFT JOIN orders o ON o.id = wo.order_id
+       WHERE wo.id = ?`,
+      [file.work_order_id]
+    );
     if (!workOrder) return false;
     return staffSeesLocation(user, workOrder.location_id);
   }
@@ -179,7 +219,8 @@ router.get('/:id/download', auth.requireAuth, uploadRoles, async (req, res) => {
   }
   try {
     const file = await get(
-      `SELECT id, order_id, quote_request_id, customer_id, original_name, stored_name, size_bytes, storage_root
+      `SELECT id, order_id, work_order_id, quote_request_id, customer_id, uploaded_by,
+              original_name, stored_name, size_bytes, storage_root
        FROM order_files WHERE id = ?`,
       [id]
     );
@@ -212,7 +253,8 @@ router.delete('/:id', auth.requireAuth, uploadRoles, async (req, res) => {
   }
   try {
     const file = await get(
-      'SELECT id, order_id, quote_request_id, customer_id, stored_name, storage_root FROM order_files WHERE id = ?',
+      `SELECT id, order_id, work_order_id, quote_request_id, customer_id, uploaded_by, stored_name, storage_root
+       FROM order_files WHERE id = ?`,
       [id]
     );
     if (!file || !(await canAccessFile(req.user, file))) {

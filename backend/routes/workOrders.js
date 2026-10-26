@@ -460,12 +460,16 @@ router.put('/:id', auth.requireAuth, staffRoles, (req, res) => {
   } = payload;
 
   db.get(
-    `SELECT id, status, priority, customer_id, external_id, department, location_id FROM work_orders WHERE id = ?`,
+    `SELECT wo.id, wo.status, wo.priority, wo.customer_id, wo.external_id, wo.department,
+            wo.location_id, o.location_id AS order_location_id
+     FROM work_orders wo
+     LEFT JOIN orders o ON o.id = wo.order_id
+     WHERE wo.id = ?`,
     [id],
     (lookupErr, previous) => {
       if (lookupErr) return res.status(500).json({ error: 'Failed to update work order' });
       if (!previous) return res.status(404).json({ error: 'Work order not found' });
-      staffSeesWorkOrder(req.user, previous.location_id).then((allowed) => {
+      staffSeesWorkOrder(req.user, recordLocationId(previous)).then((allowed) => {
         if (!allowed) return res.status(404).json({ error: 'Work order not found' });
 
       db.run(

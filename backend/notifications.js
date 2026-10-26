@@ -523,16 +523,18 @@ function markRead(user, id, cb) {
 }
 
 function markAllRead(user, cb) {
-  const visible = visibility(user);
-  withTransaction((tx) => tx.run(
-    `INSERT OR IGNORE INTO notification_reads (notification_id, user_id, read_at)
-     SELECT n.id, ?, datetime('now')
-     FROM notifications n
-     LEFT JOIN notification_reads r
-       ON r.notification_id = n.id AND r.user_id = ?
-     ${visible.sql ? `${visible.sql} AND` : 'WHERE'} r.user_id IS NULL`,
-    [user.userId, user.userId, ...visible.params]
-  )).then((result) => cb(null, { updated: result.changes || 0 })).catch(cb);
+  shopLocations.loadAccess(user.userId).then((access) => {
+    const visible = visibility(user, access);
+    return withTransaction((tx) => tx.run(
+      `INSERT OR IGNORE INTO notification_reads (notification_id, user_id, read_at)
+       SELECT n.id, ?, datetime('now')
+       FROM notifications n
+       LEFT JOIN notification_reads r
+         ON r.notification_id = n.id AND r.user_id = ?
+       ${visible.sql ? `${visible.sql} AND` : 'WHERE'} r.user_id IS NULL`,
+      [user.userId, user.userId, ...visible.params]
+    ));
+  }).then((result) => cb(null, { updated: result.changes || 0 })).catch(cb);
 }
 
 module.exports = {

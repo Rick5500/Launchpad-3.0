@@ -160,7 +160,8 @@ function loadDelivery(id, user, cb) {
 function resolveWorkOrder(value, cb) {
   if (value.work_order_id && value.external_id) {
     db.get(
-      'SELECT id, external_id, customer_id, location_id FROM work_orders WHERE id = ?',
+      `SELECT wo.id, wo.external_id, wo.customer_id, COALESCE(wo.location_id, o.location_id) AS location_id
+       FROM work_orders wo LEFT JOIN orders o ON o.id = wo.order_id WHERE wo.id = ?`,
       [value.work_order_id],
       (err, row) => {
         if (err) return cb(err);
@@ -176,7 +177,8 @@ function resolveWorkOrder(value, cb) {
 
   if (value.work_order_id) {
     db.get(
-      'SELECT id, external_id, customer_id, location_id FROM work_orders WHERE id = ?',
+      `SELECT wo.id, wo.external_id, wo.customer_id, COALESCE(wo.location_id, o.location_id) AS location_id
+       FROM work_orders wo LEFT JOIN orders o ON o.id = wo.order_id WHERE wo.id = ?`,
       [value.work_order_id],
       (err, row) => {
         if (err) return cb(err);
@@ -188,7 +190,8 @@ function resolveWorkOrder(value, cb) {
   }
 
   db.get(
-    'SELECT id, external_id, customer_id, location_id FROM work_orders WHERE external_id = ? ORDER BY id ASC',
+    `SELECT wo.id, wo.external_id, wo.customer_id, COALESCE(wo.location_id, o.location_id) AS location_id
+     FROM work_orders wo LEFT JOIN orders o ON o.id = wo.order_id WHERE wo.external_id = ? ORDER BY wo.id ASC`,
     [value.external_id],
     (err, row) => {
       if (err) return cb(err);

@@ -1681,27 +1681,46 @@ async function ensureShopLocations() {
   const backfillKey = 'shop_locations_backfilled';
   const backfilled = await get(`SELECT value FROM system_settings WHERE key = ?`, [backfillKey]);
   if (!backfilled) {
-    await run(`UPDATE users SET location_id = ? WHERE location_id IS NULL`, [id]);
-    await run(`UPDATE orders SET location_id = ? WHERE location_id IS NULL`, [id]);
-    await run(`UPDATE quote_requests SET location_id = ? WHERE location_id IS NULL`, [id]);
-    await run(`UPDATE inbound_emails SET location_id = ? WHERE location_id IS NULL`, [id]);
-    await run(`UPDATE notifications SET location_id = ? WHERE location_id IS NULL`, [id]);
-    await run(
-      `UPDATE work_orders
-       SET location_id = (
-         SELECT o.location_id FROM orders o WHERE o.id = work_orders.order_id
-       )
-       WHERE location_id IS NULL
-         AND order_id IS NOT NULL
-         AND EXISTS (
-           SELECT 1 FROM orders o WHERE o.id = work_orders.order_id AND o.location_id IS NOT NULL
-         )`
-    );
-    await run(`UPDATE work_orders SET location_id = ? WHERE location_id IS NULL`, [id]);
-    await run(
-      `INSERT INTO system_settings (key, value, updated_at) VALUES (?,?,datetime('now'))`,
-      [backfillKey, '1']
-    );
+    // Managers and admins with no home shop cover every location. Operators
+    // and customers with no shop are assigned to Raleigh. The flag is written
+    // in the same transaction so a failed backfill can run again.
+    await exec('BEGIN IMMEDIATE');
+    try {
+      await run(
+        `UPDATE users SET location_id = ?
+         WHERE location_id IS NULL
+           AND lower(trim(role)) NOT IN ('manager', 'admin')`,
+        [id]
+      );
+      await run(`UPDATE orders SET location_id = ? WHERE location_id IS NULL`, [id]);
+      await run(`UPDATE quote_requests SET location_id = ? WHERE location_id IS NULL`, [id]);
+      await run(`UPDATE inbound_emails SET location_id = ? WHERE location_id IS NULL`, [id]);
+      await run(`UPDATE notifications SET location_id = ? WHERE location_id IS NULL`, [id]);
+      await run(
+        `UPDATE work_orders
+         SET location_id = (
+           SELECT o.location_id FROM orders o WHERE o.id = work_orders.order_id
+         )
+         WHERE location_id IS NULL
+           AND order_id IS NOT NULL
+           AND EXISTS (
+             SELECT 1 FROM orders o WHERE o.id = work_orders.order_id AND o.location_id IS NOT NULL
+           )`
+      );
+      await run(`UPDATE work_orders SET location_id = ? WHERE location_id IS NULL`, [id]);
+      await run(
+        `INSERT INTO system_settings (key, value, updated_at) VALUES (?,?,datetime('now'))`,
+        [backfillKey, '1']
+      );
+      await exec('COMMIT');
+    } catch (err) {
+      try {
+        await exec('ROLLBACK');
+      } catch (rollbackErr) {
+        console.error('SHOP LOCATION BACKFILL ROLLBACK ERROR:', rollbackErr);
+      }
+      throw err;
+    }
     console.log('Assigned existing records with no location to Raleigh');
   }
   await run('CREATE INDEX IF NOT EXISTS idx_orders_location ON orders(location_id)');

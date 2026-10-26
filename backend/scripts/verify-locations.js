@@ -74,12 +74,25 @@ function spawnNode(script, env) {
   });
 }
 
-function request({ method, path: requestPath, token, json }) {
+function multipartPdf(name) {
+  const boundary = '----lp-locations';
+  const raw = Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="files"; filename="${name}"\r\nContent-Type: application/pdf\r\n\r\n`),
+    Buffer.from('%PDF-1.4 location'),
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+  return { raw, contentType: `multipart/form-data; boundary=${boundary}` };
+}
+
+function request({ method, path: requestPath, token, json, raw, contentType }) {
   return new Promise((resolve, reject) => {
-    const body = json != null ? Buffer.from(JSON.stringify(json)) : null;
+    const body = raw || (json != null ? Buffer.from(JSON.stringify(json)) : null);
     const headers = {};
     if (token) headers.Authorization = `Bearer ${token}`;
-    if (json != null) {
+    if (raw) {
+      headers['Content-Type'] = contentType;
+      headers['Content-Length'] = body.length;
+    } else if (json != null) {
       headers['Content-Type'] = 'application/json';
       headers['Content-Length'] = body.length;
     }
@@ -206,11 +219,26 @@ async function main() {
   const before = await seeded.all(`SELECT id, name FROM locations ORDER BY sort_order, id`);
   assert(before.map((row) => row.name).join(',') === 'Raleigh,Hickory,Charlotte', `expected three shops, got ${before.map((row) => row.name).join(',')}`);
   const raleigh = before.find((row) => row.name === 'Raleigh');
-  const admin = await seeded.get(`SELECT id FROM users WHERE username = 'admin'`);
+  const admin = await seeded.get(`SELECT id, location_id FROM users WHERE username = 'admin'`);
+  assert(admin.location_id == null, 'an existing admin keeps all-location access');
+  const seededCustomer = await seeded.get(`SELECT location_id FROM users WHERE username = 'acme'`);
+  assert(seededCustomer && Number(seededCustomer.location_id) === Number(raleigh.id), 'existing customers default to Raleigh');
   await seeded.run(`DELETE FROM system_settings WHERE key = 'shop_locations_backfilled'`);
   await seeded.run(
     `INSERT INTO users (username, password_hash, role, display_name, location_id)
      VALUES ('legacy-op', 'x', 'operator', 'Legacy Op', NULL)`
+  );
+  await seeded.run(
+    `INSERT INTO users (username, password_hash, role, display_name, location_id)
+     VALUES ('legacy-mgr', 'x', 'manager', 'Legacy Manager', NULL)`
+  );
+  await seeded.run(
+    `INSERT INTO users (username, password_hash, role, display_name, location_id)
+     VALUES ('legacy-admin', 'x', 'admin', 'Legacy Admin', NULL)`
+  );
+  await seeded.run(
+    `INSERT INTO users (username, password_hash, role, display_name, location_id)
+     VALUES ('legacy-cust', 'x', 'customer', 'Legacy Customer', NULL)`
   );
   await seeded.run(
     `INSERT INTO orders (
@@ -246,14 +274,19 @@ async function main() {
   const shops = await upgraded.all(`SELECT name FROM locations ORDER BY sort_order, id`);
   assert(shops.length === 3, 'a second init must not duplicate shops');
   const legacyUser = await upgraded.get(`SELECT location_id FROM users WHERE username = 'legacy-op'`);
+  const legacyCustomer = await upgraded.get(`SELECT location_id FROM users WHERE username = 'legacy-cust'`);
+  const legacyManager = await upgraded.get(`SELECT location_id FROM users WHERE username = 'legacy-mgr'`);
+  const legacyAdmin = await upgraded.get(`SELECT location_id FROM users WHERE username = 'legacy-admin'`);
   const legacyOrder = await upgraded.get(`SELECT location_id FROM orders WHERE order_number = 'LEGACY-1'`);
   const legacyQuote = await upgraded.get(`SELECT location_id FROM quote_requests WHERE project_name = 'Legacy quote'`);
   const legacyWork = await upgraded.get(`SELECT location_id FROM work_orders WHERE external_id = 'LEGACY-WO'`);
   const legacyNotice = await upgraded.get(`SELECT location_id FROM notifications WHERE dedupe_key = 'legacy-notice'`);
   const legacyMail = await upgraded.get(`SELECT location_id FROM inbound_emails WHERE graph_message_id = 'legacy-message'`);
-  for (const row of [legacyUser, legacyOrder, legacyQuote, legacyWork, legacyNotice, legacyMail]) {
+  for (const row of [legacyUser, legacyCustomer, legacyOrder, legacyQuote, legacyWork, legacyNotice, legacyMail]) {
     assert(row && Number(row.location_id) === Number(raleigh.id), `legacy row should belong to Raleigh, got ${JSON.stringify(row)}`);
   }
+  assert(legacyManager && legacyManager.location_id == null, 'an existing manager keeps all-location access');
+  assert(legacyAdmin && legacyAdmin.location_id == null, 'an existing admin keeps all-location access');
   await upgraded.run(
     `INSERT INTO users (username, password_hash, role, display_name, location_id)
      VALUES ('all-shops', 'x', 'manager', 'All Shops', NULL)`
@@ -372,6 +405,192 @@ async function main() {
     assert(defaultedOrder.status === 201, defaultedOrder.text);
     assert(defaultedOrder.json.order.location_id === byName.Hickory.id, 'an order with no location uses the customer default');
 
+    const customerUpload = await request({
+      method: 'POST',
+      path: '/api/uploads',
+      token: customerLogin.token,
+      ...multipartPdf('customer-plan.pdf'),
+    });
+    assert(customerUpload.status === 201, customerUpload.text);
+    const customerFileId = customerUpload.json.files[0].id;
+    const operatorUpload = await request({
+      method: 'POST',
+      path: '/api/uploads',
+      token: hickoryLogin.token,
+      ...multipartPdf('operator-plan.pdf'),
+    });
+    assert(operatorUpload.status === 201, operatorUpload.text);
+    const operatorFileId = operatorUpload.json.files[0].id;
+    const managerUpload = await request({
+      method: 'POST',
+      path: '/api/uploads',
+      token: hickoryManager.token,
+      ...multipartPdf('manager-plan.pdf'),
+    });
+    assert(managerUpload.status === 201, managerUpload.text);
+    const managerFileId = managerUpload.json.files[0].id;
+
+    async function downloadStatus(fileId, token) {
+      const response = await request({ method: 'GET', path: `/api/uploads/${fileId}/download`, token });
+      return response.status;
+    }
+    assert(await downloadStatus(customerFileId, customerLogin.token) === 200, 'the owning customer can download an unattached file');
+    assert(await downloadStatus(customerFileId, hickoryLogin.token) === 404, 'an operator cannot download an unattached file');
+    assert(await downloadStatus(operatorFileId, hickoryLogin.token) === 404, 'an operator cannot download a file they uploaded');
+    assert(await downloadStatus(customerFileId, hickoryManager.token) === 200, 'the customer home-shop manager can download the file');
+    assert(await downloadStatus(customerFileId, raleighManager.token) === 404, 'another shop manager cannot download the file');
+    assert(await downloadStatus(operatorFileId, hickoryManager.token) === 200, 'the uploader home-shop manager can download an operator file');
+    assert(await downloadStatus(operatorFileId, raleighManager.token) === 404, 'another shop manager cannot download an operator file');
+    assert(await downloadStatus(managerFileId, hickoryManager.token) === 200, 'the uploading manager can download their own file');
+    assert(await downloadStatus(managerFileId, adminLogin.token) === 200, 'an admin can download an unattached file');
+    const operatorDelete = await request({ method: 'DELETE', path: `/api/uploads/${customerFileId}`, token: hickoryLogin.token });
+    assert(operatorDelete.status === 404, 'an operator cannot delete an unattached file');
+    const ownOperatorDelete = await request({ method: 'DELETE', path: `/api/uploads/${operatorFileId}`, token: hickoryLogin.token });
+    assert(ownOperatorDelete.status === 404, 'an operator cannot delete a file they uploaded');
+    const managerDelete = await request({ method: 'DELETE', path: `/api/uploads/${operatorFileId}`, token: hickoryManager.token });
+    assert(managerDelete.status === 200, 'the home-shop manager can delete the operator file');
+    const customerDelete = await request({ method: 'DELETE', path: `/api/uploads/${customerFileId}`, token: customerLogin.token });
+    assert(customerDelete.status === 200, 'the owning customer can delete an unattached file');
+
+    await db.run(`UPDATE work_orders SET location_id = NULL WHERE id = ?`, [charlotteWorkId]);
+    await db.run(
+      `INSERT INTO production_board (work_order_id, lane, position, status) VALUES (?, 'print', 1, 'queued')`,
+      [hickoryWorkId]
+    );
+    await db.run(
+      `INSERT INTO production_board (work_order_id, lane, position, status) VALUES (?, 'print', 2, 'queued')`,
+      [charlotteWorkId]
+    );
+    await db.run(
+      `INSERT INTO deliveries (work_order_id, order_id, status, due_time) VALUES (?, ?, 'pending', '2026-11-02 10:00')`,
+      [hickoryWorkId, hickoryOrder.json.order.id]
+    );
+    await db.run(
+      `INSERT INTO deliveries (work_order_id, order_id, status, due_time) VALUES (?, ?, 'pending', '2026-11-02 11:00')`,
+      [charlotteWorkId, charlotteOrder.json.order.id]
+    );
+    const hickoryDash = await request({ method: 'GET', path: '/api/dashboard', token: hickoryLogin.token });
+    const hickoryManagerDash = await request({ method: 'GET', path: '/api/dashboard', token: hickoryManager.token });
+    const raleighDash = await request({ method: 'GET', path: '/api/dashboard', token: raleighManager.token });
+    const adminDash = await request({ method: 'GET', path: '/api/dashboard', token: adminLogin.token });
+    assert(hickoryDash.status === 200, hickoryDash.text);
+    const hickoryWorkCount = await db.get(
+      `SELECT COUNT(*) AS count
+       FROM work_orders wo
+       LEFT JOIN orders o ON o.id = wo.order_id
+       WHERE COALESCE(wo.location_id, o.location_id) = ?`,
+      [byName.Hickory.id]
+    );
+    assert(hickoryDash.json.totalWorkOrders === hickoryWorkCount.count, 'operator dashboard counts only the home shop');
+    assert(hickoryManagerDash.json.totalWorkOrders === hickoryDash.json.totalWorkOrders, 'a single-location manager matches the operator count');
+    assert(hickoryDash.json.activeWorkOrders === hickoryDash.json.totalWorkOrders, 'the Hickory jobs are active');
+    const hickoryBoardCount = await db.get(
+      `SELECT COUNT(*) AS count
+       FROM production_board pb
+       LEFT JOIN work_orders wo ON wo.id = pb.work_order_id
+       LEFT JOIN orders o ON o.id = wo.order_id
+       WHERE COALESCE(wo.location_id, o.location_id) = ?`,
+      [byName.Hickory.id]
+    );
+    const hickoryDeliveryCount = await db.get(
+      `SELECT COUNT(*) AS count
+       FROM deliveries d
+       LEFT JOIN work_orders wo ON wo.id = d.work_order_id
+       LEFT JOIN orders o ON o.id = COALESCE(d.order_id, wo.order_id)
+       WHERE lower(d.status) != 'complete'
+         AND COALESCE(wo.location_id, o.location_id) = ?`,
+      [byName.Hickory.id]
+    );
+    const allDeliveryCount = await db.get(
+      `SELECT COUNT(*) AS count FROM deliveries d WHERE lower(d.status) != 'complete'`
+    );
+    assert(hickoryDash.json.productionBoardItems === hickoryBoardCount.count, 'production board count stays on the home shop');
+    assert(hickoryBoardCount.count >= 1 && hickoryBoardCount.count < adminDash.json.productionBoardItems, 'Charlotte board rows stay off the Hickory dashboard');
+    assert(hickoryDash.json.pendingDeliveries === hickoryDeliveryCount.count, 'pending deliveries stay on the home shop');
+    assert(hickoryDeliveryCount.count < allDeliveryCount.count, 'another shop delivery is left out of the Hickory count');
+    assert(adminDash.json.totalWorkOrders > hickoryDash.json.totalWorkOrders, 'an admin dashboard includes every shop');
+    assert(raleighDash.json.totalWorkOrders < adminDash.json.totalWorkOrders, 'a Raleigh manager does not count Hickory or Charlotte');
+    assert(
+      !(hickoryDash.json.departmentSummary || []).some((row) => row.count > hickoryWorkCount.count),
+      'department counts cannot exceed the home shop'
+    );
+    const hickoryStatus = await request({ method: 'GET', path: '/api/reports/work-orders/status', token: hickoryLogin.token });
+    const adminStatus = await request({ method: 'GET', path: '/api/reports/work-orders/status', token: adminLogin.token });
+    assert(hickoryStatus.status === 200 && hickoryStatus.json.total === hickoryWorkCount.count, hickoryStatus.text);
+    assert(adminStatus.json.total > hickoryStatus.json.total, 'the status report keeps Charlotte work whose shop is stored on the order');
+    const hickoryDepartments = await request({ method: 'GET', path: '/api/reports/work-orders/department', token: hickoryManager.token });
+    assert(hickoryDepartments.status === 200 && hickoryDepartments.json.total === hickoryWorkCount.count, hickoryDepartments.text);
+
+    const sheet = await db.get(
+      `SELECT customer_id, description, quantity, status, department, priority, external_id
+       FROM work_orders WHERE id = ?`,
+      [charlotteWorkId]
+    );
+    const hiddenUpdate = await request({
+      method: 'PUT',
+      path: `/api/workorders/${charlotteWorkId}`,
+      token: hickoryLogin.token,
+      json: sheet,
+    });
+    assert(hiddenUpdate.status === 404, `Hickory operator must not edit a Charlotte work order stored on the order: ${hiddenUpdate.status} ${hiddenUpdate.text}`);
+    const allowedUpdate = await request({
+      method: 'PUT',
+      path: `/api/workorders/${charlotteWorkId}`,
+      token: adminLogin.token,
+      json: sheet,
+    });
+    assert(allowedUpdate.status === 200, allowedUpdate.text);
+
+    await db.run(
+      `INSERT INTO notifications (type, title, dedupe_key, location_id, work_order_id)
+       VALUES ('work_order_rush', 'Hickory rush', 'rush-hickory', ?, ?)`,
+      [byName.Hickory.id, hickoryWorkId]
+    );
+    await db.run(
+      `INSERT INTO notifications (type, title, dedupe_key, location_id, work_order_id)
+       VALUES ('work_order_rush', 'Charlotte rush', 'rush-charlotte', ?, ?)`,
+      [byName.Charlotte.id, charlotteWorkId]
+    );
+    const marked = await request({ method: 'POST', path: '/api/notifications/read-all', token: hickoryLogin.token });
+    assert(marked.status === 200, marked.text);
+    const rushH = await db.get(`SELECT id FROM notifications WHERE dedupe_key = 'rush-hickory'`);
+    const rushC = await db.get(`SELECT id FROM notifications WHERE dedupe_key = 'rush-charlotte'`);
+    const hickoryOrderNote = await db.get(
+      `SELECT id FROM notifications WHERE type = 'order_created' AND order_id = ?`,
+      [hickoryOrder.json.order.id]
+    );
+    const operatorReadRush = await db.get(
+      `SELECT user_id FROM notification_reads WHERE notification_id = ? AND user_id = ?`,
+      [rushH.id, hickoryOp.id]
+    );
+    const operatorReadOther = await db.get(
+      `SELECT user_id FROM notification_reads WHERE notification_id = ? AND user_id = ?`,
+      [rushC.id, hickoryOp.id]
+    );
+    const operatorReadOrder = await db.get(
+      `SELECT user_id FROM notification_reads WHERE notification_id = ? AND user_id = ?`,
+      [hickoryOrderNote.id, hickoryOp.id]
+    );
+    assert(operatorReadRush, 'mark all read includes the operator home shop');
+    assert(!operatorReadOther, 'mark all read skips another shop');
+    assert(!operatorReadOrder, 'mark all read still skips manager-only notices');
+    const managerMarked = await request({ method: 'POST', path: '/api/notifications/read-all', token: hickoryManager.token });
+    assert(managerMarked.status === 200, managerMarked.text);
+    const managerReadHome = await db.get(
+      `SELECT user_id FROM notification_reads WHERE notification_id = ? AND user_id = ?`,
+      [hickoryOrderNote.id, hickoryMgr.id]
+    );
+    const charlotteOrderNote = await db.get(
+      `SELECT id FROM notifications WHERE type = 'order_created' AND order_id = ?`,
+      [charlotteOrder.json.order.id]
+    );
+    const managerReadAway = await db.get(
+      `SELECT user_id FROM notification_reads WHERE notification_id = ? AND user_id = ?`,
+      [charlotteOrderNote.id, hickoryMgr.id]
+    );
+    assert(managerReadHome, 'a shop manager marks that shop order notice read');
+    assert(!managerReadAway, 'a shop manager does not mark another shop notice read');
+
     const profile = await request({
       method: 'PUT',
       path: '/api/auth/profile',
@@ -484,6 +703,26 @@ async function main() {
       json: { location_id: byName.Charlotte.id },
     });
     assert(moved.status === 404, 'Raleigh manager cannot transfer an order they cannot see');
+    await db.run(
+      `INSERT INTO notifications (type, title, dedupe_key, order_id, location_id)
+       VALUES ('files_shared', 'Move with order', 'xfer-order', ?, ?)`,
+      [hickoryOrder.json.order.id, byName.Hickory.id]
+    );
+    await db.run(
+      `INSERT INTO notifications (type, title, dedupe_key, work_order_id, location_id)
+       VALUES ('files_shared', 'Move with work order', 'xfer-work', ?, ?)`,
+      [hickoryWorkId, byName.Hickory.id]
+    );
+    await db.run(
+      `INSERT INTO inbound_emails (graph_message_id, status, order_id, location_id)
+       VALUES ('xfer-mail', 'converted', ?, ?)`,
+      [hickoryOrder.json.order.id, byName.Hickory.id]
+    );
+    await db.run(
+      `INSERT INTO quote_requests (customer_id, project_name, status, location_id, converted_order_id)
+       VALUES (?, 'Moved quote', 'Accepted', ?, ?)`,
+      [customer.id, byName.Hickory.id, hickoryOrder.json.order.id]
+    );
     const transfer = await request({
       method: 'POST',
       path: `/api/orders/${hickoryOrder.json.order.id}/location`,
@@ -491,6 +730,14 @@ async function main() {
       json: { location_id: byName.Charlotte.id },
     });
     assert(transfer.status === 200 && transfer.json.transferred === true && transfer.json.location_name === 'Charlotte', transfer.text);
+    const movedOrderNote = await db.get(`SELECT location_id FROM notifications WHERE dedupe_key = 'xfer-order'`);
+    const movedWorkNote = await db.get(`SELECT location_id FROM notifications WHERE dedupe_key = 'xfer-work'`);
+    const movedMail = await db.get(`SELECT location_id FROM inbound_emails WHERE graph_message_id = 'xfer-mail'`);
+    const movedQuote = await db.get(`SELECT location_id FROM quote_requests WHERE project_name = 'Moved quote'`);
+    const movedWork = await db.get(`SELECT location_id FROM work_orders WHERE id = ?`, [hickoryWorkId]);
+    for (const row of [movedOrderNote, movedWorkNote, movedMail, movedQuote, movedWork]) {
+      assert(row && Number(row.location_id) === Number(byName.Charlotte.id), `transfer should move related rows, got ${JSON.stringify(row)}`);
+    }
     const lost = await request({
       method: 'GET',
       path: `/api/orders/${hickoryOrder.json.order.id}`,
