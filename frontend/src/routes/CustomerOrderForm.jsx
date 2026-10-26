@@ -27,6 +27,7 @@ import Inventory2OutlinedIcon from '@mui/icons-material/Inventory2Outlined';
 import LocalShippingOutlinedIcon from '@mui/icons-material/LocalShippingOutlined';
 import BrushOutlinedIcon from '@mui/icons-material/BrushOutlined';
 import CloseIcon from '@mui/icons-material/Close';
+import { DivisionCredit } from '../components/AcgMark';
 import CustomerShell from '../components/CustomerShell';
 import BrandLogo from '../components/BrandLogo';
 import { useDocumentTitle } from '../useDocumentTitle';
@@ -1888,18 +1889,20 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
           py: 1.25,
         }}
         >
-          <Box sx={{ maxWidth: 1440, mx: 'auto', display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 1.25, alignItems: { xs: 'stretch', sm: 'center' }, justifyContent: 'space-between' }}>
+          <Box sx={{ maxWidth: 1440, mx: 'auto', display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+            {!isStaff ? <DivisionCredit height={22} /> : null}
+            <Box sx={{ display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 1.25, alignItems: { xs: 'stretch', sm: 'center' }, justifyContent: 'space-between' }}>
             <Box sx={{ minWidth: 0 }}>
-              <Typography aria-live="polite" sx={{ fontWeight: 800, color: brand.navy, fontSize: 15 }}>
-                {countLabel(selectedServices.length, 'service', 'services')}
-                {' · '}
-                {countLabel(lines.length, 'line', 'lines')}
-                {filesAttached ? ` · ${countLabel(uploadedCount, 'file', 'files')}` : ''}
-              </Typography>
-              <Typography sx={{ fontSize: 12, color: brand.muted }}>
-                {uploading ? 'Uploading files…' : result ? `Order ${result.order_number} submitted.` : 'Submit stays here while you fill the order.'}
-              </Typography>
-            </Box>
+                <Typography aria-live="polite" sx={{ fontWeight: 800, color: brand.navy, fontSize: 15 }}>
+                  {countLabel(selectedServices.length, 'service', 'services')}
+                  {' · '}
+                  {countLabel(lines.length, 'line', 'lines')}
+                  {filesAttached ? ` · ${countLabel(uploadedCount, 'file', 'files')}` : ''}
+                </Typography>
+                <Typography sx={{ fontSize: 12, color: brand.muted }}>
+                  {uploading ? 'Uploading files…' : result ? `Order ${result.order_number} submitted.` : 'Submit stays here while you fill the order.'}
+                </Typography>
+              </Box>
             <Button
               className="order-submit"
               data-testid="submit-order"
@@ -1921,6 +1924,7 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
             >
               {submitting ? 'Submitting…' : result ? 'Submitted' : inboundEmail ? 'Create order' : 'Submit Order'}
             </Button>
+            </Box>
           </Box>
         </Box>
       </Box>
@@ -1996,7 +2000,7 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
         </DialogActions>
       </Dialog>
 
-      <Box className="no-print" sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderLeft: `4px solid ${brand.orange}`, borderRadius: 2, overflow: 'hidden', mb: { xs: 18, sm: 14 } }}>
+      <Box className="no-print" sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderLeft: `4px solid ${brand.orange}`, borderRadius: 2, overflow: 'hidden', mb: { xs: 22, sm: 16 } }}>
         <Box sx={{ bgcolor: brand.navy, px: 2, py: 1 }}>
           <Typography sx={{ color: '#fff', fontWeight: 800 }}>Important Information</Typography>
         </Box>
@@ -2014,6 +2018,7 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
       title={isStaff ? 'Create Order' : 'Customer Order Form'}
       welcome={welcomeText(user)}
       onLogout={logout}
+      showDivision={false}
       extra={isStaff ? <Button color="inherit" onClick={() => navigate('/')}>Dashboard</Button> : null}
     >
       {content}

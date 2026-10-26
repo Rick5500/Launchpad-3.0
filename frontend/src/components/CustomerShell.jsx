@@ -3,16 +3,19 @@ import { Box, Button, Typography } from '@mui/material';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { useNavigate } from 'react-router-dom';
 import { brand } from '../brand';
+import { DivisionCredit } from './AcgMark';
 import BrandLogo from './BrandLogo';
 import { useAuth } from '../context/AuthContext';
 import NotificationBell from './NotificationBell';
 
-export default function CustomerShell({ title, welcome, children, onLogout, extra }) {
+export default function CustomerShell({ title, welcome, children, onLogout, extra, showDivision }) {
   const navigate = useNavigate();
   const { user } = useAuth();
 
+  const showAcg = showDivision == null ? user?.role === 'customer' : Boolean(showDivision);
+
   return (
-    <Box sx={{ minHeight: '100vh', bgcolor: brand.page, color: brand.text }}>
+    <Box sx={{ minHeight: '100vh', bgcolor: brand.page, color: brand.text, display: 'flex', flexDirection: 'column' }}>
       <Box
         className="no-print"
         sx={{
@@ -76,7 +79,24 @@ export default function CustomerShell({ title, welcome, children, onLogout, extr
           </Button>
         </Box>
       </Box>
-      <Box sx={{ px: { xs: 2, md: 3 }, py: 3, maxWidth: 1440, mx: 'auto' }}>{children}</Box>
+      <Box sx={{ px: { xs: 2, md: 3 }, py: 3, maxWidth: 1440, mx: 'auto', width: '100%', flex: 1 }}>{children}</Box>
+      {showAcg ? (
+        <Box
+          component="footer"
+          className="no-print"
+          sx={{
+            px: { xs: 2, md: 3 },
+            py: 1.5,
+            borderTop: `3px solid ${brand.orange}`,
+            bgcolor: '#fff',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+          }}
+        >
+          <DivisionCredit height={28} />
+        </Box>
+      ) : null}
     </Box>
   );
 }

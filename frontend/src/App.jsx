@@ -31,6 +31,7 @@ import Notifications from './routes/Notifications';
 import SendFiles from './routes/SendFiles';
 import EmailOrders from './routes/EmailOrders';
 import CustomerFiles from './routes/CustomerFiles';
+import { DivisionCredit } from './components/AcgMark';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -547,6 +548,7 @@ function LoginScreen() {
         ) : null}
       </Box>
       {formVisible ? (
+        <>
         <Box
           data-testid="sign-in-card"
           sx={{
@@ -721,6 +723,26 @@ function LoginScreen() {
             )}
           </Box>
         </Box>
+        <DivisionCredit
+          height={36}
+          sx={{
+            alignSelf: 'center',
+            width: '100%',
+            maxWidth: 440,
+            mt: 2,
+            mb: 1,
+            px: 1.5,
+            py: 1,
+            borderRadius: 1.5,
+            bgcolor: 'rgba(255,255,255,0.94)',
+            boxShadow: '0 6px 16px rgba(0,0,0,0.28)',
+            animation: animateForm ? `${loginCardIn} 500ms ease` : 'none',
+            '@media (prefers-reduced-motion: reduce)': {
+              animation: 'none',
+            },
+          }}
+        />
+        </>
       ) : null}
     </Box>
   );

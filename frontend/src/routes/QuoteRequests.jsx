@@ -8,6 +8,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
+import { QuotePrintCredit } from '../components/AcgMark';
 import QuoteStatusChip from '../components/QuoteStatusChip';
 import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
@@ -380,6 +381,7 @@ function QuoteDetail({ id, onBack }) {
           This quote was converted to an order, so the price is locked.
         </Alert>
       )}
+      <QuotePrintCredit />
     </Box>
   );
 }

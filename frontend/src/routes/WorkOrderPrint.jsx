@@ -487,11 +487,20 @@ function WorkOrderSheet({ payload, sheet }) {
         <WriteInGrid />
 
         <footer className="wo-footer">
-          <div className="wo-shop-footer">
-            {shopLines.map((line) => <div key={line}>{line}</div>)}
+          <div className="wo-footer-main">
+            <div className="wo-shop-footer">
+              {shopLines.map((line) => <div key={line}>{line}</div>)}
+            </div>
+            <div className="wo-footer-meta">
+              <div>Printed {display(shopStamp(payload.generated_at, zone))}</div>
+            </div>
           </div>
-          <div className="wo-footer-meta">
-            <div>Printed {display(shopStamp(payload.generated_at, zone))}</div>
+          <div className="wo-credit" data-testid="division-credit">
+            <div className="wo-credit-logos">
+              <img className="wo-credit-ai" src="/brand/accent-imaging-logo-print.png" alt="Accent Imaging" />
+              <img className="wo-credit-acg" src="/brand/acg-logo-print.png" alt="Accent Corporate Graphics" />
+            </div>
+            <div className="wo-credit-text">A service of Accent Imaging and Accent Corporate Graphics</div>
           </div>
         </footer>
       </div>
