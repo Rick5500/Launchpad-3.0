@@ -789,7 +789,7 @@ function AppRoutes() {
         <Route path="work-orders/:id/edit" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><WorkOrderForm /></ProtectedRoute>} />
         <Route path="production-board" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><ProductionBoard /></ProtectedRoute>} />
         <Route path="scan" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><BarcodeScan /></ProtectedRoute>} />
-        <Route path="customers" element={<ProtectedRoute roles={['admin']}><Customers /></ProtectedRoute>} />
+        <Route path="customers" element={<ProtectedRoute roles={['admin', 'manager']}><Customers /></ProtectedRoute>} />
         <Route path="delivery" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><Deliveries /></ProtectedRoute>} />
         <Route path="reports" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><Reports /></ProtectedRoute>} />
         <Route path="reports/:reportId" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><Reports /></ProtectedRoute>} />

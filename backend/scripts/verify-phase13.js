@@ -833,6 +833,7 @@ function runEmailBranding() {
     mailer.renderTransferEmail({ letterhead, subject: 'Files', message: 'Ready', fileNames: ['a.pdf'], link: `${appUrl}/login?next=%2Ffiles%2F1` }),
     mailer.renderQuoteEmail({ letterhead, projectName: 'Banner', price: '$10.00', notes: 'Net 15', validUntil: '2026-12-01', lineItems: [], link: `${appUrl}/login?next=%2Fquotes%2F1` }),
     mailer.renderProofEmail({ letterhead, orderNumber: 'LP-1', version: 1, message: 'Look', fileNames: ['a.pdf'], link: `${appUrl}/login?next=%2Forders%2F1%23proofs`, workOrderNumber: 'LP-1-A' }),
+    mailer.renderPickupReadyEmail({ letterhead, orderNumber: 'LP-1', locationName: 'Raleigh', locationAddress: '8121 Brownleigh Drive\nRaleigh, NC 27617', locationPhone: '919-782-3332', link }),
   ];
   const staffMail = [
     mailer.renderProofChangesEmail({ letterhead, orderNumber: 'LP-1', version: 1, comment: 'Darker', customerName: 'Pat', link, workOrderNumber: 'LP-1-A' }),

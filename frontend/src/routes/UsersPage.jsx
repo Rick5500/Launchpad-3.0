@@ -3,6 +3,7 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
   Chip,
   FormControlLabel,
   MenuItem,
@@ -21,6 +22,7 @@ import LoadingState from '../components/LoadingState';
 import Pager from '../components/Pager';
 import { authFetch } from '../api';
 import { useAuth } from '../context/AuthContext';
+import { SMS_CONSENT } from '../smsConsent';
 
 const emptyForm = {
   username: '',
@@ -30,6 +32,8 @@ const emptyForm = {
   contact_name: '',
   phone: '',
   email: '',
+  mobile_phone: '',
+  sms_opt_in: false,
   address_line1: '',
   address_line2: '',
   city: '',
@@ -126,6 +130,8 @@ export default function UsersPage() {
       contact_name: row.contact_name || '',
       phone: row.phone || '',
       email: row.email || '',
+      mobile_phone: row.mobile_phone || '',
+      sms_opt_in: Boolean(row.sms_opt_in),
       address_line1: row.address_line1 || '',
       address_line2: row.address_line2 || '',
       city: row.city || '',
@@ -155,6 +161,8 @@ export default function UsersPage() {
       contact_name: form.contact_name,
       phone: form.phone,
       email: form.email,
+      mobile_phone: form.role === 'customer' ? form.mobile_phone : '',
+      sms_opt_in: form.role === 'customer' ? form.sms_opt_in : false,
       address_line1: form.address_line1,
       address_line2: form.address_line2,
       city: form.city,
@@ -259,6 +267,23 @@ export default function UsersPage() {
           <TextField label="Contact name" value={form.contact_name} onChange={(event) => update('contact_name', event.target.value)} />
           <TextField label="Phone" value={form.phone} onChange={(event) => update('phone', event.target.value)} />
           <TextField label="Email" value={form.email} onChange={(event) => update('email', event.target.value)} />
+          {form.role === 'customer' ? (
+            <>
+              <TextField
+                label="Mobile phone"
+                value={form.mobile_phone}
+                onChange={(event) => update('mobile_phone', event.target.value)}
+                placeholder="919-555-0100"
+                helperText="Used for order-status texts. Stored as E.164."
+                sx={{ '& .MuiInputBase-input': { fontSize: '1.15rem' } }}
+              />
+              <FormControlLabel
+                sx={{ alignItems: 'flex-start', gridColumn: '1 / -1', '& .MuiFormControlLabel-label': { fontSize: '1.1rem', lineHeight: 1.45 } }}
+                control={<Checkbox checked={form.sms_opt_in} onChange={(event) => update('sms_opt_in', event.target.checked)} />}
+                label={SMS_CONSENT}
+              />
+            </>
+          ) : null}
           <TextField label="Addr 1" value={form.address_line1} onChange={(event) => update('address_line1', event.target.value)} />
           <TextField label="Addr 2" value={form.address_line2} onChange={(event) => update('address_line2', event.target.value)} />
           <TextField label="City" value={form.city} onChange={(event) => update('city', event.target.value)} />

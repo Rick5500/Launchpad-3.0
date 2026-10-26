@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS users (
   contact_name TEXT,
   phone TEXT,
   email TEXT,
+  mobile_phone TEXT, -- E.164 mobile used for order-status texts; separate from phone
+  sms_opt_in INTEGER NOT NULL DEFAULT 0, -- customer consent for order-status texts; off until set
   address_line1 TEXT, -- company street address, snapshotted onto orders at submission
   address_line2 TEXT,
   city TEXT,
@@ -131,6 +133,13 @@ CREATE TABLE IF NOT EXISTS orders (
   bill_to_zip TEXT,
   due_date TEXT NOT NULL, -- YYYY-MM-DD in the shop calendar
   due_time TEXT NOT NULL, -- HH:MM slot inside the method window (Will Call 08:00-17:00, delivery 09:00-16:00)
+  status TEXT NOT NULL DEFAULT 'In Production', -- In Production, or Ready for Pickup
+  pickup_ready_generation INTEGER NOT NULL DEFAULT 0, -- increments each time the order becomes ready
+  pickup_notified_generation INTEGER, -- generation already claimed, so a repeated save does not send again
+  pickup_email_sent_at DATETIME,
+  pickup_sms_sent_at DATETIME,
+  pickup_email_status TEXT,
+  pickup_sms_status TEXT,
   created_by INTEGER,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME,
