@@ -13,9 +13,19 @@ export const CREDIT_SENTENCE = 'A service of Accent Imaging and Accent Corporate
 const AI_RATIO = 2056 / 1973;
 const ACG_RATIO = 1796 / 1155;
 
+const stackSx = {
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'flex-start',
+  gap: 1,
+  width: '100%',
+  maxWidth: '100%',
+  boxSizing: 'border-box',
+};
+
 export function DivisionCredit({
   height = 28,
-  align = 'flex-end',
   printOnly = false,
   printSources = false,
   testId = 'division-credit',
@@ -26,56 +36,62 @@ export function DivisionCredit({
   const aiSrc = printSources ? AI_LOGO_PRINT_SRC : AI_LOGO_SRC;
   const acgSrc = printSources ? ACG_LOGO_PRINT_SRC : ACG_LOGO_SRC;
   const sentenceSize = height <= 24 ? 11 : 12;
-
   const hiddenOnScreen = printOnly
     ? {
       display: 'none',
       '@media print': {
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: align,
-        gap: 0.4,
-        maxWidth: '100%',
+        ...stackSx,
         ...sx,
       },
     }
-    : { display: 'flex' };
+    : null;
 
   return (
     <Box
       data-testid={testId}
       sx={{
-        flexDirection: 'column',
-        alignItems: align,
-        gap: 0.4,
-        maxWidth: '100%',
+        ...stackSx,
         ...hiddenOnScreen,
         ...sx,
       }}
     >
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+      <Box
+        data-testid={`${testId}-logos`}
+        sx={{
+          display: 'flex',
+          flexDirection: 'row',
+          flexWrap: 'nowrap',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 1,
+          flexShrink: 0,
+        }}
+      >
         <Box
           component="img"
           src={aiSrc}
           alt={AI_LOGO_ALT}
-          sx={{ width: aiWidth, height, display: 'block', objectFit: 'contain' }}
+          sx={{ width: aiWidth, height, flexShrink: 0, display: 'block', objectFit: 'contain' }}
         />
         <Box
           component="img"
           src={acgSrc}
           alt={ACG_LOGO_ALT}
-          sx={{ width: acgWidth, height, display: 'block', objectFit: 'contain' }}
+          sx={{ width: acgWidth, height, flexShrink: 0, display: 'block', objectFit: 'contain' }}
         />
       </Box>
       <Typography
         component="p"
+        data-testid={`${testId}-text`}
         sx={{
           m: 0,
+          width: '100%',
+          maxWidth: '100%',
           fontSize: sentenceSize,
           fontWeight: 700,
-          lineHeight: 1.3,
+          lineHeight: 1.35,
           color: brand.navy,
-          textAlign: align === 'center' ? 'center' : align === 'flex-start' ? 'left' : 'right',
+          textAlign: 'center',
         }}
       >
         {CREDIT_SENTENCE}
@@ -90,7 +106,6 @@ export function QuotePrintCredit() {
       printOnly
       printSources
       height={34}
-      align="flex-end"
       testId="quote-print-credit"
       sx={{
         mt: 3,

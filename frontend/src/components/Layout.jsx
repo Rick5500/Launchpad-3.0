@@ -382,12 +382,12 @@ export default function Layout({ user, onLogout }) {
         <Box sx={{ flex: 1 }}>
           <Outlet />
         </Box>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2, flexWrap: 'wrap', pt: 2, color: brand.muted, fontSize: 12 }}>
-          <span>© 2026 Accent Imaging, Inc. All rights reserved.</span>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {user?.role === 'customer' ? (
-              <DivisionCredit height={28} sx={{ '@media print': { display: 'none' } }} />
-            ) : null}
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 1.5, pt: 2 }}>
+          {user?.role === 'customer' ? (
+            <DivisionCredit height={28} sx={{ '@media print': { display: 'none' } }} />
+          ) : null}
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2, flexWrap: 'wrap', color: brand.muted, fontSize: 12 }}>
+            <span>© 2026 Accent Imaging, Inc. All rights reserved.</span>
             <span>LaunchPad 3.0</span>
           </Box>
         </Box>

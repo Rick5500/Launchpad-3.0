@@ -266,17 +266,26 @@ const EMAIL_AI_LOGO_PATH = '/brand/accent-imaging-logo.png';
 const CREDIT_SENTENCE = 'A service of Accent Imaging and Accent Corporate Graphics';
 
 function emailCreditHtml() {
-  const sentence = `<div style="margin:4px 0 0;font-size:12px;line-height:1.35;color:#0A2F6E;font-weight:700;text-align:right;">${CREDIT_SENTENCE}</div>`;
+  const sentence = `<div style="margin:8px 0 0;font-size:12px;line-height:1.35;color:#0A2F6E;font-weight:700;text-align:center;">${CREDIT_SENTENCE}</div>`;
   const base = publicAppUrl();
-  if (!base) return sentence;
+  if (!base) {
+    return `<div style="font-size:12px;line-height:1.35;color:#0A2F6E;font-weight:700;text-align:center;">${CREDIT_SENTENCE}</div>`;
+  }
   const ai = escapeHtml(`${base}${EMAIL_AI_LOGO_PATH}`);
   const acg = escapeHtml(`${base}${EMAIL_ACG_LOGO_PATH}`);
-  return `<table role="presentation" cellpadding="0" cellspacing="0" align="right">
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
             <tr>
-              <td valign="middle" style="padding:0 6px 0 0;"><img src="${ai}" alt="Accent Imaging" width="37" height="36" style="display:block;width:37px;height:36px;border:0;outline:none;text-decoration:none;" /></td>
-              <td valign="middle"><img src="${acg}" alt="Accent Corporate Graphics" width="56" height="36" style="display:block;width:56px;height:36px;border:0;outline:none;text-decoration:none;" /></td>
+              <td align="center" style="text-align:center;">
+                <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:0 auto;">
+                  <tr>
+                    <td valign="middle" style="padding:0 8px 0 0;"><img src="${ai}" alt="Accent Imaging" width="37" height="36" style="display:block;width:37px;height:36px;border:0;outline:none;text-decoration:none;" /></td>
+                    <td valign="middle"><img src="${acg}" alt="Accent Corporate Graphics" width="56" height="36" style="display:block;width:56px;height:36px;border:0;outline:none;text-decoration:none;" /></td>
+                  </tr>
+                </table>
+                ${sentence}
+              </td>
             </tr>
-          </table>${sentence}`;
+          </table>`;
 }
 
 function footerText(lines, options = {}) {
@@ -290,17 +299,11 @@ function emailFooterHtml(lines, options = {}) {
     return `<tr><td style="padding:16px 24px;background:#F4F7FB;border-top:1px solid #E2E8F0;font-size:13px;color:#5E6A78;line-height:1.5;">${text}</td></tr>`;
   }
   const address = text
-    ? `<td valign="middle" style="font-size:13px;color:#5E6A78;line-height:1.5;">${text}</td>`
-    : '<td valign="middle"></td>';
+    ? `<div style="font-size:13px;color:#5E6A78;line-height:1.5;">${text}</div>`
+    : '';
   return `<tr><td style="padding:16px 24px;background:#F4F7FB;border-top:1px solid #E2E8F0;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-            <tr>
-              ${address}
-              <td valign="bottom" align="right" style="padding-left:12px;width:250px;">
-                ${emailCreditHtml()}
-              </td>
-            </tr>
-          </table>
+          ${address}
+          <div style="margin-top:${address ? '12px' : '0'};">${emailCreditHtml()}</div>
         </td></tr>`;
 }
 

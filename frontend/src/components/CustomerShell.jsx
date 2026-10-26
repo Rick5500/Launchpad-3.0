@@ -90,7 +90,8 @@ export default function CustomerShell({ title, welcome, children, onLogout, extr
             borderTop: `3px solid ${brand.orange}`,
             bgcolor: '#fff',
             display: 'flex',
-            justifyContent: 'flex-end',
+            flexDirection: 'column',
+            alignItems: 'center',
           }}
         >
           <DivisionCredit height={28} />

@@ -725,9 +725,10 @@ function LoginScreen() {
         </Box>
         <DivisionCredit
           height={36}
-          align="center"
           sx={{
             alignSelf: 'center',
+            width: '100%',
+            maxWidth: 440,
             mt: 2,
             mb: 1,
             px: 1.5,

@@ -462,29 +462,38 @@
 .wo-credit {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  gap: 0.03in;
+  align-items: center;
+  gap: 0.06in;
+  width: 100%;
+  max-width: 100%;
 }
 
 .wo-credit-logos {
   display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 0.08in;
+  justify-content: center;
+  gap: 0.1in;
+  flex-shrink: 0;
 }
 
 .wo-credit-ai,
 .wo-credit-acg {
   height: 0.36in;
   width: auto;
+  flex-shrink: 0;
   display: block;
 }
 
 .wo-credit-text {
+  width: 100%;
+  max-width: 100%;
   font-size: 8pt;
   font-weight: 700;
   line-height: 1.25;
   color: #0a2f6e;
-  text-align: right;
+  text-align: center;
 }
 
 .wo-shop-footer {
