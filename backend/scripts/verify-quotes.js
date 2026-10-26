@@ -724,6 +724,8 @@ async function main() {
     assert(html.includes('quotes%2F') || html.includes('/quotes/'), 'the quote email should link back to the customer quote');
     assert(html.includes('https://launchpad.example/brand/logo.png'), 'the quote email should keep the Launchpad logo');
     assert(html.includes('https://launchpad.example/brand/acg-logo.png'), 'the quote email footer should include the ACG logo');
+    assert(html.includes('https://launchpad.example/brand/accent-imaging-logo.png'), 'the quote email footer should include the Accent Imaging logo');
+    assert(html.includes('A service of Accent Imaging and Accent Corporate Graphics'), 'the quote email should credit both companies');
 
     const mailDb = openDb(dbFile);
     await mailDb.run(`UPDATE users SET email = 'admin@quote.example' WHERE username = 'admin'`);
@@ -809,7 +811,8 @@ async function main() {
     assert(rendered.html.includes('Quinn &lt;Quote&gt;') && rendered.html.includes('A &amp; B'), 'the request email should escape names');
     assert(!rendered.html.includes('Quinn <Quote>'), 'raw HTML in a customer name should not be sent');
     assert(rendered.html.includes('quote-requests'), 'the request email should link to Quote Requests');
-    assert(rendered.html.includes('https://launchpad.example/brand/acg-logo.png'), 'the quote-request email footer should include the ACG logo');
+    assert(!rendered.html.includes('/brand/acg-logo.png') && !rendered.html.includes('/brand/accent-imaging-logo.png'), 'the quote-request email should not include the customer credit logos');
+    assert(!rendered.html.includes('A service of Accent Imaging') && !rendered.text.includes('A service of Accent Imaging'), 'the quote-request email should not include the customer credit');
     if (previousUrl == null) delete process.env.PUBLIC_APP_URL;
     else process.env.PUBLIC_APP_URL = previousUrl;
   } catch (err) {

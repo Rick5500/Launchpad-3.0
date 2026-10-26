@@ -495,6 +495,8 @@ async function runApiChecks() {
     assert(!html.includes('/api/shared-files') && !html.includes('token='), 'email should not offer a public download');
     assert(html.includes(`${appUrl}/brand/logo.png`), 'the transfer email should keep the Launchpad logo');
     assert(html.includes(`${appUrl}/brand/acg-logo.png`), 'the transfer email footer should include the ACG logo');
+    assert(html.includes(`${appUrl}/brand/accent-imaging-logo.png`), 'the transfer email footer should include the Accent Imaging logo');
+    assert(html.includes('A service of Accent Imaging and Accent Corporate Graphics'), 'the transfer email should credit both companies');
     assert(html.includes('&lt;Acme&gt;') && html.includes('A &amp; B'), 'email should escape the subject and message');
     assert(!html.includes('super-secret-pass'), 'email should not include the SMTP password');
 

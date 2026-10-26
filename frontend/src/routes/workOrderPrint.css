@@ -103,37 +103,6 @@
   background: transparent;
 }
 
-.wo-band-aside {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 0.08in;
-  min-width: 0;
-}
-
-.wo-acg-plate {
-  background: #fff;
-  padding: 0.04in 0.06in 0.05in;
-  border-radius: 2px;
-  text-align: center;
-}
-
-.wo-acg-caption {
-  color: #0a2f6e;
-  font-size: 11pt;
-  font-weight: 800;
-  line-height: 1.2;
-  margin-bottom: 0.02in;
-}
-
-.wo-acg {
-  width: 1.45in;
-  max-width: 100%;
-  height: auto;
-  display: block;
-}
-
 .wo-band-copy {
   display: flex;
   flex-direction: column;
@@ -477,11 +446,45 @@
   padding-top: 0.06in;
   border-top: 2px solid #0a2f6e;
   display: flex;
+  flex-direction: column;
+  gap: 0.08in;
+  font-size: 11pt;
+  line-height: 1.5;
+}
+
+.wo-footer-main {
+  display: flex;
   justify-content: space-between;
   gap: 0.16in;
   align-items: flex-end;
-  font-size: 11pt;
-  line-height: 1.5;
+}
+
+.wo-credit {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.03in;
+}
+
+.wo-credit-logos {
+  display: flex;
+  align-items: center;
+  gap: 0.08in;
+}
+
+.wo-credit-ai,
+.wo-credit-acg {
+  height: 0.36in;
+  width: auto;
+  display: block;
+}
+
+.wo-credit-text {
+  font-size: 8pt;
+  font-weight: 700;
+  line-height: 1.25;
+  color: #0a2f6e;
+  text-align: right;
 }
 
 .wo-shop-footer {
@@ -500,7 +503,7 @@
   .wo-columns,
   .wo-columns:has(> :nth-child(3)),
   .wo-facts,
-  .wo-footer {
+  .wo-footer-main {
     grid-template-columns: 1fr;
     display: grid;
   }
@@ -514,10 +517,6 @@
   .wo-band-copy {
     width: 100%;
     max-width: 3.6in;
-  }
-
-  .wo-band-aside {
-    align-items: flex-start;
   }
 
   .wo-number {
@@ -862,8 +861,8 @@
     max-width: 3.6in;
   }
 
-  .wo-acg-plate,
-  .wo-acg {
+  .wo-credit-ai,
+  .wo-credit-acg {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }

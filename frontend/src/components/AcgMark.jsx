@@ -1,89 +1,102 @@
 import React from 'react';
 import { Box, Typography } from '@mui/material';
 import { brand } from '../brand';
-import BrandLogo from './BrandLogo';
 
 export const ACG_LOGO_SRC = '/brand/acg-logo.png';
+export const ACG_LOGO_PRINT_SRC = '/brand/acg-logo-print.png';
+export const AI_LOGO_SRC = '/brand/accent-imaging-logo.png';
+export const AI_LOGO_PRINT_SRC = '/brand/accent-imaging-logo-print.png';
 export const ACG_LOGO_ALT = 'Accent Corporate Graphics';
+export const AI_LOGO_ALT = 'Accent Imaging';
+export const CREDIT_SENTENCE = 'A service of Accent Imaging and Accent Corporate Graphics';
 
-export default function AcgMark({ sx, width = 160 }) {
-  return (
-    <Box
-      component="img"
-      src={ACG_LOGO_SRC}
-      alt={ACG_LOGO_ALT}
-      sx={{
-        width,
-        maxWidth: '100%',
-        height: 'auto',
-        display: 'block',
-        ...sx,
-      }}
-    />
-  );
-}
+const AI_RATIO = 2056 / 1973;
+const ACG_RATIO = 1796 / 1155;
 
-export function AcgBroughtBy({ width = 148, sx, captionSx, align = 'flex-end', inline = false }) {
-  return (
-    <Box
-      data-testid="acg-brought-by"
-      sx={{
+export function DivisionCredit({
+  height = 28,
+  align = 'flex-end',
+  printOnly = false,
+  printSources = false,
+  testId = 'division-credit',
+  sx,
+}) {
+  const aiWidth = Math.round(height * AI_RATIO);
+  const acgWidth = Math.round(height * ACG_RATIO);
+  const aiSrc = printSources ? AI_LOGO_PRINT_SRC : AI_LOGO_SRC;
+  const acgSrc = printSources ? ACG_LOGO_PRINT_SRC : ACG_LOGO_SRC;
+  const sentenceSize = height <= 24 ? 11 : 12;
+
+  const hiddenOnScreen = printOnly
+    ? {
+      display: 'none',
+      '@media print': {
         display: 'flex',
-        flexDirection: inline ? 'row' : 'column',
-        alignItems: inline ? 'center' : align,
-        gap: inline ? 1 : 0.5,
+        flexDirection: 'column',
+        alignItems: align,
+        gap: 0.4,
+        maxWidth: '100%',
+        ...sx,
+      },
+    }
+    : { display: 'flex' };
+
+  return (
+    <Box
+      data-testid={testId}
+      sx={{
+        flexDirection: 'column',
+        alignItems: align,
+        gap: 0.4,
+        maxWidth: '100%',
+        ...hiddenOnScreen,
         ...sx,
       }}
     >
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+        <Box
+          component="img"
+          src={aiSrc}
+          alt={AI_LOGO_ALT}
+          sx={{ width: aiWidth, height, display: 'block', objectFit: 'contain' }}
+        />
+        <Box
+          component="img"
+          src={acgSrc}
+          alt={ACG_LOGO_ALT}
+          sx={{ width: acgWidth, height, display: 'block', objectFit: 'contain' }}
+        />
+      </Box>
       <Typography
         component="p"
         sx={{
           m: 0,
-          fontSize: 15,
+          fontSize: sentenceSize,
           fontWeight: 700,
           lineHeight: 1.3,
           color: brand.navy,
-          ...captionSx,
+          textAlign: align === 'center' ? 'center' : align === 'flex-start' ? 'left' : 'right',
         }}
       >
-        Brought to you by
+        {CREDIT_SENTENCE}
       </Typography>
-      <AcgMark width={width} />
     </Box>
   );
 }
 
-export function QuotePrintMasthead({ kicker = 'Quote' }) {
+export function QuotePrintCredit() {
   return (
-    <Box
-      data-testid="quote-print-header"
+    <DivisionCredit
+      printOnly
+      printSources
+      height={34}
+      align="flex-end"
+      testId="quote-print-credit"
       sx={{
-        display: 'none',
-        '@media print': {
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          gap: 2,
-          mb: 2,
-          px: 2,
-          py: 1.25,
-          bgcolor: brand.navy,
-          borderBottom: `4px solid ${brand.orange}`,
-          borderRadius: 1,
-          WebkitPrintColorAdjust: 'exact',
-          printColorAdjust: 'exact',
-        },
+        mt: 3,
+        pt: 1,
+        borderTop: `2px solid ${brand.navy}`,
       }}
-    >
-      <Box sx={{ minWidth: 0 }}>
-        <BrandLogo sx={{ width: 240 }} />
-        <Typography sx={{ color: '#fff', fontWeight: 800, fontSize: 26, lineHeight: 1.15, mt: 0.5 }}>
-          {kicker}
-        </Typography>
-      </Box>
-      <Box sx={{ bgcolor: '#fff', borderRadius: 1, px: 1, py: 0.75, flex: '0 0 auto' }}>
-        <AcgBroughtBy width={136} captionSx={{ fontSize: 14 }} />
-      </Box>
-    </Box>
+    />
   );
 }

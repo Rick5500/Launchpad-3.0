@@ -3,7 +3,7 @@ import { Box, Button, Typography } from '@mui/material';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { useNavigate } from 'react-router-dom';
 import { brand } from '../brand';
-import { AcgBroughtBy } from './AcgMark';
+import { DivisionCredit } from './AcgMark';
 import BrandLogo from './BrandLogo';
 import { useAuth } from '../context/AuthContext';
 import NotificationBell from './NotificationBell';
@@ -93,7 +93,7 @@ export default function CustomerShell({ title, welcome, children, onLogout, extr
             justifyContent: 'flex-end',
           }}
         >
-          <AcgBroughtBy width={132} />
+          <DivisionCredit height={28} />
         </Box>
       ) : null}
     </Box>

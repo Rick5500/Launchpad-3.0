@@ -31,7 +31,7 @@ import Notifications from './routes/Notifications';
 import SendFiles from './routes/SendFiles';
 import EmailOrders from './routes/EmailOrders';
 import CustomerFiles from './routes/CustomerFiles';
-import { AcgBroughtBy } from './components/AcgMark';
+import { DivisionCredit } from './components/AcgMark';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -723,23 +723,23 @@ function LoginScreen() {
             )}
           </Box>
         </Box>
-        <AcgBroughtBy
-          width={{ xs: 200, sm: 240 }}
+        <DivisionCredit
+          height={36}
           align="center"
           sx={{
-            mt: 2.5,
+            alignSelf: 'center',
+            mt: 2,
             mb: 1,
-            px: 2.5,
-            py: 1.5,
-            borderRadius: 2,
+            px: 1.5,
+            py: 1,
+            borderRadius: 1.5,
             bgcolor: 'rgba(255,255,255,0.94)',
-            boxShadow: '0 8px 24px rgba(0,0,0,0.28)',
+            boxShadow: '0 6px 16px rgba(0,0,0,0.28)',
             animation: animateForm ? `${loginCardIn} 500ms ease` : 'none',
             '@media (prefers-reduced-motion: reduce)': {
               animation: 'none',
             },
           }}
-          captionSx={{ fontSize: 16 }}
         />
         </>
       ) : null}

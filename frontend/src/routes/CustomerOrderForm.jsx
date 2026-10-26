@@ -27,7 +27,7 @@ import Inventory2OutlinedIcon from '@mui/icons-material/Inventory2Outlined';
 import LocalShippingOutlinedIcon from '@mui/icons-material/LocalShippingOutlined';
 import BrushOutlinedIcon from '@mui/icons-material/BrushOutlined';
 import CloseIcon from '@mui/icons-material/Close';
-import { AcgBroughtBy } from '../components/AcgMark';
+import { DivisionCredit } from '../components/AcgMark';
 import CustomerShell from '../components/CustomerShell';
 import BrandLogo from '../components/BrandLogo';
 import { useDocumentTitle } from '../useDocumentTitle';
@@ -1891,7 +1891,7 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
         >
           <Box sx={{ maxWidth: 1440, mx: 'auto', display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 1.25, alignItems: { xs: 'stretch', sm: 'center' }, justifyContent: 'space-between' }}>
             <Box sx={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
-              {!isStaff ? <AcgBroughtBy width={88} inline /> : null}
+              {!isStaff ? <DivisionCredit height={22} align="flex-start" /> : null}
               <Box sx={{ minWidth: 0 }}>
                 <Typography aria-live="polite" sx={{ fontWeight: 800, color: brand.navy, fontSize: 15 }}>
                   {countLabel(selectedServices.length, 'service', 'services')}

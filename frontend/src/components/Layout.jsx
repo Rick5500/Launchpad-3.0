@@ -46,7 +46,7 @@ import RequestQuoteIcon from '@mui/icons-material/RequestQuote';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import { brand } from '../brand';
 import { authFetch } from '../api';
-import { AcgBroughtBy } from './AcgMark';
+import { DivisionCredit } from './AcgMark';
 import BrandLogo from './BrandLogo';
 import { useDocumentTitle } from '../useDocumentTitle';
 import NotificationBell from './NotificationBell';
@@ -385,7 +385,9 @@ export default function Layout({ user, onLogout }) {
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2, flexWrap: 'wrap', pt: 2, color: brand.muted, fontSize: 12 }}>
           <span>© 2026 Accent Imaging, Inc. All rights reserved.</span>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {user?.role === 'customer' ? <AcgBroughtBy width={128} /> : null}
+            {user?.role === 'customer' ? (
+              <DivisionCredit height={28} sx={{ '@media print': { display: 'none' } }} />
+            ) : null}
             <span>LaunchPad 3.0</span>
           </Box>
         </Box>

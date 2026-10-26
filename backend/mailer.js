@@ -257,26 +257,36 @@ function emailBannerHtml(name) {
   return `<tr><td style="background:#0A2F6E;padding:16px 24px;border-bottom:4px solid #F58220;">${logo}${title}</td></tr>`;
 }
 
-// Secondary division mark. Same absolute-URL rule as the Launchpad logo:
-// email clients cannot load a relative path, so the image is omitted until
-// PUBLIC_APP_URL is set. The letterhead lines stay either way.
+// Small customer credit. Images use the same absolute-URL rule as the
+// Launchpad logo and are omitted until PUBLIC_APP_URL is set. Staff-only
+// mail (proof changes, quote-request alerts, and the test email) leaves
+// this block off. The letterhead lines stay either way.
 const EMAIL_ACG_LOGO_PATH = '/brand/acg-logo.png';
+const EMAIL_AI_LOGO_PATH = '/brand/accent-imaging-logo.png';
+const CREDIT_SENTENCE = 'A service of Accent Imaging and Accent Corporate Graphics';
 
-function emailAcgLogoHtml() {
+function emailCreditHtml() {
+  const sentence = `<div style="margin:4px 0 0;font-size:12px;line-height:1.35;color:#0A2F6E;font-weight:700;text-align:right;">${CREDIT_SENTENCE}</div>`;
   const base = publicAppUrl();
-  if (!base) return '';
-  const src = escapeHtml(`${base}${EMAIL_ACG_LOGO_PATH}`);
-  return `<img src="${src}" alt="Accent Corporate Graphics" width="148" style="display:block;width:148px;max-width:100%;height:auto;border:0;outline:none;text-decoration:none;" />`;
+  if (!base) return sentence;
+  const ai = escapeHtml(`${base}${EMAIL_AI_LOGO_PATH}`);
+  const acg = escapeHtml(`${base}${EMAIL_ACG_LOGO_PATH}`);
+  return `<table role="presentation" cellpadding="0" cellspacing="0" align="right">
+            <tr>
+              <td valign="middle" style="padding:0 6px 0 0;"><img src="${ai}" alt="Accent Imaging" width="37" height="36" style="display:block;width:37px;height:36px;border:0;outline:none;text-decoration:none;" /></td>
+              <td valign="middle"><img src="${acg}" alt="Accent Corporate Graphics" width="56" height="36" style="display:block;width:56px;height:36px;border:0;outline:none;text-decoration:none;" /></td>
+            </tr>
+          </table>${sentence}`;
 }
 
-function footerText(lines) {
-  return [...lines, 'Brought to you by Accent Corporate Graphics'];
+function footerText(lines, options = {}) {
+  if (!options.credit) return lines;
+  return [...lines, CREDIT_SENTENCE];
 }
 
-function emailFooterHtml(lines) {
+function emailFooterHtml(lines, options = {}) {
   const text = (lines || []).map((line) => escapeHtml(line)).join('<br>');
-  const logo = emailAcgLogoHtml();
-  if (!logo) {
+  if (!options.credit) {
     return `<tr><td style="padding:16px 24px;background:#F4F7FB;border-top:1px solid #E2E8F0;font-size:13px;color:#5E6A78;line-height:1.5;">${text}</td></tr>`;
   }
   const address = text
@@ -286,9 +296,8 @@ function emailFooterHtml(lines) {
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
             <tr>
               ${address}
-              <td valign="middle" align="right" style="padding-left:16px;width:168px;">
-                <div style="font-size:13px;line-height:1.4;color:#0A2F6E;font-weight:700;margin:0 0 6px;">Brought to you by</div>
-                ${logo}
+              <td valign="bottom" align="right" style="padding-left:12px;width:250px;">
+                ${emailCreditHtml()}
               </td>
             </tr>
           </table>
@@ -317,7 +326,7 @@ function renderShareEmail({ letterhead, orderNumber, message, fileNames, link })
     '',
     'This link opens Launchpad. You need to sign in. Files are not available from a public link.',
     '',
-    footerText(footer).join('\n'),
+    footerText(footer, { credit: true }).join('\n'),
   ].join('\n').replace(/\n{3,}/g, '\n\n');
 
   const html = `<!DOCTYPE html>
@@ -336,7 +345,7 @@ function renderShareEmail({ letterhead, orderNumber, message, fileNames, link })
           <p style="margin:0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>
           <p style="margin:16px 0 0;font-size:13px;color:#5E6A78;">You need to sign in. These files are not available from a public download link.</p>
         </td></tr>
-        ${emailFooterHtml(footer)}
+        ${emailFooterHtml(footer, { credit: true })}
       </table>
     </td></tr>
   </table>
@@ -372,7 +381,7 @@ function renderTransferEmail({ letterhead, subject, message, fileNames, link }) 
     '',
     'This link opens Launchpad. You need to sign in. Files are not available from a public link.',
     '',
-    footerText(footer).join('\n'),
+    footerText(footer, { credit: true }).join('\n'),
   ].join('\n').replace(/\n{3,}/g, '\n\n');
 
   const html = `<!DOCTYPE html>
@@ -391,7 +400,7 @@ function renderTransferEmail({ letterhead, subject, message, fileNames, link }) 
           <p style="margin:0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>
           <p style="margin:16px 0 0;font-size:13px;color:#5E6A78;">You need to sign in. These files are not available from a public download link.</p>
         </td></tr>
-        ${emailFooterHtml(footer)}
+        ${emailFooterHtml(footer, { credit: true })}
       </table>
     </td></tr>
   </table>
@@ -432,7 +441,7 @@ function renderQuoteEmail({ letterhead, projectName, price, notes, validUntil, l
     '',
     'This link opens Launchpad. You need to sign in.',
     '',
-    footerText(footer).join('\n'),
+    footerText(footer, { credit: true }).join('\n'),
   ].filter((line) => line !== undefined).join('\n').replace(/\n{3,}/g, '\n\n');
 
   const notesHtml = notesText
@@ -458,7 +467,7 @@ function renderQuoteEmail({ letterhead, projectName, price, notes, validUntil, l
           <p style="margin:0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>
           <p style="margin:16px 0 0;font-size:13px;color:#5E6A78;">You need to sign in to accept or decline this quote.</p>
         </td></tr>
-        ${emailFooterHtml(footer)}
+        ${emailFooterHtml(footer, { credit: true })}
       </table>
     </td></tr>
   </table>
@@ -495,7 +504,7 @@ function renderProofEmail({ letterhead, orderNumber, version, message, fileNames
     '',
     'This link opens Launchpad. You need to sign in. The proof is not available from a public link.',
     '',
-    footerText(footer).join('\n'),
+    footerText(footer, { credit: true }).join('\n'),
   ].join('\n').replace(/\n{3,}/g, '\n\n');
 
   const html = `<!DOCTYPE html>
@@ -514,7 +523,7 @@ function renderProofEmail({ letterhead, orderNumber, version, message, fileNames
           <p style="margin:0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>
           <p style="margin:16px 0 0;font-size:13px;color:#5E6A78;">You need to sign in. This proof is not available from a public download link.</p>
         </td></tr>
-        ${emailFooterHtml(footer)}
+        ${emailFooterHtml(footer, { credit: true })}
       </table>
     </td></tr>
   </table>

@@ -294,16 +294,10 @@ function WorkOrderSheet({ payload, sheet }) {
             <div className="wo-number">{display(sheet.barcode_value, '')}</div>
           </div>
         </div>
-        <div className="wo-band-aside">
-          <div className="wo-acg-plate">
-            <div className="wo-acg-caption">Brought to you by</div>
-            <img className="wo-acg" src="/brand/acg-logo-print.png" alt="Accent Corporate Graphics" />
-          </div>
-          <div className="wo-barcode-block">
-            <Barcode svg={sheet.barcode_svg} className="wo-barcode" />
-            <div className="wo-barcode-text">{display(sheet.barcode_value, '')}</div>
-            {instructions ? <div className="wo-scan-note">{instructions}</div> : null}
-          </div>
+        <div className="wo-barcode-block">
+          <Barcode svg={sheet.barcode_svg} className="wo-barcode" />
+          <div className="wo-barcode-text">{display(sheet.barcode_value, '')}</div>
+          {instructions ? <div className="wo-scan-note">{instructions}</div> : null}
         </div>
       </header>
 
@@ -493,11 +487,20 @@ function WorkOrderSheet({ payload, sheet }) {
         <WriteInGrid />
 
         <footer className="wo-footer">
-          <div className="wo-shop-footer">
-            {shopLines.map((line) => <div key={line}>{line}</div>)}
+          <div className="wo-footer-main">
+            <div className="wo-shop-footer">
+              {shopLines.map((line) => <div key={line}>{line}</div>)}
+            </div>
+            <div className="wo-footer-meta">
+              <div>Printed {display(shopStamp(payload.generated_at, zone))}</div>
+            </div>
           </div>
-          <div className="wo-footer-meta">
-            <div>Printed {display(shopStamp(payload.generated_at, zone))}</div>
+          <div className="wo-credit" data-testid="division-credit">
+            <div className="wo-credit-logos">
+              <img className="wo-credit-ai" src="/brand/accent-imaging-logo-print.png" alt="Accent Imaging" />
+              <img className="wo-credit-acg" src="/brand/acg-logo-print.png" alt="Accent Corporate Graphics" />
+            </div>
+            <div className="wo-credit-text">A service of Accent Imaging and Accent Corporate Graphics</div>
           </div>
         </footer>
       </div>
