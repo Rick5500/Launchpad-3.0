@@ -3,6 +3,7 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
   Chip,
   FormControlLabel,
   MenuItem,
@@ -21,6 +22,7 @@ import LoadingState from '../components/LoadingState';
 import Pager from '../components/Pager';
 import { authFetch } from '../api';
 import { useAuth } from '../context/AuthContext';
+import { SMS_CONSENT } from '../smsConsent';
 
 const emptyForm = {
   username: '',
@@ -30,6 +32,8 @@ const emptyForm = {
   contact_name: '',
   phone: '',
   email: '',
+  mobile_phone: '',
+  sms_opt_in: false,
   address_line1: '',
   address_line2: '',
   city: '',
@@ -56,6 +60,7 @@ export default function UsersPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [issuedPassword, setIssuedPassword] = useState('');
+  const [customerWasOptedIn, setCustomerWasOptedIn] = useState(false);
   const [departments, setDepartments] = useState([]);
   const [locations, setLocations] = useState([]);
   const limit = 20;
@@ -126,6 +131,8 @@ export default function UsersPage() {
       contact_name: row.contact_name || '',
       phone: row.phone || '',
       email: row.email || '',
+      mobile_phone: row.mobile_phone || '',
+      sms_opt_in: Boolean(row.sms_opt_in),
       address_line1: row.address_line1 || '',
       address_line2: row.address_line2 || '',
       city: row.city || '',
@@ -136,6 +143,7 @@ export default function UsersPage() {
       password: '',
       is_active: Boolean(row.is_active),
     });
+    setCustomerWasOptedIn(row.role === 'customer' && Boolean(row.sms_opt_in));
     setIssuedPassword('');
     setNotice('');
     setError('');
@@ -155,6 +163,8 @@ export default function UsersPage() {
       contact_name: form.contact_name,
       phone: form.phone,
       email: form.email,
+      mobile_phone: form.role === 'customer' ? form.mobile_phone : '',
+      sms_opt_in: form.role === 'customer' ? form.sms_opt_in : false,
       address_line1: form.address_line1,
       address_line2: form.address_line2,
       city: form.city,
@@ -176,6 +186,7 @@ export default function UsersPage() {
       setNotice(editingId ? 'User updated.' : 'User created.');
       setForm(emptyForm);
       setEditingId(null);
+      setCustomerWasOptedIn(false);
       load(offset, applied);
     } catch (err) {
       setError(err.message || 'Unable to save user');
@@ -259,6 +270,36 @@ export default function UsersPage() {
           <TextField label="Contact name" value={form.contact_name} onChange={(event) => update('contact_name', event.target.value)} />
           <TextField label="Phone" value={form.phone} onChange={(event) => update('phone', event.target.value)} />
           <TextField label="Email" value={form.email} onChange={(event) => update('email', event.target.value)} />
+          {form.role === 'customer' ? (
+            <>
+              <TextField
+                label="Mobile phone"
+                value={form.mobile_phone}
+                onChange={(event) => update('mobile_phone', event.target.value)}
+                placeholder="919-555-0100"
+                helperText="Stored as E.164. Changing the number turns texting off until the customer opts in again."
+                sx={{ '& .MuiInputBase-input': { fontSize: '1.15rem' } }}
+              />
+              <FormControlLabel
+                sx={{ alignItems: 'flex-start', gridColumn: '1 / -1', '& .MuiFormControlLabel-label': { fontSize: '1.1rem', lineHeight: 1.45 } }}
+                control={(
+                  <Checkbox
+                    checked={form.sms_opt_in}
+                    disabled={!customerWasOptedIn}
+                    onChange={(event) => update('sms_opt_in', event.target.checked)}
+                  />
+                )}
+                label={SMS_CONSENT}
+              />
+              <Typography data-testid="staff-number-change-note" sx={{ gridColumn: '1 / -1', fontSize: '1.05rem', color: 'text.secondary' }}>
+                Changing the mobile number turns texting off until the customer opts in again. Saving the same number keeps their choice.
+                {' '}
+                {customerWasOptedIn
+                  ? 'You can turn texts off. Only the customer can turn them back on.'
+                  : 'Only the customer can turn texts on.'}
+              </Typography>
+            </>
+          ) : null}
           <TextField label="Addr 1" value={form.address_line1} onChange={(event) => update('address_line1', event.target.value)} />
           <TextField label="Addr 2" value={form.address_line2} onChange={(event) => update('address_line2', event.target.value)} />
           <TextField label="City" value={form.city} onChange={(event) => update('city', event.target.value)} />
@@ -270,7 +311,7 @@ export default function UsersPage() {
           <FormControlLabel control={<Switch checked={form.is_active} onChange={(event) => update('is_active', event.target.checked)} />} label="Active" />
           <Box sx={{ display: 'flex', gap: 1, gridColumn: '1 / -1' }}>
             <Button type="submit" variant="contained" disabled={saving}>{saving ? 'Saving...' : editingId ? 'Save changes' : 'Create user'}</Button>
-            {editingId ? <Button onClick={() => { setEditingId(null); setForm(emptyForm); }}>Cancel</Button> : null}
+            {editingId ? <Button onClick={() => { setEditingId(null); setCustomerWasOptedIn(false); setForm(emptyForm); }}>Cancel</Button> : null}
           </Box>
         </Box>
       </SectionCard>

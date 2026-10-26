@@ -535,6 +535,7 @@ async function main() {
       ['GET', '/api/workorders'],
       ['GET', '/api/orders'],
       ['GET', '/api/orders/options'],
+      ['GET', '/api/customers'],
     ];
     for (const [method, requestPath] of allowedPaths) {
       const response = await request({ method, path: requestPath, token: manager.token });
@@ -552,7 +553,7 @@ async function main() {
       ['GET', '/api/notifications/settings'],
       ['PUT', '/api/notifications/settings'],
       ['POST', '/api/departments'],
-      ['GET', '/api/customers'],
+      ['POST', '/api/customers'],
       ['POST', '/api/admin-board/approvals/1'],
     ];
     for (const [method, requestPath] of forbiddenPaths) {

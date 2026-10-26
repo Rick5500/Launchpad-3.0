@@ -4,6 +4,7 @@ const {
   OrderError,
   createOrder,
   transferOrder,
+  setOrderStatus,
   listOrders,
   getOrder,
   orderOptions,
@@ -82,6 +83,14 @@ router.post('/', auth.requireAuth, orderRoles, async (req, res) => {
     res.status(201).json(created);
   } catch (err) {
     sendOrderError(res, err, 'ORDER CREATE ERROR:');
+  }
+});
+
+router.put('/:id/status', auth.requireAuth, auth.requireRole('admin', 'manager', 'operator'), async (req, res) => {
+  try {
+    res.json(await setOrderStatus(req.user, req.params.id, req.body || {}));
+  } catch (err) {
+    sendOrderError(res, err, 'ORDER STATUS ERROR:');
   }
 });
 

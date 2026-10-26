@@ -158,6 +158,7 @@ app.get('/api/auth/me', auth.requireAuth, async (req, res) => {
     const row = await new Promise((resolve, reject) => {
       db.get(
         `SELECT id, username, role, display_name, company, contact_name, phone, email,
+                mobile_phone, sms_opt_in,
                 address_line1, address_line2, city, state, zip, department
          FROM users WHERE id = ?`,
         [req.user.userId],
@@ -177,6 +178,8 @@ app.get('/api/auth/me', auth.requireAuth, async (req, res) => {
         contact_name: row.contact_name || '',
         phone: row.phone || '',
         email: row.email || '',
+        mobile_phone: row.mobile_phone || '',
+        sms_opt_in: Number(row.sms_opt_in) === 1,
         address_line1: row.address_line1 || '',
         address_line2: row.address_line2 || '',
         city: row.city || '',
@@ -197,31 +200,47 @@ app.get('/api/auth/me', auth.requireAuth, async (req, res) => {
 app.put('/api/auth/profile', auth.requireAuth, async (req, res) => {
   try {
     if (req.user.role !== 'customer') {
-      return res.status(403).json({ error: 'Only a customer can change their default location' });
+      return res.status(403).json({ error: 'Only a customer can change their profile' });
     }
     const source = req.body || {};
-    if (!Object.prototype.hasOwnProperty.call(source, 'location_id')) {
+    const hasLocation = Object.prototype.hasOwnProperty.call(source, 'location_id');
+    const hasTexting = Object.prototype.hasOwnProperty.call(source, 'mobile_phone')
+      || Object.prototype.hasOwnProperty.call(source, 'sms_opt_in');
+    if (!hasLocation && !hasTexting) {
       return res.status(400).json({ error: 'location_id is required' });
     }
-    const resolved = await shopLocations.resolveLocationId({ get: require('./dbAsync').get }, source.location_id, {
-      required: true,
-      activeOnly: true,
-    });
-    if (resolved.error) return res.status(400).json({ error: resolved.error });
-    await new Promise((resolve, reject) => {
-      db.run(
-        `UPDATE users SET location_id = ?, updated_at = datetime('now') WHERE id = ? AND role = 'customer'`,
-        [resolved.value, req.user.userId],
-        (err) => (err ? reject(err) : resolve())
-      );
-    });
+    let resolvedLocation = null;
+    if (hasLocation) {
+      const resolved = await shopLocations.resolveLocationId({ get: require('./dbAsync').get }, source.location_id, {
+        required: true,
+        activeOnly: true,
+      });
+      if (resolved.error) return res.status(400).json({ error: resolved.error });
+      resolvedLocation = resolved;
+    }
+    const userAdmin = require('./userAdmin');
+    let texting = null;
+    if (hasTexting) {
+      texting = await userAdmin.updateCustomerTexting(req.user.userId, req.user.userId, source, { allowOptIn: true });
+    }
+    if (resolvedLocation) {
+      await new Promise((resolve, reject) => {
+        db.run(
+          `UPDATE users SET location_id = ?, updated_at = datetime('now') WHERE id = ? AND role = 'customer'`,
+          [resolvedLocation.value, req.user.userId],
+          (err) => (err ? reject(err) : resolve())
+        );
+      });
+    }
     const locationFields = await shopLocations.publicUserFields(req.user.userId);
     res.json({
       location_id: locationFields.location_id,
       location_name: locationFields.location_name,
+      mobile_phone: texting ? texting.mobile_phone : undefined,
+      sms_opt_in: texting ? texting.sms_opt_in : undefined,
     });
   } catch (err) {
-    sendError(res, err, 'PROFILE ERROR:', 'Unable to update your location');
+    sendError(res, err, 'PROFILE ERROR:', 'Unable to update your profile');
   }
 });
 

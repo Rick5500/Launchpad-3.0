@@ -1527,11 +1527,14 @@ async function main() {
     { name: 'city', definition: 'TEXT' },
     { name: 'state', definition: 'TEXT' },
     { name: 'zip', definition: 'TEXT' },
+    { name: 'mobile_phone', definition: 'TEXT' },
+    { name: 'sms_opt_in', definition: 'INTEGER DEFAULT 0' },
     { name: 'department', definition: 'TEXT' },
     { name: 'is_active', definition: 'INTEGER DEFAULT 1' },
     { name: 'updated_at', definition: 'DATETIME' },
   ]);
   await run('UPDATE users SET is_active = 1 WHERE is_active IS NULL');
+  await run('UPDATE users SET sms_opt_in = 0 WHERE sms_opt_in IS NULL');
   await ensureUsersRoleAllowsManager();
   await clearManagerDepartments();
   await ensureColumns('services', [
@@ -1573,7 +1576,16 @@ async function main() {
     { name: 'bill_to_city', definition: 'TEXT' },
     { name: 'bill_to_state', definition: 'TEXT' },
     { name: 'bill_to_zip', definition: 'TEXT' },
+    { name: 'status', definition: "TEXT DEFAULT 'In Production'" },
+    { name: 'pickup_ready_generation', definition: 'INTEGER DEFAULT 0' },
+    { name: 'pickup_notified_generation', definition: 'INTEGER' },
+    { name: 'pickup_email_sent_at', definition: 'DATETIME' },
+    { name: 'pickup_sms_sent_at', definition: 'DATETIME' },
+    { name: 'pickup_email_status', definition: 'TEXT' },
+    { name: 'pickup_sms_status', definition: 'TEXT' },
   ]);
+  await run(`UPDATE orders SET status = 'In Production' WHERE status IS NULL OR trim(status) = ''`);
+  await run('UPDATE orders SET pickup_ready_generation = 0 WHERE pickup_ready_generation IS NULL');
   await ensureColumns('order_line_items', [
     { name: 'field_values', definition: 'TEXT' },
   ]);

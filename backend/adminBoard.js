@@ -396,6 +396,9 @@ function presentWorkOrder(row, timeZone) {
     files_label: formatFilesLabel(row.file_count, row.file_bytes),
     location_id: row.location_id || null,
     location_name: row.location_name || null,
+    order_status: String(row.order_status || '').trim().toLowerCase() === 'ready for pickup'
+      ? 'Ready for Pickup'
+      : 'In Production',
   };
 }
 
@@ -519,7 +522,8 @@ const workOrderSelect = `
   END AS process,
   s.name AS service_name,
   COALESCE(wo.location_id, o.location_id) AS location_id,
-  l.name AS location_name
+  l.name AS location_name,
+  o.status AS order_status
 `;
 
 const workOrderFrom = `
@@ -1219,6 +1223,12 @@ async function loadSummary(user, query) {
     color: tab.color,
   }));
   const categories = await countCategories(scope, now, shop);
+  const readyShop = shopLocations.filterSql('o.location_id', shop);
+  const readyRow = await get(
+    `SELECT COUNT(*) AS count FROM orders o
+     WHERE lower(trim(coalesce(o.status, ''))) = 'ready for pickup'${readyShop.sql}`,
+    readyShop.params
+  );
 
   const body = {
     generated_at: now.toISOString(),
@@ -1232,6 +1242,7 @@ async function loadSummary(user, query) {
       timezone: window.timezone,
       departments: statDepartments,
       categories,
+      ready_for_pickup: readyRow ? readyRow.count : 0,
     },
     queue,
     activity: activity.activity,

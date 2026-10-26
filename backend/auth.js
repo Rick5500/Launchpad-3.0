@@ -166,6 +166,7 @@ function clearLoginFailuresForUsername(username) {
 function login(username, password, cb) {
   db.get(
     `SELECT id, username, password_hash, role, display_name, company, contact_name, phone, email,
+            mobile_phone, sms_opt_in,
             address_line1, address_line2, city, state, zip, department, is_active
      FROM users
      WHERE username = ? COLLATE NOCASE
@@ -196,6 +197,8 @@ function login(username, password, cb) {
                     contact_name: row.contact_name || '',
                     phone: row.phone || '',
                     email: row.email || '',
+                    mobile_phone: row.mobile_phone || '',
+                    sms_opt_in: Number(row.sms_opt_in) === 1,
                     address_line1: row.address_line1 || '',
                     address_line2: row.address_line2 || '',
                     city: row.city || '',

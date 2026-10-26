@@ -17,6 +17,7 @@ const activityLog = require('./activityLog');
 const quotes = require('./quotes');
 const shopLocations = require('./shopLocations');
 const notifications = require('./notifications');
+const pickupNotify = require('./pickupNotify');
 const { parsePostalAddress } = require('./fields');
 const {
   PAYMENT_METHODS,
@@ -750,6 +751,11 @@ async function loadOrderRecord(orderId, user) {
     bill_to: billToPresent(order),
     due_date: order.due_date,
     due_time: order.due_time,
+    status: order.status && String(order.status).trim() ? order.status : 'In Production',
+    pickup_email_sent_at: order.pickup_email_sent_at || null,
+    pickup_sms_sent_at: order.pickup_sms_sent_at || null,
+    pickup_email_status: order.pickup_email_status || null,
+    pickup_sms_status: order.pickup_sms_status || null,
     created_by: order.created_by,
     created_at: order.created_at,
     updated_at: order.updated_at,
@@ -1155,7 +1161,7 @@ async function listOrders(user, query) {
     db,
     `SELECT o.id, o.order_number, o.customer_id, o.company, o.contact_name, o.phone, o.email,
             o.po_number, o.project_number, o.project_name, o.delivery_method, o.ups_account_number,
-            o.due_date, o.due_time, o.created_at, o.location_id, loc.name AS location_name,
+            o.due_date, o.due_time, o.created_at, o.status, o.location_id, loc.name AS location_name,
             u.display_name AS customer_display_name
      FROM orders o
      LEFT JOIN users u ON u.id = o.customer_id
@@ -1590,6 +1596,108 @@ async function transferOrder(user, rawId, body) {
   return presentOrder(record);
 }
 
+const ORDER_STATUS_READY = 'Ready for Pickup';
+const ORDER_STATUS_OPEN = 'In Production';
+
+function canonicalOrderStatus(value) {
+  if (value == null || String(value).trim() === '') return { error: 'status is required' };
+  const text = String(value).trim().toLowerCase();
+  if (text === 'in production') return { value: ORDER_STATUS_OPEN };
+  if (text === 'ready for pickup') return { value: ORDER_STATUS_READY };
+  return { error: 'status must be In Production or Ready for Pickup' };
+}
+
+function storedOrderStatus(value) {
+  return String(value || '').trim().toLowerCase() === 'ready for pickup'
+    ? ORDER_STATUS_READY
+    : ORDER_STATUS_OPEN;
+}
+
+async function setOrderStatus(user, id, body) {
+  if (!user || !['admin', 'manager', 'operator'].includes(user.role)) {
+    throw new OrderError('Only staff can change an order status', 403);
+  }
+  const parsed = canonicalOrderStatus(body && body.status);
+  if (parsed.error) throw new OrderError(parsed.error);
+  const orderId = parsePositive(id);
+  if (!orderId) throw new OrderError('id must be a positive integer');
+  const visible = await loadOrderRecord(orderId, user);
+  if (!visible) throw new OrderError('Order not found', 404);
+
+  const outcome = await withTransaction(async (tx) => {
+      const existing = await tx.get(
+        `SELECT id, status, order_number, pickup_ready_generation FROM orders WHERE id = ?`,
+        [orderId]
+      );
+      if (!existing) throw new OrderError('Order not found', 404);
+      const current = storedOrderStatus(existing.status);
+      if (current === parsed.value) {
+        return { changed: false, entering: false, generation: existing.pickup_ready_generation || 0 };
+      }
+      const entering = parsed.value === ORDER_STATUS_READY;
+      if (entering) {
+        await tx.run(
+          `UPDATE orders
+           SET status = ?,
+               pickup_ready_generation = COALESCE(pickup_ready_generation, 0) + 1,
+               pickup_notified_generation = COALESCE(pickup_ready_generation, 0) + 1,
+               pickup_email_sent_at = NULL,
+               pickup_sms_sent_at = NULL,
+               pickup_email_status = NULL,
+               pickup_sms_status = NULL,
+               updated_at = datetime('now')
+           WHERE id = ?`,
+          [ORDER_STATUS_READY, orderId]
+        );
+      } else {
+        await tx.run(
+          `UPDATE orders SET status = ?, updated_at = datetime('now') WHERE id = ?`,
+          [ORDER_STATUS_OPEN, orderId]
+        );
+      }
+      await activityLog.recordOn(
+        tx,
+        Number(user.userId || user.id),
+        entering ? 'order.ready_for_pickup' : 'order.status_updated',
+        'order',
+        orderId,
+        {
+          order_number: existing.order_number,
+          status: parsed.value,
+          message: entering
+            ? `Marked order ${existing.order_number} ready for pickup`
+            : `Updated order ${existing.order_number} to ${parsed.value}`,
+        }
+      );
+      const row = await tx.get(`SELECT pickup_ready_generation FROM orders WHERE id = ?`, [orderId]);
+      return {
+        changed: true,
+        entering,
+        generation: row ? row.pickup_ready_generation : 0,
+      };
+    });
+
+  let notice = null;
+  if (outcome.entering) {
+    try {
+      notice = await pickupNotify.deliver(orderId, outcome.generation);
+    } catch (err) {
+      console.error('PICKUP NOTIFY ERROR:', err && err.message ? err.message : 'failed');
+      notice = {
+        email: { status: 'failed', sent_at: null },
+        sms: { status: 'failed', sent_at: null },
+      };
+    }
+  } else if (!outcome.changed && parsed.value === ORDER_STATUS_READY) {
+    notice = { skipped: true, reason: 'already_notified' };
+  }
+
+  const record = await loadOrderRecord(orderId, user);
+  const presented = presentOrder(record);
+  presented.pickup_notice = notice;
+  return presented;
+}
+
 module.exports = {
   OrderError,
   CUSTOMER_FORBIDDEN_FIELDS,
@@ -1600,6 +1708,7 @@ module.exports = {
   withTransaction,
   createOrder,
   transferOrder,
+  setOrderStatus,
   listOrders,
   listBillTos,
   getOrder,

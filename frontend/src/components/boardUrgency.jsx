@@ -71,6 +71,25 @@ function chipSx(style) {
   };
 }
 
+export function ReadyForPickupChip({ status }) {
+  if (String(status || '').trim().toLowerCase() !== 'ready for pickup') return null;
+  return (
+    <Chip
+      size="small"
+      label="Ready for Pickup"
+      data-testid="ready-for-pickup-chip"
+      sx={{
+        bgcolor: brand.orange,
+        color: '#111',
+        fontWeight: 800,
+        height: 24,
+        fontSize: 13,
+        '& .MuiChip-label': { px: 1 },
+      }}
+    />
+  );
+}
+
 export function UrgencyChips({ urgency }) {
   const signals = (urgency?.signals || []).filter((signal) => SIGNAL_TONE[signal]);
   if (!signals.length) return null;

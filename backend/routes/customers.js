@@ -5,7 +5,7 @@ const auth = require('../auth');
 const db = require('../db');
 const activityLog = require('../activityLog');
 const { withTransaction } = require('../dbAsync');
-const { parseUsername, updateCustomerAddress } = require('../userAdmin');
+const { parseUsername, updateCustomerAddress, updateCustomerTexting } = require('../userAdmin');
 const { parsePostalAddress } = require('../fields');
 const { resetUserPassword, passwordPolicyError } = require('../passwordReset');
 
@@ -47,9 +47,10 @@ router.get('/lookup', auth.requireAuth, auth.requireRole('admin', 'manager', 'op
   );
 });
 
-router.get('/', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
+router.get('/', auth.requireAuth, auth.requireRole('admin', 'manager'), (req, res) => {
   db.all(
     `SELECT id, username, display_name, role, company, contact_name, phone, email,
+            mobile_phone, sms_opt_in,
             address_line1, address_line2, city, state, zip, created_at
      FROM users
      WHERE role = 'customer'
@@ -60,7 +61,11 @@ router.get('/', auth.requireAuth, auth.requireRole('admin'), (req, res) => {
         console.error('CUSTOMERS LIST ERROR:', err);
         return res.status(500).json({ error: 'Failed to load customers' });
       }
-      res.json(rows);
+      res.json((rows || []).map((row) => ({
+        ...row,
+        mobile_phone: row.mobile_phone || '',
+        sms_opt_in: Number(row.sms_opt_in) === 1,
+      })));
     }
   );
 });
@@ -203,6 +208,20 @@ router.post('/', auth.requireAuth, auth.requireRole('admin'), async (req, res) =
     }
     console.error('CUSTOMER CREATE ERROR:', err);
     return res.status(500).json({ error: 'Failed to create customer' });
+  }
+});
+
+// Mobile number and order-status text consent. Admins and managers can edit the number and turn texts off. Only the customer can opt in.
+router.put('/:id/texting', auth.requireAuth, auth.requireRole('admin', 'manager'), async (req, res) => {
+  try {
+    const updated = await updateCustomerTexting(req.user.userId, req.params.id, req.body || {});
+    res.json(updated);
+  } catch (err) {
+    if (err && err.status && err.status < 500) {
+      return res.status(err.status).json({ error: err.message });
+    }
+    console.error('CUSTOMER TEXTING UPDATE ERROR:', err);
+    return res.status(500).json({ error: 'Failed to update customer' });
   }
 });
 

@@ -178,7 +178,8 @@ function parseListQuery(query) {
 
 function resolveWorkOrder(scannedValue, cb) {
   const value = String(scannedValue || '').trim();
-  const located = `SELECT wo.id, wo.external_id, wo.description, wo.department, wo.status,
+  const located = `SELECT wo.id, wo.external_id, wo.description, wo.department, wo.status, wo.order_id,
+            o.order_number, o.status AS order_status,
             COALESCE(wo.location_id, o.location_id) AS location_id
      FROM work_orders wo
      LEFT JOIN orders o ON o.id = wo.order_id`;
@@ -478,6 +479,11 @@ async function applyScan({ scannedValue, location, eventTime, operatorId, workOr
     from_department: fromDepartment,
     to_department: toDepartment,
     department_moved: moved,
+    order_id: workOrder.order_id || null,
+    order_number: workOrder.order_number || null,
+    order_status: String(workOrder.order_status || '').trim().toLowerCase() === 'ready for pickup'
+      ? 'Ready for Pickup'
+      : (workOrder.order_id ? 'In Production' : null),
   };
   if (moved) payload.status = nextStatus;
 

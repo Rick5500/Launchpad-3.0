@@ -4,6 +4,7 @@ import {
   Alert,
   Box,
   Button,
+  Chip,
   MenuItem,
   Table,
   TableBody,
@@ -107,12 +108,19 @@ export default function SearchOrders() {
           <TextField label="Contact" value={filters.contact} onChange={(event) => update('contact', event.target.value)} />
           <TextField label="Phone" value={filters.phone} onChange={(event) => update('phone', event.target.value)} />
           <TextField label="Email" value={filters.email} onChange={(event) => update('email', event.target.value)} />
-          <TextField select label="Status" value={filters.status} onChange={(event) => update('status', event.target.value)}>
+          <TextField
+            select
+            label="Status"
+            value={filters.status}
+            onChange={(event) => update('status', event.target.value)}
+            SelectProps={{ inputProps: { 'data-testid': 'search-status' } }}
+          >
             <MenuItem value="">Any status</MenuItem>
             <MenuItem value="open">Open</MenuItem>
             <MenuItem value="in-progress">In progress</MenuItem>
             <MenuItem value="completed">Completed</MenuItem>
             <MenuItem value="on-hold">On hold</MenuItem>
+            <MenuItem value="ready for pickup">Ready for Pickup</MenuItem>
           </TextField>
           <TextField select label="Location" value={filters.location_id} onChange={(event) => update('location_id', event.target.value)} data-testid="search-location">
             <MenuItem value="">All locations</MenuItem>
@@ -137,6 +145,7 @@ export default function SearchOrders() {
             <TableHead>
               <TableRow>
                 <TableCell>Order</TableCell>
+                <TableCell>Order status</TableCell>
                 <TableCell>Company</TableCell>
                 <TableCell>Location</TableCell>
                 <TableCell>Contact</TableCell>
@@ -152,6 +161,11 @@ export default function SearchOrders() {
                 <TableRow key={order.id}>
                   <TableCell>
                     <Button component={RouterLink} to={order.detail_path} size="small">{order.order_number}</Button>
+                  </TableCell>
+                  <TableCell data-testid="search-order-status">
+                    {order.status === 'Ready for Pickup' ? (
+                      <Chip size="small" label="Ready for Pickup" sx={{ bgcolor: '#F58220', color: '#111', fontWeight: 800 }} />
+                    ) : (order.status || 'In Production')}
                   </TableCell>
                   <TableCell>{order.company}</TableCell>
                   <TableCell>{order.location_name || '—'}</TableCell>
@@ -177,7 +191,7 @@ export default function SearchOrders() {
                 </TableRow>
               ))}
               {!loading && orders.length === 0 ? (
-                <TableRow><TableCell colSpan={9}>No orders match.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={10}>No orders match.</TableCell></TableRow>
               ) : null}
             </TableBody>
           </Table>

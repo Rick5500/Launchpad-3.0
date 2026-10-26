@@ -103,6 +103,10 @@ function orderFilesLink(orderId) {
   return `${base}/login?next=${encodeURIComponent(next)}`;
 }
 
+function orderPageLink(orderId) {
+  return appLink(`/orders/${Number(orderId)}`);
+}
+
 // Login next path for one transfer. The frontend safeAppPath accepts this path.
 function transferFilesLink(transferId) {
   const id = Number(transferId);
@@ -640,6 +644,71 @@ function renderQuoteRequestEmail({ letterhead, customerName, projectName, needed
   };
 }
 
+function renderPickupReadyEmail({ letterhead, orderNumber, locationName, locationAddress, locationPhone, link }) {
+  const name = letterhead && letterhead.name ? letterhead.name : '';
+  const orderLabel = orderNumber || 'your order';
+  const placeName = String(locationName || '').trim();
+  const place = placeName ? `our ${placeName} location` : 'our shop';
+  const addressLines = String(locationAddress || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const phone = String(locationPhone || '').trim();
+  const footer = footerLines(letterhead);
+  const safeLink = escapeHtml(link);
+  const href = String(link || '').replace(/"/g, '%22');
+  const addressText = addressLines.join('\n');
+  const text = [
+    name,
+    '',
+    `Order #${orderLabel} is ready for pickup at ${place}.`,
+    addressText,
+    phone ? `Questions? ${phone}` : '',
+    '',
+    link ? 'Sign in to view this order:' : '',
+    link || '',
+    '',
+    footerText(footer, { credit: true }).join('\n'),
+  ].filter((line) => line !== '').join('\n').replace(/\n{3,}/g, '\n\n');
+
+  const addressHtml = addressLines.length
+    ? `<p style="margin:0 0 8px;line-height:1.5;">${addressLines.map((line) => escapeHtml(line)).join('<br>')}</p>`
+    : '';
+  const phoneHtml = phone
+    ? `<p style="margin:0 0 16px;line-height:1.5;">Questions? ${escapeHtml(phone)}</p>`
+    : '';
+  const linkHtml = link
+    ? `<p style="margin:16px 0 0;"><a href="${href}" style="display:inline-block;background:#F58220;color:#111111;text-decoration:none;font-weight:700;padding:10px 16px;">Sign in to view your order</a></p>
+          <p style="margin:12px 0 0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>`
+    : '';
+  const html = `<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#F4F7FB;font-family:Arial,Helvetica,sans-serif;color:#1B2838;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F7FB;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#ffffff;border:1px solid #E2E8F0;">
+        ${emailBannerHtml(name)}
+        <tr><td style="padding:24px;">
+          <h1 style="margin:0 0 12px;font-size:20px;color:#0A2F6E;">Your order is ready for pickup</h1>
+          <p style="margin:0 0 12px;line-height:1.5;">Order #${escapeHtml(orderLabel)} is ready for pickup at ${escapeHtml(place)}.</p>
+          ${addressHtml}
+          ${phoneHtml}
+          ${linkHtml}
+        </td></tr>
+        ${emailFooterHtml(footer, { credit: true })}
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  return {
+    subject: safeSubject(`Order ${orderLabel} is ready for pickup`),
+    text,
+    html,
+  };
+}
+
 function renderTestEmail({ letterhead }) {
   const name = letterhead && letterhead.name ? letterhead.name : 'Launchpad';
   const footer = footerLines(letterhead);
@@ -767,6 +836,7 @@ module.exports = {
   publicFrom,
   publicAppUrl,
   orderFilesLink,
+  orderPageLink,
   transferFilesLink,
   orderProofLink,
   quoteLink,
@@ -783,6 +853,7 @@ module.exports = {
   renderQuoteRequestEmail,
   renderProofEmail,
   renderProofChangesEmail,
+  renderPickupReadyEmail,
   renderTestEmail,
   deliver,
   sendTest,

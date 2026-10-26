@@ -6,6 +6,7 @@ const { resetUserPassword, passwordPolicyError } = require('./passwordReset');
 const { get, all, withTransaction } = require('./dbAsync');
 const { httpError } = require('./httpError');
 const shopLocations = require('./shopLocations');
+const { normalizeE164, SMS_CONSENT } = require('./sms');
 const {
   parseText,
   parseBool,
@@ -30,6 +31,7 @@ const SORTS = {
 };
 
 const PUBLIC_COLUMNS = `id, username, role, display_name, company, contact_name, phone, email,
+  mobile_phone, sms_opt_in,
   address_line1, address_line2, city, state, zip, department, location_id, is_active, created_at, updated_at`;
 
 function present(row) {
@@ -42,6 +44,9 @@ function present(row) {
     contact_name: row.contact_name || '',
     phone: row.phone || '',
     email: row.email || '',
+    mobile_phone: row.mobile_phone || '',
+    sms_opt_in: Number(row.sms_opt_in) === 1,
+    sms_consent: SMS_CONSENT,
     address_line1: row.address_line1 || '',
     address_line2: row.address_line2 || '',
     city: row.city || '',
@@ -81,6 +86,70 @@ function parseUsername(value, required) {
     return { error: "username must be 2 to 80 characters and use letters, digits, or . _ @ - + '" };
   }
   return parsed;
+}
+
+const STAFF_OPT_IN_ERROR = 'Only the customer can opt in to order status texts';
+
+// Staff may store a mobile number and turn texts off. Turning texts on is the
+// customer's choice, so a staff save that would change opt-in from off to on
+// is rejected. A different normalized number drops an existing opt-in. The
+// same number, after E.164 normalization, keeps it.
+function staffOptInError(existing, next, allowOptIn) {
+  if (allowOptIn) return null;
+  const wasOn = existing && Number(existing.sms_opt_in) === 1;
+  if (next && next.smsOptIn === 1 && !wasOn) return STAFF_OPT_IN_ERROR;
+  return null;
+}
+
+function applyStaffNumberChange(existing, next) {
+  if (!next) return next;
+  const value = { mobilePhone: next.mobilePhone, smsOptIn: next.smsOptIn };
+  const previous = normalizeE164(existing && existing.mobile_phone);
+  const upcoming = value.mobilePhone ? normalizeE164(value.mobilePhone) : null;
+  const wasOn = existing && Number(existing.sms_opt_in) === 1;
+  if (wasOn && (previous || null) !== (upcoming || null)) value.smsOptIn = 0;
+  return value;
+}
+
+// Omitted fields keep the stored values. Opt-in stays off unless it is set,
+// and it requires a number that normalizes to E.164.
+function parseTexting(body, existing, options = {}) {
+  const source = body || {};
+  const mobileProvided = Object.prototype.hasOwnProperty.call(source, 'mobile_phone');
+  const optProvided = Object.prototype.hasOwnProperty.call(source, 'sms_opt_in');
+  if (!mobileProvided && !optProvided) {
+    if (options.requireProvided) return { error: 'mobile_phone or sms_opt_in is required' };
+    return {
+      value: {
+        mobilePhone: existing && existing.mobile_phone ? existing.mobile_phone : null,
+        smsOptIn: existing && Number(existing.sms_opt_in) === 1 ? 1 : 0,
+      },
+    };
+  }
+  let mobile = existing && existing.mobile_phone ? existing.mobile_phone : null;
+  if (mobileProvided) {
+    if (source.mobile_phone == null || String(source.mobile_phone).trim() === '') {
+      mobile = null;
+    } else {
+      const normalized = normalizeE164(source.mobile_phone);
+      if (!normalized) return { error: 'mobile_phone must be a valid phone number' };
+      mobile = normalized;
+    }
+  }
+  let opt = existing && Number(existing.sms_opt_in) === 1 ? 1 : 0;
+  if (optProvided) {
+    const parsed = parseBool(source.sms_opt_in, 'sms_opt_in', false);
+    if (parsed.error) return parsed;
+    opt = parsed.value;
+  }
+  let value = { mobilePhone: mobile, smsOptIn: opt };
+  if (options.staff) value = applyStaffNumberChange(existing, value);
+  if (value.smsOptIn === 1 && !value.mobilePhone) return { error: 'Enter a mobile number to receive order status texts' };
+  if (options.staff) {
+    const blocked = staffOptInError(existing, value, false);
+    if (blocked) return { error: blocked, status: 403 };
+  }
+  return { value };
 }
 
 function parseProfile(body) {
@@ -195,8 +264,9 @@ async function insertUserRow(tx, row) {
   return tx.run(
     `INSERT INTO users (
        username, password_hash, role, display_name, company, contact_name, phone, email,
+       mobile_phone, sms_opt_in,
        address_line1, address_line2, city, state, zip, department, location_id, is_active, created_at, updated_at
-     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))`,
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))`,
     [
       row.username,
       row.passwordHash,
@@ -206,6 +276,8 @@ async function insertUserRow(tx, row) {
       row.contactName,
       row.phone,
       row.email,
+      row.mobilePhone || null,
+      row.smsOptIn ? 1 : 0,
       row.addressLine1,
       row.addressLine2,
       row.city,
@@ -331,6 +403,12 @@ async function createUser(actorId, body) {
     if (department.error) throw httpError(400, department.error);
     const location = await shopLocations.locationForRole(tx, source, role.value, null);
     if (location.error) throw httpError(400, location.error);
+    const texting = role.value === 'customer'
+      ? parseTexting(source, { mobile_phone: null, sms_opt_in: 0 })
+      : { value: { mobilePhone: null, smsOptIn: 0 } };
+    if (texting.error) throw httpError(400, texting.error);
+    const optInError = staffOptInError({ sms_opt_in: 0 }, texting.value, false);
+    if (optInError) throw httpError(403, optInError);
     const inserted = await insertUserRow(tx, {
       username: username.value,
       passwordHash: hash,
@@ -348,6 +426,8 @@ async function createUser(actorId, body) {
       department: department.value,
       locationId: location.value,
       isActive: active.value,
+      mobilePhone: texting.value.mobilePhone,
+      smsOptIn: texting.value.smsOptIn,
     });
     await activityLog.recordOn(tx, actorId, 'user.created', 'user', inserted.lastID, {
       username: username.value,
@@ -425,6 +505,10 @@ async function updateUser(actorId, id, body) {
     if (department.error) throw httpError(400, department.error);
     const location = await shopLocations.locationForRole(tx, source, role.value, existing.location_id || null);
     if (location.error) throw httpError(400, location.error);
+    const texting = role.value === 'customer'
+      ? parseTexting(source, existing, { staff: true })
+      : { value: { mobilePhone: null, smsOptIn: 0 } };
+    if (texting.error) throw httpError(texting.status || 400, texting.error);
     const previousDepartment = existing.department || null;
     const departmentChanged = previousDepartment !== department.value;
 
@@ -436,6 +520,7 @@ async function updateUser(actorId, id, body) {
     await tx.run(
       `UPDATE users
        SET username = ?, role = ?, display_name = ?, company = ?, contact_name = ?, phone = ?, email = ?,
+           mobile_phone = ?, sms_opt_in = ?,
            address_line1 = ?, address_line2 = ?, city = ?, state = ?, zip = ?, department = ?,
            location_id = ?, is_active = ?, updated_at = datetime('now')
        WHERE id = ?`,
@@ -447,6 +532,8 @@ async function updateUser(actorId, id, body) {
         profile.value.contactName,
         profile.value.phone,
         profile.value.email,
+        texting.value.mobilePhone,
+        texting.value.smsOptIn,
         profile.value.addressLine1,
         profile.value.addressLine2,
         profile.value.city,
@@ -673,6 +760,37 @@ async function registerCustomer(body) {
   return session;
 }
 
+async function updateCustomerTexting(actorId, id, body, options = {}) {
+  const parsedId = parseInteger(id, 'id', { min: 1, max: Number.MAX_SAFE_INTEGER, required: true });
+  if (parsedId.error || !parsedId.value) throw httpError(400, 'id must be a positive integer');
+  await withTransaction(async (tx) => {
+    const existing = await tx.get(
+      `SELECT id, username, role, mobile_phone, sms_opt_in FROM users WHERE id = ?`,
+      [parsedId.value]
+    );
+    if (!existing || existing.role !== 'customer') throw httpError(404, 'Customer not found');
+    const texting = parseTexting(body || {}, existing, {
+      requireProvided: true,
+      staff: options.allowOptIn !== true,
+    });
+    if (texting.error) throw httpError(texting.status || 400, texting.error);
+    await tx.run(
+      `UPDATE users
+       SET mobile_phone = ?, sms_opt_in = ?, updated_at = datetime('now')
+       WHERE id = ?`,
+      [texting.value.mobilePhone, texting.value.smsOptIn, existing.id]
+    );
+    await activityLog.recordOn(tx, actorId, 'user.updated', 'user', existing.id, {
+      username: existing.username,
+      role: 'customer',
+      sms_opt_in: texting.value.smsOptIn === 1,
+      message: `Updated texting preferences for ${existing.username}`,
+    });
+  });
+  const row = await get(`SELECT ${PUBLIC_COLUMNS} FROM users WHERE id = ?`, [parsedId.value]);
+  return present(row);
+}
+
 async function loadAccess(userId) {
   return shopLocations.loadAccess(userId);
 }
@@ -683,6 +801,7 @@ module.exports = {
   createUser,
   updateUser,
   updateCustomerAddress,
+  updateCustomerTexting,
   resetPassword,
   registerCustomer,
   present,

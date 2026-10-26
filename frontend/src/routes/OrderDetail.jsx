@@ -9,6 +9,8 @@ import LoadingState from '../components/LoadingState';
 import { useAuth } from '../context/AuthContext';
 import { authFetch, downloadAuthorized } from '../api';
 import { brand, formatClockLabel, formatFileSize } from '../brand';
+import PickupStatusControl from '../components/PickupStatusControl';
+import { ORDER_STATUS_READY } from '../smsConsent';
 
 function Fact({ label, value }) {
   return (
@@ -137,6 +139,15 @@ export default function OrderDetail() {
             <Typography sx={{ color: brand.navy, fontWeight: 800, fontSize: 20, mt: 0.5 }}>
               {order.location_name || 'Location'}
             </Typography>
+            {order.status === ORDER_STATUS_READY ? (
+              <Typography data-testid="order-ready-banner" sx={{ color: brand.orange, fontWeight: 800, fontSize: 22, mt: 1 }}>
+                Ready for pickup
+              </Typography>
+            ) : (
+              <Typography sx={{ color: brand.muted, fontWeight: 700, fontSize: 18, mt: 1 }}>
+                {order.status || 'In Production'}
+              </Typography>
+            )}
             <Typography sx={{ color: brand.muted, mt: 0.5 }}>
               Due {order.due_date} at {formatClockLabel(order.due_time)}
             </Typography>
@@ -160,6 +171,20 @@ export default function OrderDetail() {
               ) : null}
             </Box>
           </Box>
+
+          {canTransfer || user?.role === 'operator' ? (
+            <PickupStatusControl
+              orderId={order.id}
+              status={order.status}
+              emailStatus={order.pickup_email_status}
+              emailSentAt={order.pickup_email_sent_at}
+              smsStatus={order.pickup_sms_status}
+              smsSentAt={order.pickup_sms_sent_at}
+              onUpdated={(next) => {
+                if (next && next.id) setOrder(next);
+              }}
+            />
+          ) : null}
 
           {order.bill_to ? (
             <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2 }}>

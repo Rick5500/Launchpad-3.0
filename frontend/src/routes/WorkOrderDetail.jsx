@@ -26,6 +26,7 @@ import FilesFromAccent from '../components/FilesFromAccent';
 import ProofPanel from '../components/ProofPanel';
 import ProofStatusChip, { isProofHeld } from '../components/ProofStatusChip';
 import MoveWorkOrderDialog from '../components/MoveWorkOrderDialog';
+import PickupStatusControl from '../components/PickupStatusControl';
 import { authFetch, downloadAuthorized } from '../api';
 import { requestBoardRefresh } from '../boardEvents';
 import { useAuth } from '../context/AuthContext';
@@ -708,6 +709,20 @@ export default function WorkOrderDetail() {
           </Box>
         </CardContent>
       </Card>
+
+      {workOrder.order_id && canManageOrders ? (
+        <Box sx={{ mb: 2 }}>
+          <PickupStatusControl
+            orderId={workOrder.order_id}
+            status={workOrder.order_status}
+            onUpdated={(order) => {
+              if (order && order.status) {
+                setWorkOrder((current) => (current ? { ...current, order_status: order.status } : current));
+              }
+            }}
+          />
+        </Box>
+      ) : null}
 
       {workOrder.order_id ? (
         <Box sx={{ mb: 2, display: 'grid', gap: 2 }}>

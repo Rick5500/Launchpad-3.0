@@ -71,7 +71,7 @@ const staffNav = [
     roles: ['admin', 'operator', 'manager'],
     children: REPORT_NAV,
   },
-  { title: 'Customers', route: '/customers', icon: <PeopleIcon />, roles: ['admin'] },
+  { title: 'Customers', route: '/customers', icon: <PeopleIcon />, roles: ['admin', 'manager'] },
   { title: 'Departments', route: '/admin/departments', icon: <BusinessIcon />, roles: ['admin'] },
   { title: 'Services', route: '/services', icon: <DesignServicesIcon />, roles: ['admin'] },
   { title: 'Users', route: '/users', icon: <ManageAccountsIcon />, roles: ['admin'] },

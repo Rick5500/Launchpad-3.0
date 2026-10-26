@@ -11,6 +11,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   GlobalStyles,
   MenuItem,
   TextField,
@@ -34,6 +35,7 @@ import { useDocumentTitle } from '../useDocumentTitle';
 import { useAuth } from '../context/AuthContext';
 import { authFetch } from '../api';
 import { brand, formatClockLabel, formatFileSize } from '../brand';
+import { SMS_CONSENT } from '../smsConsent';
 
 const SERVICE_ICONS = {
   'Large Format': DescriptionOutlinedIcon,
@@ -547,7 +549,7 @@ function LocationChoices({
 
 export default function CustomerOrderForm({ inboundEmail = null }) {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout, refreshUser } = useAuth();
   const isStaff = user?.role === 'admin' || user?.role === 'manager' || user?.role === 'operator';
   const [searchParams] = useSearchParams();
   const fromQuote = searchParams.get('fromQuote');
@@ -604,6 +606,42 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
   const [result, setResult] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [openSteps, setOpenSteps] = useState(openAllSteps);
+  const [mobilePhone, setMobilePhone] = useState('');
+  const [smsOptIn, setSmsOptIn] = useState(false);
+  const [textingSaving, setTextingSaving] = useState(false);
+  const [textingError, setTextingError] = useState('');
+  const [textingNotice, setTextingNotice] = useState('');
+
+  useEffect(() => {
+    if (!user || isStaff) return;
+    setMobilePhone(user.mobile_phone || '');
+    setSmsOptIn(Boolean(user.sms_opt_in));
+  }, [user, isStaff]);
+
+  async function saveTexting(event) {
+    if (event && event.preventDefault) event.preventDefault();
+    setTextingSaving(true);
+    setTextingError('');
+    setTextingNotice('');
+    try {
+      const response = await authFetch('/api/auth/profile', {
+        method: 'PUT',
+        body: JSON.stringify({ mobile_phone: mobilePhone, sms_opt_in: smsOptIn }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Unable to save texting preferences');
+      const refreshed = await refreshUser();
+      if (refreshed) {
+        setMobilePhone(refreshed.mobile_phone || '');
+        setSmsOptIn(Boolean(refreshed.sms_opt_in));
+      }
+      setTextingNotice(smsOptIn ? 'Text updates are on for this mobile number.' : 'Text updates are off.');
+    } catch (err) {
+      setTextingError(err.message || 'Unable to save texting preferences');
+    } finally {
+      setTextingSaving(false);
+    }
+  }
 
   function applyProfile(source, includeCompanyFallback) {
     if (!source) return;
@@ -1319,6 +1357,57 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
             </Box>
           </Box>
 
+          {!isStaff ? (
+            <Box
+              data-testid="profile-texting"
+              sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderLeft: `6px solid ${brand.navy}`, borderRadius: 2, p: { xs: 2, sm: 2.5 } }}
+            >
+              <Typography sx={{ color: brand.navy, fontWeight: 800, fontSize: '1.45rem' }}>
+                Order status texts
+              </Typography>
+              <Typography sx={{ color: brand.muted, fontSize: '1.1rem', mt: 0.5, mb: 1.5, maxWidth: 760 }}>
+                Add a mobile number if you want a text when an order is ready for pickup. This stays off until you agree.
+              </Typography>
+              {textingError ? <Alert severity="error" sx={{ mb: 1.5 }}>{textingError}</Alert> : null}
+              {textingNotice ? <Alert severity="success" sx={{ mb: 1.5 }}>{textingNotice}</Alert> : null}
+              <Box sx={{ display: 'grid', gap: 1.5, maxWidth: 640 }}>
+                <TextField
+                  id="profile-mobile"
+                  label="Mobile phone"
+                  value={mobilePhone}
+                  onChange={(event) => setMobilePhone(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') saveTexting(event);
+                  }}
+                  placeholder="919-555-0100"
+                  autoComplete="tel"
+                  sx={{ '& .MuiInputBase-input': { fontSize: '1.25rem' }, '& .MuiInputLabel-root': { fontSize: '1.05rem' } }}
+                />
+                <FormControlLabel
+                  sx={{ alignItems: 'flex-start', m: 0, '& .MuiFormControlLabel-label': { fontSize: '1.2rem', lineHeight: 1.45, color: brand.text } }}
+                  control={(
+                    <Checkbox
+                      checked={smsOptIn}
+                      onChange={(event) => setSmsOptIn(event.target.checked)}
+                      inputProps={{ 'data-testid': 'sms-opt-in', 'aria-label': SMS_CONSENT }}
+                      sx={{ color: brand.navy, '&.Mui-checked': { color: brand.orange } }}
+                    />
+                  )}
+                  label={SMS_CONSENT}
+                />
+                <Button
+                  type="button"
+                  onClick={saveTexting}
+                  variant="contained"
+                  disabled={textingSaving}
+                  sx={{ justifySelf: 'start', bgcolor: brand.navy, fontWeight: 800, fontSize: '1.05rem', px: 2.5 }}
+                >
+                  {textingSaving ? 'Saving...' : 'Save texting preferences'}
+                </Button>
+              </Box>
+            </Box>
+          ) : null}
+
           <Box
             role="navigation"
             aria-label="Order steps"
@@ -2005,7 +2094,7 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
           <Typography sx={{ color: '#fff', fontWeight: 800 }}>Important Information</Typography>
         </Box>
         <Box component="ul" sx={{ m: 0, px: 2, py: 1.5, pl: 4.5, color: brand.text, fontSize: 14 }}>
-          <li>Order status is available in LaunchPad. Email updates are not enabled yet.</li>
+          <li>Order status is available in LaunchPad. When an order is ready for pickup, the customer is emailed and texted if they opted in.</li>
           <li>If you have any questions, please contact us at 919-782-3332.</li>
           <li>Thank you for your business!</li>
         </Box>
