@@ -50,7 +50,7 @@ async function recoverStaleConversions() {
 async function loadCustomers() {
   return all(
     `SELECT id, username, display_name, company, contact_name, phone, email,
-            address_line1, address_line2, city, state, zip
+            address_line1, address_line2, city, state, zip, location_id
      FROM users
      WHERE role = 'customer' AND COALESCE(is_active, 1) = 1`
   );
@@ -351,6 +351,14 @@ async function downloadAttachments(emailId, message, token) {
   }
 }
 
+async function locationIdForSender(fromAddress) {
+  const matched = matchSender(await loadCustomers(), fromAddress);
+  if (matched.customer && matched.customer.location_id != null) {
+    return Number(matched.customer.location_id);
+  }
+  return shopLocations.defaultLocationId();
+}
+
 async function ingestMessage(message, token) {
   if (!message || !message.id || message['@removed']) return { skipped: true };
   const graphId = String(message.id).slice(0, 400);
@@ -359,7 +367,7 @@ async function ingestMessage(message, token) {
   const bodyText = messageBody(message);
   const draft = parseDraft(subject, bodyText);
   const received = message.receivedDateTime ? String(message.receivedDateTime).slice(0, 40) : null;
-  const locationId = await shopLocations.defaultLocationId();
+  const locationId = await locationIdForSender(from.address || '');
   const inserted = await run(
     `INSERT OR IGNORE INTO inbound_emails (
       graph_message_id, mailbox, from_address, from_name, subject, received_at,
@@ -780,6 +788,7 @@ async function dismissEmail(user, id) {
 
 module.exports = {
   STATUSES,
+  locationIdForSender,
   listEmails,
   getEmail,
   syncOnce,

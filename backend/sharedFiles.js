@@ -66,7 +66,7 @@ function publicFile(row) {
 const FILE_SELECT = `
   SELECT f.id, f.order_id, f.work_order_id, f.original_name, f.mime_type, f.size_bytes,
          f.message, f.batch_id, f.created_at, f.customer_downloaded_at, f.replaces_id,
-         f.deleted_at, f.stored_name, f.storage_root, f.customer_id, f.transfer_id,
+         f.deleted_at, f.stored_name, f.storage_root, f.customer_id, f.uploaded_by, f.transfer_id,
          wo.external_id AS work_order_number,
          COALESCE(NULLIF(trim(u.display_name), ''), NULLIF(trim(u.username), '')) AS sender_name,
          o.customer_id AS order_customer_id, o.order_number, o.email AS order_email,
@@ -90,6 +90,67 @@ async function loadOrder(orderId) {
 async function assertStaffLocation(user, locationId, message) {
   const access = await shopLocations.loadAccess(actorId(user));
   shopLocations.assertVisible(access, locationId, message);
+}
+
+// A share with no order takes the customer's default shop. A customer with no
+// default, and an operator or customer sender with no home shop, count as
+// Raleigh. An all-location sender with no customer is visible only to staff
+// who already see every shop.
+function looseLocationSql(customerColumn, senderColumn) {
+  return `CASE
+    WHEN EXISTS (SELECT 1 FROM users cu WHERE cu.id = ${customerColumn}) THEN
+      COALESCE((SELECT cu.location_id FROM users cu WHERE cu.id = ${customerColumn}), ?)
+    ELSE
+      COALESCE(
+        (SELECT su.location_id FROM users su WHERE su.id = ${senderColumn}),
+        CASE WHEN EXISTS (
+          SELECT 1 FROM users su
+          WHERE su.id = ${senderColumn}
+            AND lower(trim(su.role)) IN ('operator', 'customer')
+        ) THEN ? ELSE NULL END
+      )
+  END`;
+}
+
+async function looseLocationId(row) {
+  if (row && row.customer_id) {
+    const customer = await get(`SELECT location_id FROM users WHERE id = ?`, [row.customer_id]);
+    if (customer) {
+      if (customer.location_id != null) return customer.location_id;
+      return shopLocations.defaultLocationId();
+    }
+  }
+  if (row && row.uploaded_by) {
+    const sender = await get(`SELECT location_id, role FROM users WHERE id = ?`, [row.uploaded_by]);
+    if (!sender) return null;
+    if (sender.location_id != null) return sender.location_id;
+    const role = String(sender.role || '').trim().toLowerCase();
+    if (role === 'operator' || role === 'customer') return shopLocations.defaultLocationId();
+    return null;
+  }
+  return null;
+}
+
+async function assertLooseStaff(user, row, message) {
+  const access = await shopLocations.loadAccess(actorId(user));
+  const locationId = await looseLocationId(row);
+  if (locationId == null) {
+    if (!shopLocations.seesAll(access)) throw httpError(404, message);
+    return;
+  }
+  shopLocations.assertVisible(access, locationId, message);
+}
+
+async function assertCanAddressLoose(user, row) {
+  const access = await shopLocations.loadAccess(actorId(user));
+  const locationId = await looseLocationId(row);
+  if (locationId == null) {
+    if (!shopLocations.seesAll(access)) throw httpError(403, 'You can only use your own location');
+    return;
+  }
+  if (!shopLocations.matches(access, locationId)) {
+    throw httpError(403, 'You can only use your own location');
+  }
 }
 
 async function assertOrderAccess(user, order) {
@@ -234,6 +295,7 @@ async function shareFiles(user, orderId, body, files) {
   assertFiles(files);
   const order = await loadOrder(orderId);
   if (!isStaff(user)) throw httpError(403, 'Forbidden');
+  await assertOrderAccess(user, order);
   const source = body || {};
   const message = parseText(source.message, 'message', { max: 2000, allowNewlines: true });
   if (message.error) throw httpError(400, message.error);
@@ -407,6 +469,7 @@ async function loadVisible(user, id) {
   if (!file || file.deleted_at) throw httpError(404, 'File not found');
   if (isStaff(user)) {
     if (file.order_id) await assertStaffLocation(user, file.order_location_id, 'File not found');
+    else await assertLooseStaff(user, file, 'File not found');
     return file;
   }
   if (user.role === 'customer' && fileOwnerId(file) === actorId(user)) return file;
@@ -451,6 +514,7 @@ async function removeFile(user, id) {
   const file = await get(`${FILE_SELECT} WHERE f.id = ?`, [id]);
   if (!file || file.deleted_at) throw httpError(404, 'File not found');
   if (file.order_id) await assertStaffLocation(user, file.order_location_id, 'File not found');
+  else await assertLooseStaff(user, file, 'File not found');
   await withTransaction(async (tx) => {
     const updated = await tx.run(
       `UPDATE shared_files
@@ -488,6 +552,7 @@ async function replaceFile(user, id, body, files) {
   const existing = await get(`${FILE_SELECT} WHERE f.id = ?`, [id]);
   if (!existing || existing.deleted_at) throw httpError(404, 'File not found');
   if (existing.order_id) await assertStaffLocation(user, existing.order_location_id, 'File not found');
+  else await assertLooseStaff(user, existing, 'File not found');
   const source = body || {};
   let note = existing.message || null;
   if (Object.prototype.hasOwnProperty.call(source, 'message') && source.message != null && String(source.message).trim() !== '') {
@@ -561,7 +626,8 @@ const TRANSFER_SELECT = `
          COALESCE(NULLIF(trim(c.display_name), ''), NULLIF(trim(c.company), ''), NULLIF(trim(c.username), '')) AS customer_name,
          c.email AS customer_email,
          o.order_number,
-         COALESCE(NULLIF(trim(u.display_name), ''), NULLIF(trim(u.username), '')) AS sender_name
+         COALESCE(NULLIF(trim(u.display_name), ''), NULLIF(trim(u.username), '')) AS sender_name,
+         t.uploaded_by
   FROM file_transfers t
   JOIN users c ON c.id = t.customer_id
   LEFT JOIN orders o ON o.id = t.order_id
@@ -658,15 +724,21 @@ async function listTransfers(user, query) {
     throw httpError(403, 'Forbidden');
   } else {
     const access = await shopLocations.loadAccess(actorId(user));
-    const pred = shopLocations.predicate('o.location_id', access);
-    if (pred.sql) {
-      where.push(`(t.order_id IS NULL OR EXISTS (
-        SELECT 1 FROM orders o WHERE o.id = t.order_id AND ${pred.sql}
-      ))`);
-      params.push(...pred.params);
+    const orderPred = shopLocations.predicate('o.location_id', access);
+    if (orderPred.sql === '1 = 0') {
+      where.push('1 = 0');
+    } else if (orderPred.sql) {
+      const raleighId = await shopLocations.defaultLocationId();
+      where.push(`(
+        (t.order_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM orders o WHERE o.id = t.order_id AND ${orderPred.sql}
+        ))
+        OR (t.order_id IS NULL AND (${looseLocationSql('t.customer_id', 't.uploaded_by')}) = ?)
+      )`);
+      params.push(...orderPred.params, raleighId, raleighId, access.location_id);
     }
     if (source.customer_id != null && String(source.customer_id).trim() !== '') {
-    where.push('t.customer_id = ?');
+      where.push('t.customer_id = ?');
       params.push(parseOptionalId(source.customer_id, 'customer_id'));
     }
   }
@@ -700,9 +772,13 @@ async function getTransfer(user, id) {
   if (!isStaff(user) && !(user.role === 'customer' && Number(row.customer_id) === actorId(user))) {
     throw httpError(404, 'File transfer not found');
   }
-  if (isStaff(user) && row.order_id) {
-    const order = await get('SELECT location_id FROM orders WHERE id = ?', [row.order_id]);
-    await assertStaffLocation(user, order ? order.location_id : null, 'File transfer not found');
+  if (isStaff(user)) {
+    if (row.order_id) {
+      const order = await get('SELECT location_id FROM orders WHERE id = ?', [row.order_id]);
+      await assertStaffLocation(user, order ? order.location_id : null, 'File transfer not found');
+    } else {
+      await assertLooseStaff(user, row, 'File transfer not found');
+    }
   }
   const files = await all(
     `${FILE_SELECT} WHERE f.transfer_id = ? AND f.deleted_at IS NULL ORDER BY f.id`,
@@ -734,6 +810,7 @@ async function createTransfer(user, body, files) {
   const customerId = parseOptionalId(source.customer_id, 'customer_id');
   if (!customerId) throw httpError(400, 'customer_id is required');
   const customer = await loadCustomerAccount(customerId);
+  await assertCanAddressLoose(user, { customer_id: customer.id, uploaded_by: actorId(user) });
   const subject = parseText(source.subject, 'subject', { max: 180 });
   if (subject.error) throw httpError(400, subject.error);
   const message = parseText(source.message, 'message', { max: 2000, allowNewlines: true });

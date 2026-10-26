@@ -84,6 +84,18 @@ function multipartPdf(name) {
   return { raw, contentType: `multipart/form-data; boundary=${boundary}` };
 }
 
+function multipartTransfer(fields, filename) {
+  const boundary = '----lp-transfer';
+  const chunks = [];
+  for (const [name, value] of Object.entries(fields)) {
+    chunks.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`));
+  }
+  chunks.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="files"; filename="${filename}"\r\nContent-Type: application/pdf\r\n\r\n`));
+  chunks.push(Buffer.from('%PDF-1.4 transfer'));
+  chunks.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+  return { raw: Buffer.concat(chunks), contentType: `multipart/form-data; boundary=${boundary}` };
+}
+
 function request({ method, path: requestPath, token, json, raw, contentType }) {
   return new Promise((resolve, reject) => {
     const body = raw || (json != null ? Buffer.from(JSON.stringify(json)) : null);
@@ -451,6 +463,176 @@ async function main() {
     assert(managerDelete.status === 200, 'the home-shop manager can delete the operator file');
     const customerDelete = await request({ method: 'DELETE', path: `/api/uploads/${customerFileId}`, token: customerLogin.token });
     assert(customerDelete.status === 200, 'the owning customer can delete an unattached file');
+
+    const acme = await db.get(`SELECT id FROM users WHERE username = 'acme'`);
+    assert(acme && acme.id, 'the seeded Raleigh customer should exist');
+    const hickoryShare = await request({
+      method: 'POST',
+      path: '/api/file-transfers',
+      token: allManager.token,
+      ...multipartTransfer({
+        customer_id: String(customer.id),
+        send_email: 'false',
+        subject: 'Hickory proofs',
+      }, 'hickory-share.pdf'),
+    });
+    assert(hickoryShare.status === 201, hickoryShare.text);
+    const hickoryTransferId = hickoryShare.json.transfer.id;
+    const hickorySharedFileId = hickoryShare.json.transfer.files[0].id;
+    const raleighShare = await request({
+      method: 'POST',
+      path: '/api/file-transfers',
+      token: adminLogin.token,
+      ...multipartTransfer({
+        customer_id: String(acme.id),
+        send_email: 'false',
+        subject: 'Raleigh proofs',
+      }, 'raleigh-share.pdf'),
+    });
+    assert(raleighShare.status === 201, raleighShare.text);
+    const raleighTransferId = raleighShare.json.transfer.id;
+    const raleighSharedFileId = raleighShare.json.transfer.files[0].id;
+    const blockedSend = await request({
+      method: 'POST',
+      path: '/api/file-transfers',
+      token: hickoryLogin.token,
+      ...multipartTransfer({
+        customer_id: String(acme.id),
+        send_email: 'false',
+        subject: 'Wrong shop',
+      }, 'wrong-shop.pdf'),
+    });
+    assert(blockedSend.status === 403, `an operator must not send a file outside their shop: ${blockedSend.status} ${blockedSend.text}`);
+
+    async function transferIds(token, customerId) {
+      const path = customerId ? `/api/file-transfers?customer_id=${customerId}` : '/api/file-transfers';
+      const response = await request({ method: 'GET', path, token });
+      assert(response.status === 200, response.text);
+      return (response.json.transfers || []).map((row) => row.id);
+    }
+    assert((await transferIds(hickoryLogin.token)).includes(hickoryTransferId), 'a Hickory operator sees a file for a Hickory customer');
+    assert(!(await transferIds(hickoryLogin.token)).includes(raleighTransferId), 'a Hickory operator does not see a file for a Raleigh customer');
+    assert((await transferIds(raleighLogin.token, acme.id)).includes(raleighTransferId), 'a Raleigh operator sees a file for a Raleigh customer');
+    assert(!(await transferIds(raleighLogin.token)).includes(hickoryTransferId), 'a Raleigh operator does not see a file for a Hickory customer');
+    assert((await transferIds(hickoryManager.token)).includes(hickoryTransferId), 'the home-shop manager sees the customer file');
+    assert(!(await transferIds(raleighManager.token)).includes(hickoryTransferId), 'another shop manager does not see the customer file');
+    assert((await transferIds(allManager.token)).includes(hickoryTransferId), 'an all-location manager sees every file transfer');
+    assert((await transferIds(allManager.token)).includes(raleighTransferId), 'an all-location manager sees the Raleigh file transfer');
+    assert((await transferIds(customerLogin.token)).includes(hickoryTransferId), 'the customer sees their own file');
+    assert(!(await transferIds(customerLogin.token)).includes(raleighTransferId), 'a customer does not see another customer file');
+
+    const hiddenTransfer = await request({ method: 'GET', path: `/api/file-transfers/${hickoryTransferId}`, token: raleighLogin.token });
+    assert(hiddenTransfer.status === 404, `Raleigh operator must not open the Hickory transfer: ${hiddenTransfer.status}`);
+    const homeTransfer = await request({ method: 'GET', path: `/api/file-transfers/${hickoryTransferId}`, token: hickoryLogin.token });
+    assert(homeTransfer.status === 200, homeTransfer.text);
+    const hiddenDownload = await request({ method: 'GET', path: `/api/shared-files/${hickorySharedFileId}/download`, token: raleighManager.token });
+    assert(hiddenDownload.status === 404, 'another shop manager cannot download the shared file');
+    const homeDownload = await request({ method: 'GET', path: `/api/shared-files/${hickorySharedFileId}/download`, token: hickoryLogin.token });
+    assert(homeDownload.status === 200, 'the home-shop operator can download the shared file');
+    const raleighDownload = await request({ method: 'GET', path: `/api/shared-files/${raleighSharedFileId}/download`, token: raleighLogin.token });
+    assert(raleighDownload.status === 200, 'the Raleigh operator can download a Raleigh customer file');
+    const crossDelete = await request({ method: 'DELETE', path: `/api/shared-files/${hickorySharedFileId}`, token: raleighLogin.token });
+    assert(crossDelete.status === 404, 'an operator cannot delete a shared file from another shop');
+    const crossReplace = await request({
+      method: 'POST',
+      path: `/api/shared-files/${hickorySharedFileId}/replace`,
+      token: raleighManager.token,
+      ...multipartTransfer({}, 'nope.pdf'),
+    });
+    assert(crossReplace.status === 404, 'another shop manager cannot replace the shared file');
+    const homeReplace = await request({
+      method: 'POST',
+      path: `/api/shared-files/${hickorySharedFileId}/replace`,
+      token: hickoryLogin.token,
+      ...multipartTransfer({}, 'replaced-share.pdf'),
+    });
+    assert(homeReplace.status === 200 && homeReplace.json.file && homeReplace.json.file.id, homeReplace.text);
+    const homeDelete = await request({ method: 'DELETE', path: `/api/shared-files/${homeReplace.json.file.id}`, token: hickoryManager.token });
+    assert(homeDelete.status === 200, 'the home-shop manager can delete the shared file');
+
+    const senderShare = await request({
+      method: 'POST',
+      path: '/api/file-transfers',
+      token: hickoryLogin.token,
+      ...multipartTransfer({
+        customer_id: String(customer.id),
+        send_email: 'false',
+        subject: 'Sender shop',
+      }, 'sender-share.pdf'),
+    });
+    assert(senderShare.status === 201, senderShare.text);
+    const senderFileId = senderShare.json.transfer.files[0].id;
+    await db.run(`UPDATE shared_files SET customer_id = NULL WHERE id = ?`, [senderFileId]);
+    const senderHome = await request({ method: 'GET', path: `/api/shared-files/${senderFileId}/download`, token: hickoryLogin.token });
+    assert(senderHome.status === 200, 'with no customer, the file stays at the sender home shop');
+    const senderAway = await request({ method: 'GET', path: `/api/shared-files/${senderFileId}/download`, token: raleighLogin.token });
+    assert(senderAway.status === 404, 'another shop cannot download a file that follows the sender');
+    const senderAdmin = await request({ method: 'GET', path: `/api/shared-files/${senderFileId}/download`, token: adminLogin.token });
+    assert(senderAdmin.status === 200, 'an admin can download a file with no customer');
+
+    const charlotteShare = await request({
+      method: 'POST',
+      path: `/api/orders/${charlotteOrder.json.order.id}/shared-files`,
+      token: adminLogin.token,
+      ...multipartTransfer({ send_email: 'false' }, 'charlotte-order.pdf'),
+    });
+    assert(charlotteShare.status === 201, charlotteShare.text);
+    const charlotteSharedFileId = charlotteShare.json.files[0].id;
+    const blockedOrderShare = await request({
+      method: 'POST',
+      path: `/api/orders/${charlotteOrder.json.order.id}/shared-files`,
+      token: hickoryLogin.token,
+      ...multipartTransfer({ send_email: 'false' }, 'blocked-order.pdf'),
+    });
+    assert(blockedOrderShare.status === 404, `an operator must not share files on another shop order: ${blockedOrderShare.status}`);
+    const hickoryTransferList = await request({ method: 'GET', path: '/api/file-transfers', token: hickoryLogin.token });
+    assert(
+      !(hickoryTransferList.json.transfers || []).some((row) => row.order_id === charlotteOrder.json.order.id),
+      'an order share stays with the order shop, not the customer default'
+    );
+    const charlotteFileDownload = await request({ method: 'GET', path: `/api/shared-files/${charlotteSharedFileId}/download`, token: hickoryLogin.token });
+    assert(charlotteFileDownload.status === 404, 'a Hickory operator cannot download a Charlotte order file');
+    const allOrderTransfers = await request({ method: 'GET', path: '/api/file-transfers', token: allManager.token });
+    assert(
+      (allOrderTransfers.json.transfers || []).some((row) => row.order_id === charlotteOrder.json.order.id),
+      'an all-location manager sees the order share'
+    );
+
+    process.env.DATABASE_FILE = dbFile;
+    const inboundEmail = require('../inboundEmail');
+    const matchedLocation = await inboundEmail.locationIdForSender('casey@locations.example');
+    assert(Number(matchedLocation) === Number(byName.Hickory.id), 'a matched customer draft uses their default location');
+    const unmatchedLocation = await inboundEmail.locationIdForSender('stranger@nowhere.example');
+    assert(Number(unmatchedLocation) === Number(byName.Raleigh.id), 'an unmatched draft uses Raleigh');
+    await db.run(
+      `INSERT INTO users (username, password_hash, role, display_name, email, location_id, is_active)
+       VALUES ('noloc-inbound', 'x', 'customer', 'No Location', 'noloc@locations.example', NULL, 1)`
+    );
+    const nullCustomerLocation = await inboundEmail.locationIdForSender('noloc@locations.example');
+    assert(Number(nullCustomerLocation) === Number(byName.Raleigh.id), 'a customer with no default location routes the draft to Raleigh');
+    const hickoryDraft = await db.run(
+      `INSERT INTO inbound_emails (graph_message_id, from_address, subject, status, location_id)
+       VALUES ('hickory-draft', 'casey@locations.example', 'Hickory draft', 'new', ?)`,
+      [matchedLocation]
+    );
+    const raleighDraft = await db.run(
+      `INSERT INTO inbound_emails (graph_message_id, from_address, subject, status, location_id)
+       VALUES ('raleigh-draft', 'stranger@nowhere.example', 'Raleigh draft', 'new', ?)`,
+      [unmatchedLocation]
+    );
+    const hickoryMail = await request({ method: 'GET', path: '/api/inbound-emails?status=new', token: hickoryLogin.token });
+    assert(hickoryMail.status === 200, hickoryMail.text);
+    const hickorySubjects = (hickoryMail.json.emails || []).map((row) => row.subject);
+    assert(hickorySubjects.includes('Hickory draft'), 'Hickory staff see a draft for their customer');
+    assert(!hickorySubjects.includes('Raleigh draft'), 'Hickory staff do not see a Raleigh draft');
+    const raleighMail = await request({ method: 'GET', path: '/api/inbound-emails?status=new', token: raleighLogin.token });
+    const raleighSubjects = (raleighMail.json.emails || []).map((row) => row.subject);
+    assert(raleighSubjects.includes('Raleigh draft'), 'Raleigh staff see an unmatched draft');
+    assert(!raleighSubjects.includes('Hickory draft'), 'Raleigh staff do not see a Hickory customer draft');
+    const hiddenDraft = await request({ method: 'GET', path: `/api/inbound-emails/${hickoryDraft.lastID}`, token: raleighLogin.token });
+    assert(hiddenDraft.status === 404, 'Raleigh staff cannot open a Hickory draft');
+    const openDraft = await request({ method: 'GET', path: `/api/inbound-emails/${raleighDraft.lastID}`, token: raleighManager.token });
+    assert(openDraft.status === 200 && openDraft.json.location_id === byName.Raleigh.id, openDraft.text);
 
     await db.run(`UPDATE work_orders SET location_id = NULL WHERE id = ?`, [charlotteWorkId]);
     await db.run(
