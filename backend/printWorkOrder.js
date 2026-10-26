@@ -5,6 +5,7 @@ const { classifyDelivery, deliveryWindow, getRules, hoursLabel, usesWillCallHour
 const { code128Svg } = require('./barcodeSvg');
 const { ACTIVE_WORK_ORDER_STATUSES } = require('./statuses');
 const { loadLetterhead, DEFAULT_NAME, DEFAULT_ADDRESS, DEFAULT_PHONE, addressLines } = require('./shopProfile');
+const shopLocations = require('./shopLocations');
 const { displayFieldList, readFieldValues, PAYMENT_UNSPECIFIED, RETURN_UNSPECIFIED } = require('./serviceFields');
 const { isProofHeld } = require('./proofs');
 
@@ -304,6 +305,11 @@ async function buildSheet(workOrderId, viewer) {
        wo.next_department,
        wo.specifications,
        wo.created_at,
+       wo.location_id,
+       o.location_id AS order_location_id,
+       l.name AS location_name,
+       l.address AS location_address,
+       l.phone AS location_phone,
        s.name AS service_name,
        ps.name AS stage_name,
        o.order_number,
@@ -348,11 +354,17 @@ async function buildSheet(workOrderId, viewer) {
      LEFT JOIN services s ON s.id = wo.service_id
      LEFT JOIN production_stages ps ON ps.id = wo.stage_id
      LEFT JOIN orders o ON o.id = wo.order_id
+     LEFT JOIN locations l ON l.id = COALESCE(wo.location_id, o.location_id)
      LEFT JOIN users u ON u.id = wo.customer_id
      WHERE wo.id = ?${customerClause}`,
     params
   );
   if (!row) return null;
+  const sheetLocationId = row.location_id != null ? row.location_id : row.order_location_id;
+  if (viewer && viewer.role && viewer.role !== 'customer') {
+    const access = await shopLocations.loadAccess(viewer.userId || viewer.id);
+    if (!shopLocations.matches(access, sheetLocationId)) return null;
+  }
   if (canMarkPrinted(viewer)) {
     row.status = await withTransaction((tx) => noteProductionPrint(tx, row, viewer));
   }
@@ -513,20 +525,40 @@ async function buildSheet(workOrderId, viewer) {
       next_department: row.next_department || '',
     },
     production_history: presentHistory(history, viewer),
+    location_id: sheetLocationId || null,
+    location: {
+      id: sheetLocationId || null,
+      name: row.location_name || '',
+      address: row.location_address || '',
+      phone: row.location_phone || '',
+      address_lines: addressLines(row.location_address || ''),
+    },
   };
 }
 
-function envelope(kind, orderId, orderNumber, sheets, viewer, shop) {
+function envelope(kind, orderId, orderNumber, sheets, viewer, shop, location) {
   const letterhead = shop || SHOP;
+  const place = location && location.name ? location : null;
+  const locationLines = place && place.address
+    ? addressLines(place.address)
+    : (place && place.address_lines ? place.address_lines.slice() : (letterhead.location_address_lines || []).slice());
+  const locationPhone = (place && place.phone) || letterhead.location_phone || '';
   return {
     kind,
     order_id: orderId || null,
     order_number: orderNumber || null,
     shop: {
       name: letterhead.name,
+      location_name: place ? place.name : (letterhead.location_name || null),
       address_lines: (letterhead.address_lines || []).slice(),
       phone: letterhead.phone,
     },
+    location: place ? {
+      id: place.id || null,
+      name: place.name,
+      address_lines: locationLines,
+      phone: locationPhone,
+    } : null,
     scan_instructions: SCAN_INSTRUCTIONS.slice(),
     delivery_window_label: (sheets[0] && sheets[0].delivery && sheets[0].delivery.hours_label) || deliveryHoursLabel('', false),
     generated_at: utcNow(),
@@ -540,8 +572,8 @@ async function printForWorkOrder(viewer, rawId) {
   if (!id) throw httpError(400, 'id must be a positive integer');
   const sheet = await buildSheet(id, viewer);
   if (!sheet) return null;
-  const shop = await loadLetterhead();
-  return envelope('work_order', sheet.order_id, sheet.order_number, [sheet], viewer, shop);
+  const shop = await shopLocations.letterheadForLocationId(sheet.location_id);
+  return envelope('work_order', sheet.order_id, sheet.order_number, [sheet], viewer, shop, sheet.location);
 }
 
 async function printForOrder(viewer, rawId) {
@@ -552,8 +584,13 @@ async function printForOrder(viewer, rawId) {
     const sheet = await buildSheet(workOrder.id, viewer);
     if (sheet) sheets.push(sheet);
   }
-  const shop = await loadLetterhead();
-  return envelope('order', order.id, order.order_number, sheets, viewer, shop);
+  const shop = await shopLocations.letterheadForLocationId(order.location_id);
+  return envelope('order', order.id, order.order_number, sheets, viewer, shop, {
+    id: order.location_id,
+    name: order.location_name,
+    address: order.location_address,
+    phone: order.location_phone,
+  });
 }
 
 module.exports = {

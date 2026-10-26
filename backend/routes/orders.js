@@ -3,6 +3,7 @@ const auth = require('../auth');
 const {
   OrderError,
   createOrder,
+  transferOrder,
   listOrders,
   getOrder,
   orderOptions,
@@ -81,6 +82,14 @@ router.post('/', auth.requireAuth, orderRoles, async (req, res) => {
     res.status(201).json(created);
   } catch (err) {
     sendOrderError(res, err, 'ORDER CREATE ERROR:');
+  }
+});
+
+router.post('/:id/location', auth.requireAuth, auth.requireRole('admin', 'manager'), async (req, res) => {
+  try {
+    res.json(await transferOrder(req.user, req.params.id, req.body || {}));
+  } catch (err) {
+    sendOrderError(res, err, 'ORDER TRANSFER ERROR:');
   }
 });
 

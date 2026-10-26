@@ -178,11 +178,12 @@ function parseListQuery(query) {
 
 function resolveWorkOrder(scannedValue, cb) {
   const value = String(scannedValue || '').trim();
+  const located = `SELECT wo.id, wo.external_id, wo.description, wo.department, wo.status,
+            COALESCE(wo.location_id, o.location_id) AS location_id
+     FROM work_orders wo
+     LEFT JOIN orders o ON o.id = wo.order_id`;
   db.get(
-    `SELECT id, external_id, description, department, status
-     FROM work_orders
-     WHERE external_id = ?
-     ORDER BY id ASC`,
+    `${located} WHERE wo.external_id = ? ORDER BY wo.id ASC`,
     [value],
     (err, byExternal) => {
       if (err) return cb(err);
@@ -191,7 +192,7 @@ function resolveWorkOrder(scannedValue, cb) {
       const id = Number(value);
       if (!Number.isSafeInteger(id)) return cb(null, null);
       db.get(
-        'SELECT id, external_id, description, department, status FROM work_orders WHERE id = ?',
+        `${located} WHERE wo.id = ?`,
         [id],
         (err2, byId) => cb(err2, byId || null)
       );
@@ -756,11 +757,20 @@ function listEvents(filters, cb) {
     )`);
     params.push(filters.departmentLock, filters.departmentLock, filters.departmentLock);
   }
+  if (filters.shopLocationId != null) {
+    if (filters.shopLocationNull) {
+      clauses.push('(COALESCE(wo.location_id, o.location_id) = ? OR COALESCE(wo.location_id, o.location_id) IS NULL)');
+    } else {
+      clauses.push('COALESCE(wo.location_id, o.location_id) = ?');
+    }
+    params.push(filters.shopLocationId);
+  }
 
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const fromSql = `
     FROM barcode_events e
     LEFT JOIN work_orders wo ON e.work_order_id = wo.id
+    LEFT JOIN orders o ON o.id = wo.order_id
     LEFT JOIN users u ON e.operator_id = u.id
     LEFT JOIN production_stages ps ON e.stage_id = ps.id
     ${where}

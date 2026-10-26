@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const db = require('./db');
+const shopLocations = require('./shopLocations');
 
 const BCRYPT_ROUNDS = 10;
 const DEFAULT_SESSION_TTL_HOURS = 8;
@@ -181,26 +182,33 @@ function login(username, password, cb) {
           if (!matches) return cb(null, null);
 
           const finish = () => {
-            const token = createSession(row);
-            cb(null, {
-              token,
-              user: {
-                id: row.id,
-                username: row.username,
-                role: row.role,
-                display_name: row.display_name,
-                company: row.company || '',
-                contact_name: row.contact_name || '',
-                phone: row.phone || '',
-                email: row.email || '',
-                address_line1: row.address_line1 || '',
-                address_line2: row.address_line2 || '',
-                city: row.city || '',
-                state: row.state || '',
-                zip: row.zip || '',
-                department: row.department || null,
-              },
-            });
+            shopLocations.publicUserFields(row.id)
+              .then((locationFields) => {
+                const token = createSession(row);
+                cb(null, {
+                  token,
+                  user: {
+                    id: row.id,
+                    username: row.username,
+                    role: row.role,
+                    display_name: row.display_name,
+                    company: row.company || '',
+                    contact_name: row.contact_name || '',
+                    phone: row.phone || '',
+                    email: row.email || '',
+                    address_line1: row.address_line1 || '',
+                    address_line2: row.address_line2 || '',
+                    city: row.city || '',
+                    state: row.state || '',
+                    zip: row.zip || '',
+                    department: row.department || null,
+                    location_id: locationFields.location_id,
+                    location_name: locationFields.location_name,
+                    all_locations: locationFields.all_locations,
+                  },
+                });
+              })
+              .catch((locationErr) => cb(locationErr));
           };
 
           if (isBcryptHash(row.password_hash)) return finish();

@@ -1,5 +1,6 @@
 const db = require('./db');
 const activityLog = require('./activityLog');
+const shopLocations = require('./shopLocations');
 const { classifyDelivery, getRules, zonedParts, zonedTimeToUtc } = require('./deliveryRules');
 
 const DEFAULT_PAGE_SIZE = 8;
@@ -67,7 +68,7 @@ function resolveBoardScope(user, query) {
   };
 }
 
-function presentViewer(scope) {
+function presentViewer(scope, shop, access) {
   const viewer = {
     department: scope.assigned,
     restricted: scope.restricted,
@@ -76,7 +77,30 @@ function presentViewer(scope) {
   if (scope.restricted && scope.department && scope.department.toLowerCase() === 'complete') {
     viewer.filter = 'completed this month';
   }
+  const canPick = access ? shopLocations.seesAll(access) : false;
+  viewer.can_pick_location = canPick;
+  viewer.all_locations = canPick && !(shop && shop.chosen);
+  if (canPick && !(shop && shop.chosen)) {
+    viewer.location_id = null;
+    viewer.location_name = 'All locations';
+  } else if (shop && shop.locationId != null) {
+    viewer.location_id = shop.locationId;
+    viewer.location_name = shop.locationName || (access && access.location ? access.location.name : null);
+  } else if (access && access.location) {
+    viewer.location_id = access.location_id;
+    viewer.location_name = access.location.name;
+  } else {
+    viewer.location_id = null;
+    viewer.location_name = null;
+  }
   return viewer;
+}
+
+function pushShop(clauses, params, column, filter) {
+  const extra = shopLocations.filterSql(column, filter);
+  if (!extra.sql) return;
+  clauses.push(extra.sql.replace(/^\s*AND\s+/, ''));
+  params.push(...extra.params);
 }
 
 function scanDepartmentSql(alias = 'e') {
@@ -370,6 +394,8 @@ function presentWorkOrder(row, timeZone) {
     file_count: Number(row.file_count) || 0,
     file_bytes: Number(row.file_bytes) || 0,
     files_label: formatFilesLabel(row.file_count, row.file_bytes),
+    location_id: row.location_id || null,
+    location_name: row.location_name || null,
   };
 }
 
@@ -491,7 +517,9 @@ const workOrderSelect = `
     WHEN ps.name IS NOT NULL AND trim(ps.name) != '' THEN ps.name
     ELSE wo.department
   END AS process,
-  s.name AS service_name
+  s.name AS service_name,
+  COALESCE(wo.location_id, o.location_id) AS location_id,
+  l.name AS location_name
 `;
 
 const workOrderFrom = `
@@ -501,9 +529,10 @@ const workOrderFrom = `
   LEFT JOIN services s ON s.id = wo.service_id
   LEFT JOIN production_stages ps ON ps.id = wo.stage_id
   LEFT JOIN departments d ON lower(d.name) = lower(trim(coalesce(wo.department, '')))
+  LEFT JOIN locations l ON l.id = COALESCE(wo.location_id, o.location_id)
 `;
 
-function workOrderFilters(query, scope) {
+function workOrderFilters(query, scope, shop) {
   const locked = Boolean(scope && scope.restricted && scope.department);
   const department = locked ? scope.department : parseOptionalToken(query.department, 'department', 80);
   const search = parseOptionalToken(query.q, 'q', 120);
@@ -603,6 +632,7 @@ function workOrderFilters(query, scope) {
     : SORT_COLUMNS[sort];
   // Earliest due date first. SQLite sorts NULL before every date, so a missing
   // due date is ordered after the dated rows when the direction is ascending.
+  pushShop(clauses, params, 'COALESCE(wo.location_id, o.location_id)', shop);
   const nullsLast = sort === 'due' ? `(${orderColumn} IS NULL) ASC, ` : '';
   return {
     where: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '',
@@ -623,10 +653,11 @@ function parseCategory(value) {
 
 async function listWorkOrders(query, user) {
   const scope = resolveBoardScope(user, query);
+  const shop = await shopLocations.boardFilter(user, query);
   const limit = parseLimit(query.limit, DEFAULT_PAGE_SIZE);
   const offset = parseOffset(query.offset);
   const category = parseCategory(query.category);
-  const filters = workOrderFilters(query, scope);
+  const filters = workOrderFilters(query, scope, shop);
   const rules = getRules();
   const now = new Date();
   const present = (row) => ({
@@ -647,7 +678,7 @@ async function listWorkOrders(query, user) {
       offset,
       timezone: rules.timezone,
       evaluated_at: now.toISOString(),
-      viewer: presentViewer(scope),
+      viewer: presentViewer(scope, shop, user),
     };
   }
 
@@ -668,11 +699,11 @@ async function listWorkOrders(query, user) {
     offset,
     timezone: rules.timezone,
     evaluated_at: now.toISOString(),
-    viewer: presentViewer(scope),
+    viewer: presentViewer(scope, shop, user),
   };
 }
 
-async function countCategories(scope, now) {
+async function countCategories(scope, now, shop) {
   if (scope && scope.restricted && String(scope.department || '').trim().toLowerCase() === 'complete') {
     return { overdue: 0, new: 0, in_production: 0 };
   }
@@ -683,6 +714,9 @@ async function countCategories(scope, now) {
     departmentSql = ` AND lower(trim(coalesce(wo.department, ''))) = lower(?)`;
     params.push(scope.department);
   }
+  const shopSql = shopLocations.filterSql('COALESCE(wo.location_id, o.location_id)', shop);
+  departmentSql += shopSql.sql;
+  params.push(...shopSql.params);
   const rows = await all(
     `SELECT wo.status, wo.priority, ${DUE_AT_SQL} AS due_at
      ${workOrderFrom}
@@ -720,6 +754,31 @@ async function listActivity(query, preview, department, options = {}) {
   } else if (!includeQuotes) {
     where = `WHERE lower(coalesce(a.entity_type, '')) != 'quote_request'`;
   }
+  const shop = options.shop;
+  if (shop && shop.locationId != null) {
+    const match = shop.includeNull
+      ? '(loc.location_id = ? OR loc.location_id IS NULL)'
+      : 'loc.location_id = ?';
+    const workMatch = shop.includeNull
+      ? '(COALESCE(loc.location_id, ord.location_id) = ? OR COALESCE(loc.location_id, ord.location_id) IS NULL)'
+      : 'COALESCE(loc.location_id, ord.location_id) = ?';
+    const locationSql = `(
+      (lower(coalesce(a.entity_type, '')) = 'work_order' AND EXISTS (
+        SELECT 1 FROM work_orders loc
+        LEFT JOIN orders ord ON ord.id = loc.order_id
+        WHERE loc.id = a.entity_id AND ${workMatch}
+      ))
+      OR (lower(coalesce(a.entity_type, '')) = 'order' AND EXISTS (
+        SELECT 1 FROM orders loc WHERE loc.id = a.entity_id AND ${match}
+      ))
+      OR (lower(coalesce(a.entity_type, '')) = 'quote_request' AND EXISTS (
+        SELECT 1 FROM quote_requests loc WHERE loc.id = a.entity_id AND ${match}
+      ))
+      OR lower(coalesce(a.entity_type, '')) NOT IN ('work_order', 'order', 'quote_request', 'proof', 'delivery', 'inbound_email')
+    )`;
+    where = where ? `${where} AND ${locationSql}` : `WHERE ${locationSql}`;
+    params.push(shop.locationId, shop.locationId, shop.locationId);
+  }
   const totalRow = await get(`SELECT COUNT(*) AS count FROM activity_log a ${where}`, params);
   const rows = await all(
     `SELECT a.id, a.actor_id, a.action, a.entity_type, a.entity_id, a.detail, a.created_at,
@@ -752,7 +811,7 @@ function presentApproval(row, timeZone) {
   };
 }
 
-async function listApprovals(query, preview, department) {
+async function listApprovals(query, preview, department, shop) {
   const limit = preview ? APPROVAL_PREVIEW : parseLimit(query.limit, 20);
   const offset = preview ? 0 : parseOffset(query.offset);
   const window = completionWindow();
@@ -762,7 +821,10 @@ async function listApprovals(query, preview, department) {
     where += ` AND lower(trim(coalesce(wo.department, ''))) = lower(?)`;
     params.push(department);
   }
-  const totalRow = await get(`SELECT COUNT(*) AS count FROM work_orders wo ${where}`, params);
+  const shopSql = shopLocations.filterSql('COALESCE(wo.location_id, o.location_id)', shop);
+  where += shopSql.sql;
+  params.push(...shopSql.params);
+  const totalRow = await get(`SELECT COUNT(*) AS count FROM work_orders wo LEFT JOIN orders o ON o.id = wo.order_id ${where}`, params);
   const rows = await all(
     `SELECT wo.id, wo.external_id, wo.department, wo.created_at, wo.approval_status, s.name AS service_name,
             COALESCE(
@@ -788,14 +850,20 @@ async function listApprovals(query, preview, department) {
   };
 }
 
-async function listScans(limit, department) {
+async function listScans(limit, department, shop) {
   const window = completionWindow();
   const params = [];
-  let where = '';
+  const clauses = [];
   if (department) {
-    where = `WHERE ${scanDepartmentSql('e')}`;
+    clauses.push(scanDepartmentSql('e'));
     params.push(department, department, department);
   }
+  const shopSql = shopLocations.filterSql('COALESCE(wo.location_id, o.location_id)', shop);
+  if (shopSql.sql) {
+    clauses.push(shopSql.sql.replace(/^\s*AND\s+/, ''));
+    params.push(...shopSql.params);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   params.push(limit);
   const rows = await all(
     `SELECT e.id, e.event_time, e.location, e.from_department, e.to_department, e.work_order_id,
@@ -803,6 +871,7 @@ async function listScans(limit, department) {
             COALESCE(NULLIF(trim(u.display_name), ''), NULLIF(trim(u.username), ''), 'Unknown') AS scanned_by
      FROM barcode_events e
      LEFT JOIN work_orders wo ON wo.id = e.work_order_id
+     LEFT JOIN orders o ON o.id = wo.order_id
      LEFT JOIN users u ON u.id = e.operator_id
      ${where}
      ORDER BY e.event_time DESC, e.id DESC
@@ -822,20 +891,26 @@ async function listScans(limit, department) {
   }));
 }
 
-async function listOpenQuoteRequests() {
+async function listOpenQuoteRequests(shop) {
+  const shopSql = shopLocations.filterSql('location_id', shop);
   const [newRow, acceptedRow, rows] = await Promise.all([
-    get(`SELECT COUNT(*) AS count FROM quote_requests WHERE status = 'New'`),
-    get(`SELECT COUNT(*) AS count FROM quote_requests WHERE status = 'Accepted' AND converted_order_id IS NULL`),
+    get(`SELECT COUNT(*) AS count FROM quote_requests WHERE status = 'New'${shopSql.sql}`, shopSql.params),
+    get(
+      `SELECT COUNT(*) AS count FROM quote_requests WHERE status = 'Accepted' AND converted_order_id IS NULL${shopSql.sql}`,
+      shopSql.params
+    ),
     all(
-      `SELECT q.id, q.project_name, q.needed_by, q.status,
+      `SELECT q.id, q.project_name, q.needed_by, q.status, q.location_id, l.name AS location_name,
               COALESCE(NULLIF(trim(u.display_name), ''), NULLIF(trim(u.username), ''), '') AS customer_name
        FROM quote_requests q
        LEFT JOIN users u ON u.id = q.customer_id
-       WHERE q.status = 'New'
-          OR (q.status = 'Accepted' AND q.converted_order_id IS NULL)
+       LEFT JOIN locations l ON l.id = q.location_id
+       WHERE (q.status = 'New'
+          OR (q.status = 'Accepted' AND q.converted_order_id IS NULL))
+         ${shopLocations.filterSql('q.location_id', shop).sql}
        ORDER BY datetime(COALESCE(q.updated_at, q.created_at)) DESC, q.id DESC
        LIMIT ?`,
-      [QUOTE_PREVIEW]
+      [...shopLocations.filterSql('q.location_id', shop).params, QUOTE_PREVIEW]
     ),
   ]);
   return {
@@ -848,19 +923,25 @@ async function listOpenQuoteRequests() {
       needed_by: row.needed_by || null,
       needed_by_display: formatWall(row.needed_by),
       status: row.status,
+      location_name: row.location_name || null,
     })),
   };
 }
 
-async function quoteRequestAlerts() {
+async function quoteRequestAlerts(shop) {
+  const shopSql = shopLocations.filterSql('location_id', shop);
   const [newRow, acceptedRow, latestAccepted] = await Promise.all([
-    get(`SELECT COUNT(*) AS count FROM quote_requests WHERE status = 'New'`),
-    get(`SELECT COUNT(*) AS count FROM quote_requests WHERE status = 'Accepted' AND converted_order_id IS NULL`),
+    get(`SELECT COUNT(*) AS count FROM quote_requests WHERE status = 'New'${shopSql.sql}`, shopSql.params),
+    get(
+      `SELECT COUNT(*) AS count FROM quote_requests WHERE status = 'Accepted' AND converted_order_id IS NULL${shopSql.sql}`,
+      shopSql.params
+    ),
     get(
       `SELECT id FROM quote_requests
-       WHERE status = 'Accepted' AND converted_order_id IS NULL
+       WHERE status = 'Accepted' AND converted_order_id IS NULL${shopSql.sql}
        ORDER BY datetime(COALESCE(updated_at, decided_at, created_at)) DESC, id DESC
-       LIMIT 1`
+       LIMIT 1`,
+      shopSql.params
     ),
   ]);
   const alerts = [];
@@ -896,20 +977,26 @@ async function quoteRequestAlerts() {
 
 async function loadAlerts(now = new Date(), scope = null, options = {}) {
   const window = completionWindow();
+  const shop = options.shop || null;
+  const woShop = shopLocations.filterSql('COALESCE(wo.location_id, o.location_id)', shop);
+  const deliveryShop = shopLocations.filterSql('COALESCE(o.location_id, wo.location_id)', shop);
   const [departments, activeRows, deliveries, backup, stored] = await Promise.all([
     all(`SELECT name, color, sort_order, is_active, show_on_board FROM departments ORDER BY sort_order, name`),
     all(
       `SELECT trim(coalesce(wo.department, '')) AS name, COUNT(*) AS count
        FROM work_orders wo
-       WHERE ${ACTIVE_SQL}
-       GROUP BY trim(coalesce(wo.department, ''))`
+       LEFT JOIN orders o ON o.id = wo.order_id
+       WHERE ${ACTIVE_SQL}${woShop.sql}
+       GROUP BY trim(coalesce(wo.department, ''))`,
+      woShop.params
     ),
     all(
       `SELECT d.id, d.due_time, d.status, wo.external_id, wo.department AS work_order_department, o.order_number
        FROM deliveries d
        LEFT JOIN work_orders wo ON wo.id = d.work_order_id
-       LEFT JOIN orders o ON o.id = d.order_id
-       WHERE lower(trim(coalesce(d.status, ''))) != 'complete'`
+       LEFT JOIN orders o ON o.id = COALESCE(d.order_id, wo.order_id)
+       WHERE lower(trim(coalesce(d.status, ''))) != 'complete'${deliveryShop.sql}`,
+      deliveryShop.params
     ),
     get(`SELECT value FROM system_settings WHERE key = 'last_backup_at'`),
     all(
@@ -944,7 +1031,7 @@ async function loadAlerts(now = new Date(), scope = null, options = {}) {
 
   const alerts = [];
   if (options && options.includeQuotes) {
-    alerts.push(...await quoteRequestAlerts());
+    alerts.push(...await quoteRequestAlerts(shop));
   }
   if (emptyNames.length) {
     const allEmpty = tracked > 0 && emptyNames.length === tracked;
@@ -1036,6 +1123,8 @@ async function loadAlerts(now = new Date(), scope = null, options = {}) {
 
 async function loadSummary(user, query) {
   const scope = resolveBoardScope(user, query || {});
+  const shop = await shopLocations.boardFilter(user, query || {});
+  const woShop = shopLocations.filterSql('COALESCE(wo.location_id, o.location_id)', shop);
   const includeQuotes = canSeeQuoteRequests(user);
   const now = new Date();
   const window = completionWindow(now);
@@ -1055,24 +1144,27 @@ async function loadSummary(user, query) {
     all(
       `SELECT trim(coalesce(wo.department, '')) AS name, COUNT(*) AS count
        FROM work_orders wo
-       WHERE ${ACTIVE_SQL}
-       GROUP BY trim(coalesce(wo.department, ''))`
+       LEFT JOIN orders o ON o.id = wo.order_id
+       WHERE ${ACTIVE_SQL}${woShop.sql}
+       GROUP BY trim(coalesce(wo.department, ''))`,
+      woShop.params
     ),
-    get(`SELECT COUNT(*) AS count FROM work_orders wo WHERE ${ACTIVE_SQL}`),
-    get(`SELECT COUNT(*) AS count FROM work_orders wo WHERE ${COMPLETE_SCOPE_SQL}`),
+    get(`SELECT COUNT(*) AS count FROM work_orders wo LEFT JOIN orders o ON o.id = wo.order_id WHERE ${ACTIVE_SQL}${woShop.sql}`, woShop.params),
+    get(`SELECT COUNT(*) AS count FROM work_orders wo LEFT JOIN orders o ON o.id = wo.order_id WHERE ${COMPLETE_SCOPE_SQL}${woShop.sql}`, woShop.params),
     get(
       `SELECT COUNT(*) AS count
        FROM work_orders wo
+       LEFT JOIN orders o ON o.id = wo.order_id
        WHERE ${FINISHED_SQL}
          AND datetime(coalesce(wo.updated_at, wo.created_at)) >= datetime(?)
-         AND datetime(coalesce(wo.updated_at, wo.created_at)) < datetime(?)`,
-      [window.start, window.end]
+         AND datetime(coalesce(wo.updated_at, wo.created_at)) < datetime(?)${woShop.sql}`,
+      [window.start, window.end, ...woShop.params]
     ),
-    listActivity({}, true, scope.restricted ? scope.department : null, { includeQuotes }),
-    listApprovals({}, true, scope.restricted ? scope.department : null),
-    listScans(SCAN_PREVIEW, scope.restricted ? scope.department : null),
-    loadAlerts(now, scope, { includeQuotes }),
-    includeQuotes ? listOpenQuoteRequests() : Promise.resolve(null),
+    listActivity({}, true, scope.restricted ? scope.department : null, { includeQuotes, shop }),
+    listApprovals({}, true, scope.restricted ? scope.department : null, shop),
+    listScans(SCAN_PREVIEW, scope.restricted ? scope.department : null, shop),
+    loadAlerts(now, scope, { includeQuotes, shop }),
+    includeQuotes ? listOpenQuoteRequests(shop) : Promise.resolve(null),
   ]);
 
   const activeByLower = new Map();
@@ -1126,7 +1218,7 @@ async function loadSummary(user, query) {
     count: tab.count,
     color: tab.color,
   }));
-  const categories = await countCategories(scope, now);
+  const categories = await countCategories(scope, now, shop);
 
   const body = {
     generated_at: now.toISOString(),
@@ -1148,9 +1240,13 @@ async function loadSummary(user, query) {
     approvals: approvals.approvals,
     approvals_total: approvals.total,
     alerts,
-    viewer: presentViewer(scope),
+    viewer: presentViewer(scope, shop, user),
   };
   if (quoteRequests) body.quote_requests = quoteRequests;
+  if (shopLocations.seesAll(user)) {
+    body.locations = await shopLocations.listLocations({ includeInactive: false });
+    body.location_summary = await shopLocations.comparison();
+  }
 
   if (!scope.restricted) return body;
 
@@ -1161,17 +1257,18 @@ async function loadSummary(user, query) {
   const color = (deptRow && deptRow.color) || '#607D8B';
   const completedRow = key === 'complete'
     ? await get(
-      `SELECT COUNT(*) AS count FROM work_orders wo WHERE ${finishedThisMonthSql()}`,
-      [window.start, window.end]
+      `SELECT COUNT(*) AS count FROM work_orders wo LEFT JOIN orders o ON o.id = wo.order_id WHERE ${finishedThisMonthSql()}${woShop.sql}`,
+      [window.start, window.end, ...woShop.params]
     )
     : await get(
       `SELECT COUNT(*) AS count
        FROM work_orders wo
+       LEFT JOIN orders o ON o.id = wo.order_id
        WHERE ${FINISHED_SQL}
          AND lower(trim(coalesce(wo.department, ''))) = lower(?)
          AND datetime(coalesce(wo.updated_at, wo.created_at)) >= datetime(?)
-         AND datetime(coalesce(wo.updated_at, wo.created_at)) < datetime(?)`,
-      [scope.department, window.start, window.end]
+         AND datetime(coalesce(wo.updated_at, wo.created_at)) < datetime(?)${woShop.sql}`,
+      [scope.department, window.start, window.end, ...woShop.params]
     );
   const tabCount = key === 'complete' ? (completedRow ? completedRow.count : 0) : activeCount;
   body.tabs = [{ key: label, label, count: tabCount, color }];

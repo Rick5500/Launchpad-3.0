@@ -5,6 +5,18 @@
 
 PRAGMA foreign_keys = ON;
 
+-- Shop locations. Distinct from barcode_locations, which are scan stations.
+CREATE TABLE IF NOT EXISTS locations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  address TEXT,
+  phone TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME
+);
+
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT NOT NULL UNIQUE,
@@ -21,6 +33,7 @@ CREATE TABLE IF NOT EXISTS users (
   state TEXT,
   zip TEXT,
   department TEXT, -- staff home department; NULL means every department. Managers are stored with NULL
+  location_id INTEGER, -- staff home location, or a customer's default location. NULL manager = every location. Admins see every location.
   is_active INTEGER DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME
@@ -86,6 +99,7 @@ CREATE TABLE IF NOT EXISTS orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   order_number TEXT NOT NULL UNIQUE,
   customer_id INTEGER NOT NULL,
+  location_id INTEGER, -- shop that will produce this order
   company TEXT NOT NULL,
   contact_name TEXT NOT NULL,
   phone TEXT NOT NULL,
@@ -152,6 +166,7 @@ CREATE TABLE IF NOT EXISTS work_orders (
   attachments TEXT,
   notes TEXT,
   order_id INTEGER,
+  location_id INTEGER, -- copied from the order; standalone work orders store their own
   service_id INTEGER,
   next_department TEXT,
   requires_approval INTEGER DEFAULT 0,
@@ -468,6 +483,7 @@ CREATE TABLE IF NOT EXISTS inbound_emails (
   received_at TEXT,
   body_text TEXT,
   status TEXT NOT NULL DEFAULT 'new',
+  location_id INTEGER, -- shop this draft belongs to
   suggestion_json TEXT,
   order_id INTEGER,
   converted_by INTEGER,
@@ -531,6 +547,7 @@ CREATE TABLE IF NOT EXISTS notifications (
   order_id INTEGER,
   transfer_id INTEGER,
   quote_request_id INTEGER,
+  location_id INTEGER, -- shop this event belongs to; NULL is treated as Raleigh
   dedupe_key TEXT NOT NULL UNIQUE,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(customer_id) REFERENCES users(id),
@@ -560,6 +577,7 @@ CREATE INDEX IF NOT EXISTS idx_notification_reads_user ON notification_reads(use
 CREATE TABLE IF NOT EXISTS quote_requests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   customer_id INTEGER NOT NULL,
+  location_id INTEGER, -- shop the customer asked to quote
   project_name TEXT NOT NULL,
   description TEXT,
   quantity TEXT,

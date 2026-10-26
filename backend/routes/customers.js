@@ -32,7 +32,7 @@ function parsePositiveInteger(value) {
 router.get('/lookup', auth.requireAuth, auth.requireRole('admin', 'manager', 'operator'), (req, res) => {
   db.all(
     `SELECT id, username, display_name, company, contact_name, phone, email,
-            address_line1, address_line2, city, state, zip
+            address_line1, address_line2, city, state, zip, location_id
      FROM users
      WHERE role = 'customer' AND COALESCE(is_active, 1) = 1
      ORDER BY display_name ASC`,

@@ -224,6 +224,7 @@ export default function AdminBoard() {
   const [tableError, setTableError] = useState('');
   const [tableLoading, setTableLoading] = useState(true);
   const [department, setDepartment] = useState('Active');
+  const [shopLocation, setShopLocation] = useState('all');
   const [viewAll, setViewAll] = useState(false);
   const [searchInput, setSearchInput] = useState('');
   const [q, setQ] = useState('');
@@ -264,7 +265,10 @@ export default function AdminBoard() {
 
   useEffect(() => {
     let cancelled = false;
-    const summaryPath = viewAll ? '/api/admin-board?scope=all' : '/api/admin-board';
+    const summaryParams = new URLSearchParams();
+    if (viewAll) summaryParams.set('scope', 'all');
+    if (shopLocation && shopLocation !== 'all') summaryParams.set('location_id', shopLocation);
+    const summaryPath = `/api/admin-board?${summaryParams.toString()}`;
     authFetch(summaryPath, { cache: 'no-store' })
       .then(async (response) => {
         const body = await response.json().catch(() => ({}));
@@ -286,7 +290,7 @@ export default function AdminBoard() {
     return () => {
       cancelled = true;
     };
-  }, [refreshKey, viewAll]);
+  }, [refreshKey, viewAll, shopLocation]);
 
   useEffect(() => {
     let cancelled = false;
@@ -305,6 +309,7 @@ export default function AdminBoard() {
     if (filters.category) params.set('category', filters.category);
     if (filters.due_from) params.set('due_from', filters.due_from);
     if (filters.due_to) params.set('due_to', filters.due_to);
+    if (shopLocation && shopLocation !== 'all') params.set('location_id', shopLocation);
 
     authFetch(`/api/admin-board/work-orders?${params.toString()}`, { cache: 'no-store' })
       .then(async (response) => {
@@ -331,7 +336,7 @@ export default function AdminBoard() {
     return () => {
       cancelled = true;
     };
-  }, [department, q, filters, offset, sort, refreshKey, viewAll, summary?.viewer?.restricted]);
+  }, [department, q, filters, offset, sort, refreshKey, viewAll, summary?.viewer?.restricted, shopLocation]);
 
   useEffect(() => {
     if (!summary?.viewer?.restricted || viewAll || !summary.viewer.department) return;
@@ -590,6 +595,55 @@ export default function AdminBoard() {
 
   return (
     <Box sx={{ display: 'grid', gap: 2 }}>
+      {summary?.viewer?.can_pick_location ? (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+          <TextField
+            select
+            label="Location"
+            value={shopLocation}
+            data-testid="location-picker"
+            onChange={(event) => {
+              setShopLocation(event.target.value);
+              setOffset(0);
+            }}
+            sx={{ minWidth: 280, bgcolor: '#fff', '& .MuiInputBase-input': { fontSize: '1.2rem', fontWeight: 700 } }}
+          >
+            <MenuItem value="all">All locations</MenuItem>
+            {(summary.locations || []).map((location) => (
+              <MenuItem key={location.id} value={String(location.id)}>{location.name}</MenuItem>
+            ))}
+          </TextField>
+        </Box>
+      ) : summary?.viewer?.location_name ? (
+        <Chip
+          data-testid="operator-location-chip"
+          label={`Showing: ${summary.viewer.location_name}`}
+          sx={{ fontWeight: 800, fontSize: '1.05rem', bgcolor: brand.navy, color: '#fff', height: 40 }}
+        />
+      ) : null}
+      {summary?.viewer?.can_pick_location && shopLocation === 'all' && (summary.location_summary || []).length ? (
+        <Box
+          data-testid="location-summary"
+          sx={{
+            display: 'grid',
+            gap: 1.5,
+            gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' },
+          }}
+        >
+          {summary.location_summary.map((location) => (
+            <Box
+              key={location.id}
+              data-testid={`location-summary-${location.name}`}
+              sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderTop: `6px solid ${brand.orange}`, borderRadius: 2, p: 2 }}
+            >
+              <Typography sx={{ color: brand.navy, fontWeight: 800, fontSize: '1.6rem' }}>{location.name}</Typography>
+              <Typography sx={{ fontSize: '2rem', fontWeight: 800, lineHeight: 1.15, mt: 1 }}>{location.active_work_orders}</Typography>
+              <Typography sx={{ fontSize: '1.05rem', fontWeight: 700 }}>Active work orders</Typography>
+              <Typography sx={{ fontSize: '1.15rem', mt: 1 }}>{location.orders} orders · {location.new_quotes} new quotes</Typography>
+            </Box>
+          ))}
+        </Box>
+      ) : null}
       {(summary?.viewer?.restricted || summary?.viewer?.can_clear) && (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
           {summary.viewer.restricted && (
@@ -803,6 +857,9 @@ export default function AdminBoard() {
                         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.15, minWidth: 0 }} aria-label={signalText || undefined}>
                           <Box component="span" title={row.order_number || undefined} sx={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.order_number}</Box>
                           <Box component="span" title={row.company || undefined} sx={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.company || '—'}</Box>
+                          {summary?.viewer?.can_pick_location && row.location_name ? (
+                            <Box component="span" sx={{ color: brand.navy, fontWeight: 800 }}>{row.location_name}</Box>
+                          ) : null}
                           <Box component="span" title={row.contact_name || undefined} sx={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.contact_name || '—'}</Box>
                           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.4, mt: 0.35 }}>
                             <UrgencyChips urgency={row.urgency} fresh={fresh} />
