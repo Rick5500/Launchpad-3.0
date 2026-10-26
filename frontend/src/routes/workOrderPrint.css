@@ -103,6 +103,37 @@
   background: transparent;
 }
 
+.wo-band-aside {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 0.08in;
+  min-width: 0;
+}
+
+.wo-acg-plate {
+  background: #fff;
+  padding: 0.04in 0.06in 0.05in;
+  border-radius: 2px;
+  text-align: center;
+}
+
+.wo-acg-caption {
+  color: #0a2f6e;
+  font-size: 11pt;
+  font-weight: 800;
+  line-height: 1.2;
+  margin-bottom: 0.02in;
+}
+
+.wo-acg {
+  width: 1.45in;
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
 .wo-band-copy {
   display: flex;
   flex-direction: column;
@@ -485,6 +516,10 @@
     max-width: 3.6in;
   }
 
+  .wo-band-aside {
+    align-items: flex-start;
+  }
+
   .wo-number {
     white-space: normal;
     overflow-wrap: break-word;
@@ -825,6 +860,12 @@
   .wo-band-copy {
     width: 100%;
     max-width: 3.6in;
+  }
+
+  .wo-acg-plate,
+  .wo-acg {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 
   .wo-barcode img {

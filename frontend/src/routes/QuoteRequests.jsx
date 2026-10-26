@@ -8,6 +8,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
+import { QuotePrintMasthead } from '../components/AcgMark';
 import QuoteStatusChip from '../components/QuoteStatusChip';
 import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
@@ -257,6 +258,7 @@ function QuoteDetail({ id, onBack }) {
 
   return (
     <Box data-testid="quote-detail" sx={{ maxWidth: 980, mx: 'auto' }}>
+      <QuotePrintMasthead />
       <Button onClick={onBack} sx={{ fontSize: '1.05rem', fontWeight: 800, color: brand.navy, mb: 1 }}>
         Back to Quote Requests
       </Button>

@@ -722,6 +722,8 @@ async function main() {
     const html = mailed.json.email.preview && mailed.json.email.preview.html;
     assert(html && html.includes('Window graphic') && html.includes('$70.00'), 'the quote email should name the job and the price');
     assert(html.includes('quotes%2F') || html.includes('/quotes/'), 'the quote email should link back to the customer quote');
+    assert(html.includes('https://launchpad.example/brand/logo.png'), 'the quote email should keep the Launchpad logo');
+    assert(html.includes('https://launchpad.example/brand/acg-logo.png'), 'the quote email footer should include the ACG logo');
 
     const mailDb = openDb(dbFile);
     await mailDb.run(`UPDATE users SET email = 'admin@quote.example' WHERE username = 'admin'`);
@@ -795,6 +797,8 @@ async function main() {
     assert(!recipients.includes('operator@quote.example') && !recipients.includes('quiet@quote.example'), 'operators and inactive managers should not be emailed');
     assert(mailedDetail.subject === 'New quote request from Quinn Quote: Mailed banner <b>', `email subject should name the request, got ${mailedDetail.subject}`);
     const mailer = require('../mailer');
+    const previousUrl = process.env.PUBLIC_APP_URL;
+    process.env.PUBLIC_APP_URL = 'https://launchpad.example';
     const rendered = mailer.renderQuoteRequestEmail({
       letterhead: { name: 'Accent', address_lines: [], phone: '' },
       customerName: 'Quinn <Quote>',
@@ -805,6 +809,9 @@ async function main() {
     assert(rendered.html.includes('Quinn &lt;Quote&gt;') && rendered.html.includes('A &amp; B'), 'the request email should escape names');
     assert(!rendered.html.includes('Quinn <Quote>'), 'raw HTML in a customer name should not be sent');
     assert(rendered.html.includes('quote-requests'), 'the request email should link to Quote Requests');
+    assert(rendered.html.includes('https://launchpad.example/brand/acg-logo.png'), 'the quote-request email footer should include the ACG logo');
+    if (previousUrl == null) delete process.env.PUBLIC_APP_URL;
+    else process.env.PUBLIC_APP_URL = previousUrl;
   } catch (err) {
     console.error(mailServer.logs());
     throw err;

@@ -27,6 +27,7 @@ import Inventory2OutlinedIcon from '@mui/icons-material/Inventory2Outlined';
 import LocalShippingOutlinedIcon from '@mui/icons-material/LocalShippingOutlined';
 import BrushOutlinedIcon from '@mui/icons-material/BrushOutlined';
 import CloseIcon from '@mui/icons-material/Close';
+import { AcgBroughtBy } from '../components/AcgMark';
 import CustomerShell from '../components/CustomerShell';
 import BrandLogo from '../components/BrandLogo';
 import { useDocumentTitle } from '../useDocumentTitle';
@@ -1889,16 +1890,19 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
         }}
         >
           <Box sx={{ maxWidth: 1440, mx: 'auto', display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 1.25, alignItems: { xs: 'stretch', sm: 'center' }, justifyContent: 'space-between' }}>
-            <Box sx={{ minWidth: 0 }}>
-              <Typography aria-live="polite" sx={{ fontWeight: 800, color: brand.navy, fontSize: 15 }}>
-                {countLabel(selectedServices.length, 'service', 'services')}
-                {' · '}
-                {countLabel(lines.length, 'line', 'lines')}
-                {filesAttached ? ` · ${countLabel(uploadedCount, 'file', 'files')}` : ''}
-              </Typography>
-              <Typography sx={{ fontSize: 12, color: brand.muted }}>
-                {uploading ? 'Uploading files…' : result ? `Order ${result.order_number} submitted.` : 'Submit stays here while you fill the order.'}
-              </Typography>
+            <Box sx={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+              {!isStaff ? <AcgBroughtBy width={88} inline /> : null}
+              <Box sx={{ minWidth: 0 }}>
+                <Typography aria-live="polite" sx={{ fontWeight: 800, color: brand.navy, fontSize: 15 }}>
+                  {countLabel(selectedServices.length, 'service', 'services')}
+                  {' · '}
+                  {countLabel(lines.length, 'line', 'lines')}
+                  {filesAttached ? ` · ${countLabel(uploadedCount, 'file', 'files')}` : ''}
+                </Typography>
+                <Typography sx={{ fontSize: 12, color: brand.muted }}>
+                  {uploading ? 'Uploading files…' : result ? `Order ${result.order_number} submitted.` : 'Submit stays here while you fill the order.'}
+                </Typography>
+              </Box>
             </Box>
             <Button
               className="order-submit"
@@ -2014,6 +2018,7 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
       title={isStaff ? 'Create Order' : 'Customer Order Form'}
       welcome={welcomeText(user)}
       onLogout={logout}
+      showDivision={false}
       extra={isStaff ? <Button color="inherit" onClick={() => navigate('/')}>Dashboard</Button> : null}
     >
       {content}

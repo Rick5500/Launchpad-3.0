@@ -31,6 +31,7 @@ import Notifications from './routes/Notifications';
 import SendFiles from './routes/SendFiles';
 import EmailOrders from './routes/EmailOrders';
 import CustomerFiles from './routes/CustomerFiles';
+import { AcgBroughtBy } from './components/AcgMark';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -547,6 +548,7 @@ function LoginScreen() {
         ) : null}
       </Box>
       {formVisible ? (
+        <>
         <Box
           data-testid="sign-in-card"
           sx={{
@@ -721,6 +723,25 @@ function LoginScreen() {
             )}
           </Box>
         </Box>
+        <AcgBroughtBy
+          width={{ xs: 200, sm: 240 }}
+          align="center"
+          sx={{
+            mt: 2.5,
+            mb: 1,
+            px: 2.5,
+            py: 1.5,
+            borderRadius: 2,
+            bgcolor: 'rgba(255,255,255,0.94)',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.28)',
+            animation: animateForm ? `${loginCardIn} 500ms ease` : 'none',
+            '@media (prefers-reduced-motion: reduce)': {
+              animation: 'none',
+            },
+          }}
+          captionSx={{ fontSize: 16 }}
+        />
+        </>
       ) : null}
     </Box>
   );

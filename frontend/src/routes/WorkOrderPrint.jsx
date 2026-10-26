@@ -294,10 +294,16 @@ function WorkOrderSheet({ payload, sheet }) {
             <div className="wo-number">{display(sheet.barcode_value, '')}</div>
           </div>
         </div>
-        <div className="wo-barcode-block">
-          <Barcode svg={sheet.barcode_svg} className="wo-barcode" />
-          <div className="wo-barcode-text">{display(sheet.barcode_value, '')}</div>
-          {instructions ? <div className="wo-scan-note">{instructions}</div> : null}
+        <div className="wo-band-aside">
+          <div className="wo-acg-plate">
+            <div className="wo-acg-caption">Brought to you by</div>
+            <img className="wo-acg" src="/brand/acg-logo-print.png" alt="Accent Corporate Graphics" />
+          </div>
+          <div className="wo-barcode-block">
+            <Barcode svg={sheet.barcode_svg} className="wo-barcode" />
+            <div className="wo-barcode-text">{display(sheet.barcode_value, '')}</div>
+            {instructions ? <div className="wo-scan-note">{instructions}</div> : null}
+          </div>
         </div>
       </header>
 

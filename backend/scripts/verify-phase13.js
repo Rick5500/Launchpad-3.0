@@ -458,6 +458,9 @@ async function runApiChecks() {
     assert(html.includes('Accent File Shop'), 'html should use the letterhead name');
     assert(html.includes('100 Test Lane'), 'html should use the letterhead address');
     assert(html.includes('919-555-0144'), 'html should use the letterhead phone');
+    assert(html.includes(`${appUrl}/brand/logo.png`), 'the file email should keep the Launchpad logo');
+    assert(html.includes(`${appUrl}/brand/acg-logo.png`), 'the file email footer should include the ACG logo');
+    assert(html.includes('Brought to you by'), 'the file email should label the ACG mark');
     assert(!html.includes('info@accent'), 'html should not invent a contact email');
     assert(!html.includes(smtpPass) && !text.includes(smtpPass), 'email should not contain the SMTP password');
     assert(html.includes(`${appUrl}/login?next=`), `email should link to sign-in: ${html}`);
@@ -686,6 +689,7 @@ async function runApiChecks() {
     });
     assert(testMail.status === 200 && testMail.json.status === 'sent', `test email failed: ${testMail.status} ${testMail.text}`);
     assert(testMail.json.preview && String(testMail.json.preview.html).includes('Accent File Shop'), 'the test email should use the letterhead');
+    assert(String(testMail.json.preview.html).includes(`${appUrl}/brand/acg-logo.png`), 'the test email footer should include the ACG logo');
     const testLog = await db.get(`SELECT detail FROM activity_log WHERE action = 'settings.test_email_sent'`);
     assert(testLog && testLog.detail.includes('ops@accent.example'), 'the test email should be logged');
 
@@ -808,7 +812,46 @@ async function runUnreachableSmtp() {
   }
 }
 
+function runEmailBranding() {
+  const mailer = require('../mailer');
+  const letterhead = {
+    name: 'Accent File Shop',
+    address_lines: ['100 Test Lane', 'Raleigh, NC 27601'],
+    phone: '919-555-0144',
+  };
+  const previous = process.env.PUBLIC_APP_URL;
+  process.env.PUBLIC_APP_URL = appUrl;
+  const link = `${appUrl}/login?next=%2Forders%2F1`;
+  const samples = [
+    mailer.renderShareEmail({ letterhead, orderNumber: 'LP-1', message: 'Ready', fileNames: ['a.pdf'], link }),
+    mailer.renderTransferEmail({ letterhead, subject: 'Files', message: 'Ready', fileNames: ['a.pdf'], link: `${appUrl}/login?next=%2Ffiles%2F1` }),
+    mailer.renderQuoteEmail({ letterhead, projectName: 'Banner', price: '$10.00', notes: 'Net 15', validUntil: '2026-12-01', lineItems: [], link: `${appUrl}/login?next=%2Fquotes%2F1` }),
+    mailer.renderProofEmail({ letterhead, orderNumber: 'LP-1', version: 1, message: 'Look', fileNames: ['a.pdf'], link: `${appUrl}/login?next=%2Forders%2F1%23proofs`, workOrderNumber: 'LP-1-A' }),
+    mailer.renderProofChangesEmail({ letterhead, orderNumber: 'LP-1', version: 1, comment: 'Darker', customerName: 'Pat', link, workOrderNumber: 'LP-1-A' }),
+    mailer.renderQuoteRequestEmail({ letterhead, customerName: 'Pat', projectName: 'Banner', neededBy: '2026-12-01', link: `${appUrl}/login?next=%2Fquote-requests%2F1` }),
+    mailer.renderTestEmail({ letterhead }),
+  ];
+  for (const rendered of samples) {
+    assert(rendered.html.includes(`${appUrl}/brand/logo.png`), `Launchpad logo missing from ${rendered.subject}`);
+    assert(rendered.html.includes(`${appUrl}/brand/acg-logo.png`), `ACG logo missing from ${rendered.subject}`);
+    assert(rendered.html.includes('alt="Accent Corporate Graphics"'), `ACG image should be named in ${rendered.subject}`);
+    assert(rendered.html.includes('Brought to you by'), `division label missing from ${rendered.subject}`);
+    assert(rendered.html.includes('100 Test Lane') && rendered.html.includes('919-555-0144'), `letterhead should stay beside the ACG logo in ${rendered.subject}`);
+    assert(rendered.text.includes('Brought to you by Accent Corporate Graphics'), `plain text should name the division in ${rendered.subject}`);
+    assert(!rendered.html.includes('acg-logo.pdf'), 'email should use the web PNG, not the vector original');
+  }
+  process.env.PUBLIC_APP_URL = '';
+  const omitted = mailer.renderTestEmail({ letterhead });
+  assert(!omitted.html.includes('acg-logo') && !omitted.html.includes('<img'), 'hosted logos should be omitted when PUBLIC_APP_URL is unset');
+  assert(omitted.html.includes('100 Test Lane') && omitted.html.includes('919-555-0144'), 'letterhead text should remain when the logo is omitted');
+  assert(omitted.text.includes('Brought to you by Accent Corporate Graphics'), 'plain text should still name the division');
+  if (previous == null) delete process.env.PUBLIC_APP_URL;
+  else process.env.PUBLIC_APP_URL = previous;
+  console.log('PASS customer emails include the ACG footer mark');
+}
+
 async function main() {
+  runEmailBranding();
   await checkMigration();
   await runApiChecks();
   await runUnconfigured();
