@@ -1,13 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { keyframes } from '@emotion/react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { ThemeProvider, CssBaseline, Box, Typography, TextField, Button, CircularProgress, Alert } from '@mui/material';
+import { ThemeProvider, CssBaseline, Box, Typography, TextField, Button, CircularProgress, Alert, MenuItem } from '@mui/material';
 import AdminBoard from './routes/AdminBoard';
 import PlaceholderPage from './routes/PlaceholderPage';
 import SearchOrders from './routes/SearchOrders';
 import ServicesPage from './routes/ServicesPage';
 import UsersPage from './routes/UsersPage';
 import SystemSettingsPage from './routes/SystemSettingsPage';
+import LocationsPage from './routes/LocationsPage';
 import ActivityLogPage from './routes/ActivityLogPage';
 import BarcodeSettingsPage from './routes/BarcodeSettingsPage';
 import WorkOrdersList from './routes/WorkOrdersList';
@@ -199,6 +200,8 @@ function LoginScreen() {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [website, setWebsite] = useState('');
+  const [locations, setLocations] = useState([]);
+  const [locationId, setLocationId] = useState('');
   const [localError, setLocalError] = useState('');
   const location = useLocation();
   const nextPath = returnPath(location);
@@ -339,7 +342,13 @@ function LoginScreen() {
       .then(async (response) => {
         const body = await response.json().catch(() => ({}));
         if (!response.ok) return;
-        if (!cancelled) setSignupEnabled(body.customer_self_signup_enabled === true);
+        if (!cancelled) {
+          setSignupEnabled(body.customer_self_signup_enabled === true);
+          const shops = Array.isArray(body.locations) ? body.locations : [];
+          setLocations(shops);
+          const raleigh = shops.find((shop) => String(shop.name || '').toLowerCase() === 'raleigh');
+          setLocationId((current) => current || (raleigh ? String(raleigh.id) : (shops[0] ? String(shops[0].id) : '')));
+        }
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -412,6 +421,7 @@ function LoginScreen() {
       password: newPassword,
       password_confirm: confirmPassword,
       website,
+      location_id: locationId ? Number(locationId) : undefined,
     });
   }
 
@@ -655,6 +665,21 @@ function LoginScreen() {
                     sx={darkFieldSx}
                   />
                   <TextField
+                    select
+                    label="Default location"
+                    value={locationId}
+                    onChange={(event) => setLocationId(event.target.value)}
+                    fullWidth
+                    required
+                    data-testid="signup-location"
+                    helperText="Orders and quotes start at this shop. You can pick a different shop on each order."
+                    sx={darkFieldSx}
+                  >
+                    {locations.map((shop) => (
+                      <MenuItem key={shop.id} value={String(shop.id)}>{shop.name}</MenuItem>
+                    ))}
+                  </TextField>
+                  <TextField
                     label="Password"
                     type="password"
                     value={newPassword}
@@ -763,6 +788,7 @@ function AppRoutes() {
         <Route path="services" element={<ProtectedRoute roles={['admin']}><ServicesPage /></ProtectedRoute>} />
         <Route path="users" element={<ProtectedRoute roles={['admin']}><UsersPage /></ProtectedRoute>} />
         <Route path="settings" element={<ProtectedRoute roles={['admin']}><SystemSettingsPage /></ProtectedRoute>} />
+        <Route path="locations" element={<ProtectedRoute roles={['admin']}><LocationsPage /></ProtectedRoute>} />
         <Route path="activity-log" element={<ProtectedRoute roles={['admin']}><ActivityLogPage /></ProtectedRoute>} />
         <Route path="barcode-settings" element={<ProtectedRoute roles={['admin']}><BarcodeSettingsPage /></ProtectedRoute>} />
         <Route path="admin" element={<ProtectedRoute roles={['admin']}><PlaceholderPage title="Admin" /></ProtectedRoute>} />

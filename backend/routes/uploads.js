@@ -15,6 +15,7 @@ const {
   removeStored,
 } = require('../fileStore');
 const { maxUnattachedUploads, countUnattachedUploads } = require('../uploadMaintenance');
+const shopLocations = require('../shopLocations');
 
 const router = express.Router();
 const uploadRoles = auth.requireRole('admin', 'manager', 'operator', 'customer');
@@ -51,16 +52,36 @@ function isQuoteOnlyFile(file) {
   return file.quote_request_id != null && file.order_id == null;
 }
 
+async function staffSeesLocation(user, locationId) {
+  const access = await shopLocations.loadAccess(user.userId || user.id);
+  return shopLocations.matches(access, locationId);
+}
+
 async function canAccessFile(user, file) {
   if (!file) return false;
   // A quote attachment that is not on an order is visible only to the owning
   // customer, a manager, or an admin. Operators never see those files.
   if (isQuoteOnlyFile(file)) {
-    if (user.role === 'admin' || user.role === 'manager') return true;
+    if (user.role === 'admin') return true;
+    if (user.role === 'manager') {
+      const quote = await get('SELECT location_id FROM quote_requests WHERE id = ?', [file.quote_request_id]);
+      if (!quote) return false;
+      return staffSeesLocation(user, quote.location_id);
+    }
     if (user.role !== 'customer') return false;
     return Number(file.customer_id) === Number(user.userId || user.id);
   }
-  if (user.role === 'admin' || user.role === 'manager' || user.role === 'operator') return true;
+  if (user.role === 'admin' || user.role === 'manager' || user.role === 'operator') {
+    if (!file.order_id && !file.work_order_id) return true;
+    if (file.order_id) {
+      const order = await get('SELECT location_id FROM orders WHERE id = ?', [file.order_id]);
+      if (!order) return false;
+      return staffSeesLocation(user, order.location_id);
+    }
+    const workOrder = await get('SELECT location_id FROM work_orders WHERE id = ?', [file.work_order_id]);
+    if (!workOrder) return false;
+    return staffSeesLocation(user, workOrder.location_id);
+  }
   if (user.role !== 'customer') return false;
   const userId = Number(user.userId || user.id);
   if (Number(file.customer_id) === userId) return true;

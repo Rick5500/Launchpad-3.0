@@ -4,6 +4,7 @@ import {
   Alert,
   Box,
   Button,
+  MenuItem,
   TextField,
   Typography,
 } from '@mui/material';
@@ -11,6 +12,7 @@ import QuoteStatusChip from '../components/QuoteStatusChip';
 import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
 import { authFetch, downloadAuthorized } from '../api';
+import { useAuth } from '../context/AuthContext';
 import { brand, formatFileSize } from '../brand';
 import { quoteBodySx, quoteFieldSx, quotePrimaryButtonSx } from '../quoteUi';
 
@@ -22,6 +24,7 @@ const EMPTY_FORM = {
   material: '',
   finishing: '',
   needed_by: '',
+  location_id: '',
 };
 
 function money(quote) {
@@ -138,10 +141,27 @@ function MyQuotes({ onNew, onOpen }) {
 }
 
 function RequestForm({ onCreated }) {
+  const { user } = useAuth();
   const [form, setForm] = useState(EMPTY_FORM);
   const [files, setFiles] = useState([]);
+  const [locations, setLocations] = useState([]);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    authFetch('/api/locations')
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) return;
+        setLocations(body.locations || []);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!user?.location_id) return;
+    setForm((current) => (current.location_id ? current : { ...current, location_id: String(user.location_id) }));
+  }, [user]);
 
   function update(field) {
     return (event) => setForm((current) => ({ ...current, [field]: event.target.value }));
@@ -220,6 +240,18 @@ function RequestForm({ onCreated }) {
       />
       {error ? <Alert severity="error" sx={{ mb: 2, '& .MuiAlert-message': { fontSize: '1.1rem' } }}>{error}</Alert> : null}
       <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderTop: `4px solid ${brand.orange}`, borderRadius: 1.5, p: { xs: 2, sm: 2.5 }, display: 'grid', gap: 2 }}>
+        <TextField
+          select
+          label="Location for this request"
+          required
+          value={form.location_id}
+          onChange={update('location_id')}
+          data-testid="quote-location"
+          helperText="Starts at your default shop. Pick another shop for this request only."
+          sx={quoteFieldSx}
+        >
+          {locations.map((shop) => <MenuItem key={shop.id} value={String(shop.id)}>{shop.name}</MenuItem>)}
+        </TextField>
         <TextField label="Project / job name" required value={form.project_name} onChange={update('project_name')} sx={quoteFieldSx} />
         <TextField label="Description / specs" required multiline minRows={4} value={form.description} onChange={update('description')} sx={quoteFieldSx} />
         <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' } }}>

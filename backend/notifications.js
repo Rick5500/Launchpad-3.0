@@ -2,6 +2,7 @@ const db = require('./db');
 const { withTransaction } = require('./dbAsync');
 const { classifyDelivery, getRules } = require('./deliveryRules');
 const notifyEmail = require('./notifyEmail');
+const shopLocations = require('./shopLocations');
 
 const DEFAULT_DUE_SOON_MINUTES = 60;
 const DEFAULT_LIMIT = 20;
@@ -9,6 +10,7 @@ const MAX_LIMIT = 100;
 
 const STAFF_ROLES = new Set(['admin', 'manager', 'operator']);
 const QUOTE_NOTIFICATION_TYPES = ['quote_ready', 'quote_accepted', 'quote_requested', 'quote_declined'];
+const MANAGER_ONLY_TYPES = [...QUOTE_NOTIFICATION_TYPES, 'order_created'];
 
 function dueSoonMinutes() {
   const raw = process.env.DELIVERY_DUE_SOON_MINUTES;
@@ -58,8 +60,8 @@ function writeNotifications(items, cb) {
     for (const item of items) {
       const inserted = await tx.run(
         `INSERT OR IGNORE INTO notifications
-          (type, title, body, customer_id, work_order_id, delivery_id, order_id, transfer_id, quote_request_id, dedupe_key)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+          (type, title, body, customer_id, work_order_id, delivery_id, order_id, transfer_id, quote_request_id, location_id, dedupe_key)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
         [
           item.type,
           item.title,
@@ -70,6 +72,7 @@ function writeNotifications(items, cb) {
           item.orderId == null ? null : item.orderId,
           item.transferId == null ? null : item.transferId,
           item.quoteRequestId == null ? null : item.quoteRequestId,
+          item.locationId == null ? null : item.locationId,
           item.dedupeKey,
         ]
       );
@@ -85,6 +88,7 @@ function writeNotifications(items, cb) {
           order_id: item.orderId == null ? null : item.orderId,
           transfer_id: item.transferId == null ? null : item.transferId,
           quote_request_id: item.quoteRequestId == null ? null : item.quoteRequestId,
+          location_id: item.locationId == null ? null : item.locationId,
         });
       }
     }
@@ -117,6 +121,21 @@ function insertNotifications(items, cb) {
   );
 }
 
+function notifyOrderCreated(item, cb) {
+  if (!item || !item.orderId) return cb(null, []);
+  const number = item.orderNumber || item.orderId;
+  const company = item.company ? ` from ${item.company}` : '';
+  insertNotifications([{
+    type: 'order_created',
+    title: item.title || `New order ${number}`,
+    body: item.body || `Order ${number}${company} was submitted.`,
+    customerId: null,
+    orderId: item.orderId,
+    locationId: item.locationId == null ? null : item.locationId,
+    dedupeKey: item.dedupeKey || `order_created:${item.orderId}`,
+  }], cb);
+}
+
 function notifyWorkOrderCreated(row, cb) {
   if (!row || !row.id) return cb(null, []);
   const items = [];
@@ -129,6 +148,7 @@ function notifyWorkOrderCreated(row, cb) {
       body: `${workOrderLabel(row)} was put on hold.`,
       customerId: row.customer_id,
       workOrderId: row.id,
+      locationId: row.location_id == null ? null : row.location_id,
       dedupeKey: `work_order_on_hold:${row.id}:${stamp}`,
     });
   }
@@ -139,6 +159,7 @@ function notifyWorkOrderCreated(row, cb) {
       body: `${workOrderLabel(row)} was completed.`,
       customerId: row.customer_id,
       workOrderId: row.id,
+      locationId: row.location_id == null ? null : row.location_id,
       dedupeKey: `work_order_completed:${row.id}:${stamp}`,
     });
   }
@@ -149,6 +170,7 @@ function notifyWorkOrderCreated(row, cb) {
       body: `${workOrderLabel(row)} was created with rush priority.`,
       customerId: row.customer_id,
       workOrderId: row.id,
+      locationId: row.location_id == null ? null : row.location_id,
       dedupeKey: `work_order_rush:${row.id}`,
     });
   }
@@ -168,6 +190,7 @@ function notifyWorkOrderUpdated(previous, current, cb) {
       body: `${workOrderLabel(current)} was put on hold.`,
       customerId: current.customer_id,
       workOrderId: current.id,
+      locationId: current.location_id == null ? null : current.location_id,
       dedupeKey: `work_order_on_hold:${current.id}:${stamp}:${previousStatus}`,
     });
   }
@@ -178,6 +201,7 @@ function notifyWorkOrderUpdated(previous, current, cb) {
       body: `${workOrderLabel(current)} was completed.`,
       customerId: current.customer_id,
       workOrderId: current.id,
+      locationId: current.location_id == null ? null : current.location_id,
       dedupeKey: `work_order_completed:${current.id}:${stamp}:${previousStatus}`,
     });
   }
@@ -194,6 +218,7 @@ function notifyProofReady(item, cb) {
     customerId: item.customerId,
     workOrderId: item.workOrderId == null ? null : item.workOrderId,
     orderId: item.orderId,
+    locationId: item.locationId == null ? null : item.locationId,
     dedupeKey: `proof_ready:${item.proofId}`,
   }], cb);
 }
@@ -207,6 +232,7 @@ function notifyProofDecision(item, cb) {
     customerId: null,
     workOrderId: item.workOrderId == null ? null : item.workOrderId,
     orderId: item.orderId == null ? null : item.orderId,
+    locationId: item.locationId == null ? null : item.locationId,
     dedupeKey: `proof_decision:${item.proofId}:${item.status || 'decision'}`,
   }], cb);
 }
@@ -219,6 +245,7 @@ function notifyQuoteReady(item, cb) {
     body: item.body || '',
     customerId: item.customerId,
     quoteRequestId: item.quoteRequestId,
+    locationId: item.locationId == null ? null : item.locationId,
     dedupeKey: item.dedupeKey || `quote_ready:${item.quoteRequestId}`,
   }], cb);
 }
@@ -231,6 +258,7 @@ function notifyQuoteAccepted(item, cb) {
     body: item.body || '',
     customerId: null,
     quoteRequestId: item.quoteRequestId,
+    locationId: item.locationId == null ? null : item.locationId,
     dedupeKey: item.dedupeKey || `quote_accepted:${item.quoteRequestId}`,
   }], cb);
 }
@@ -243,6 +271,7 @@ function notifyQuoteRequested(item, cb) {
     body: item.body || '',
     customerId: null,
     quoteRequestId: item.quoteRequestId,
+    locationId: item.locationId == null ? null : item.locationId,
     dedupeKey: item.dedupeKey || `quote_requested:${item.quoteRequestId}`,
   }], cb);
 }
@@ -255,6 +284,7 @@ function notifyQuoteDeclined(item, cb) {
     body: item.body || '',
     customerId: null,
     quoteRequestId: item.quoteRequestId,
+    locationId: item.locationId == null ? null : item.locationId,
     dedupeKey: item.dedupeKey || `quote_declined:${item.quoteRequestId}`,
   }], cb);
 }
@@ -276,6 +306,7 @@ function notifyFilesShared(item, cb) {
     workOrderId: item.workOrderId == null ? null : item.workOrderId,
     orderId: item.orderId || null,
     transferId: item.transferId || null,
+    locationId: item.locationId == null ? null : item.locationId,
     dedupeKey,
   }], cb);
 }
@@ -291,6 +322,7 @@ function deliveryNotification(row, type) {
     customerId: row.customer_id,
     workOrderId: row.work_order_id,
     deliveryId: row.id,
+    locationId: row.location_id == null ? null : row.location_id,
     dedupeKey: `${type}:${row.id}:${row.due_time}`,
   };
 }
@@ -310,9 +342,11 @@ function checkDeliveryNotifications(now = new Date(), cb) {
        d.status,
        d.will_call,
        wo.external_id,
-       wo.customer_id
+       wo.customer_id,
+       COALESCE(o.location_id, wo.location_id) AS location_id
      FROM deliveries d
      LEFT JOIN work_orders wo ON wo.id = d.work_order_id
+     LEFT JOIN orders o ON o.id = COALESCE(d.order_id, wo.order_id)
      WHERE d.due_time IS NOT NULL
        AND trim(d.due_time) != ''
        AND lower(trim(COALESCE(d.status, ''))) != 'complete'`,
@@ -356,16 +390,26 @@ function parsePositiveId(value) {
   return parsed;
 }
 
-function visibility(user) {
-  if (user && (user.role === 'admin' || user.role === 'manager')) return { sql: '', params: [] };
-  if (isStaff(user)) {
-    const placeholders = QUOTE_NOTIFICATION_TYPES.map(() => '?').join(', ');
-    return {
-      sql: `WHERE n.type NOT IN (${placeholders})`,
-      params: QUOTE_NOTIFICATION_TYPES.slice(),
-    };
+function visibility(user, access) {
+  if (user && user.role === 'customer') {
+    return { sql: 'WHERE n.customer_id = ?', params: [user.userId] };
   }
-  return { sql: 'WHERE n.customer_id = ?', params: [user.userId] };
+  const clauses = [];
+  const params = [];
+  if (user && user.role === 'operator') {
+    const placeholders = MANAGER_ONLY_TYPES.map(() => '?').join(', ');
+    clauses.push(`n.type NOT IN (${placeholders})`);
+    params.push(...MANAGER_ONLY_TYPES);
+  }
+  if (access && !shopLocations.seesAll(access) && user && user.role !== 'customer') {
+    const pred = shopLocations.predicate('n.location_id', access);
+    if (pred.sql) {
+      clauses.push(pred.sql);
+      params.push(...pred.params);
+    }
+  }
+  if (!clauses.length) return { sql: '', params: [] };
+  return { sql: `WHERE ${clauses.join(' AND ')}`, params };
 }
 
 function mapRow(row) {
@@ -391,7 +435,8 @@ function listNotifications(user, query, cb) {
   const offset = parseOffset(query && query.offset);
   if (offset.error) return cb(Object.assign(new Error(offset.error), { status: 400, publicMessage: offset.error }));
 
-  const visible = visibility(user);
+  shopLocations.loadAccess(user.userId).then((access) => {
+  const visible = visibility(user, access);
   const where = visible.sql;
   const countSql = `
     SELECT
@@ -438,16 +483,19 @@ function listNotifications(user, query, cb) {
       }
     );
   });
+  }).catch(cb);
 }
 
 function findVisible(user, id, cb) {
-  const visible = visibility(user);
-  const where = visible.sql ? `${visible.sql} AND n.id = ?` : 'WHERE n.id = ?';
-  db.get(
-    `SELECT n.id FROM notifications n ${where}`,
-    [...visible.params, id],
-    (err, row) => cb(err, row || null)
-  );
+  shopLocations.loadAccess(user.userId).then((access) => {
+    const visible = visibility(user, access);
+    const where = visible.sql ? `${visible.sql} AND n.id = ?` : 'WHERE n.id = ?';
+    db.get(
+      `SELECT n.id FROM notifications n ${where}`,
+      [...visible.params, id],
+      (err, row) => cb(err, row || null)
+    );
+  }).catch(cb);
 }
 
 function markRead(user, id, cb) {
@@ -489,6 +537,7 @@ function markAllRead(user, cb) {
 
 module.exports = {
   dueSoonMinutes,
+  notifyOrderCreated,
   notifyWorkOrderCreated,
   notifyWorkOrderUpdated,
   notifyFilesShared,

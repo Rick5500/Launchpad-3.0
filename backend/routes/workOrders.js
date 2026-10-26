@@ -10,6 +10,7 @@ const proofs = require('../proofs');
 const { isPrintableBarcode } = require('../barcodeSvg');
 const notifications = require('../notifications');
 const activityLog = require('../activityLog');
+const shopLocations = require('../shopLocations');
 const router = express.Router();
 
 const staffRoles = auth.requireRole('admin', 'manager', 'operator');
@@ -61,6 +62,9 @@ const workOrderFieldList = `
   wo.created_at,
   wo.updated_at,
   wo.customer_id,
+  wo.location_id,
+  o.location_id AS order_location_id,
+  l.name AS location_name,
   u.display_name AS customer_name,
   u.username AS customer_username,
   o.order_number,
@@ -91,8 +95,20 @@ const workOrderFieldList = `
 const workOrderJoins = `
   LEFT JOIN users u ON wo.customer_id = u.id
   LEFT JOIN orders o ON o.id = wo.order_id
+  LEFT JOIN locations l ON l.id = COALESCE(wo.location_id, o.location_id)
   LEFT JOIN services s ON s.id = wo.service_id
 `;
+
+function recordLocationId(row) {
+  if (!row) return null;
+  return row.location_id != null ? row.location_id : row.order_location_id;
+}
+
+async function staffSeesWorkOrder(user, locationId) {
+  if (!user || user.role === 'customer') return true;
+  const access = await shopLocations.loadAccess(user.userId);
+  return shopLocations.matches(access, locationId);
+}
 
 function parseOptionalNumber(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -146,13 +162,32 @@ function validateWorkOrder(data) {
 
   return errors;
 }
-router.get('/', auth.requireAuth, (req, res) => {
+router.get('/', auth.requireAuth, async (req, res) => {
   const params = [];
-  let where = '';
-  if (req.user.role === 'customer') {
-    where = 'WHERE wo.customer_id = ?';
-    params.push(req.user.userId);
+  const clauses = [];
+  try {
+    if (req.user.role === 'customer') {
+      clauses.push('wo.customer_id = ?');
+      params.push(req.user.userId);
+    } else {
+      const access = await shopLocations.loadAccess(req.user.userId);
+      const pred = shopLocations.predicate('COALESCE(wo.location_id, o.location_id)', access);
+      if (pred.sql) {
+        clauses.push(pred.sql);
+        params.push(...pred.params);
+      }
+      const chosen = await shopLocations.boardFilter(access, req.query);
+      const extra = shopLocations.filterSql('COALESCE(wo.location_id, o.location_id)', chosen);
+      if (extra.sql) {
+        clauses.push(extra.sql.replace(/^\s*AND\s+/, ''));
+        params.push(...extra.params);
+      }
+    }
+  } catch (err) {
+    console.error('WORK ORDER LIST ERROR:', err);
+    return res.status(err.status || 500).json({ error: err.publicMessage || err.message || 'Failed to load work orders' });
   }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
   db.all(
     `SELECT ${workOrderFieldList}
@@ -210,6 +245,8 @@ router.get('/:id', auth.requireAuth, (req, res) => {
         return res.status(404).json({ error: 'Work order not found' });
       }
 
+      staffSeesWorkOrder(req.user, recordLocationId(row)).then((allowed) => {
+        if (!allowed) return res.status(404).json({ error: 'Work order not found' });
       loadWorkOrderContext(row, req.user)
         .then((detailed) => proofs.presentForWorkOrder(detailed.id, detailed.order_id)
           .then((proof) => res.json({ ...detailed, ...proof })))
@@ -217,6 +254,10 @@ router.get('/:id', auth.requireAuth, (req, res) => {
           console.error('WORK ORDER DETAIL ERROR:', contextErr);
           return res.status(500).json({ error: 'Failed to load work order' });
         });
+      }).catch((guardErr) => {
+        console.error('WORK ORDER DETAIL ERROR:', guardErr);
+        return res.status(500).json({ error: 'Failed to load work order' });
+      });
     }
   );
 });
@@ -236,7 +277,10 @@ router.get('/:id/events', auth.requireAuth, (req, res) => {
   }
 
   db.get(
-    `SELECT id FROM work_orders WHERE id = ?${customerClause}`,
+    `SELECT wo.id, wo.location_id, o.location_id AS order_location_id
+     FROM work_orders wo
+     LEFT JOIN orders o ON o.id = wo.order_id
+     WHERE wo.id = ?${customerClause.replace('customer_id', 'wo.customer_id')}`,
     params,
     (err, order) => {
       if (err) {
@@ -245,12 +289,18 @@ router.get('/:id/events', auth.requireAuth, (req, res) => {
       }
       if (!order) return res.status(404).json({ error: 'Work order not found' });
 
+      staffSeesWorkOrder(req.user, recordLocationId(order)).then((allowed) => {
+        if (!allowed) return res.status(404).json({ error: 'Work order not found' });
       barcodeEvents.listEvents({ ...parsed.value, workOrderId: id }, (listErr, result) => {
         if (listErr) {
           console.error('WORK ORDER EVENTS ERROR:', listErr);
           return res.status(500).json({ error: 'Failed to load barcode events' });
         }
         res.json(result);
+      });
+      }).catch((guardErr) => {
+        console.error('WORK ORDER EVENTS ERROR:', guardErr);
+        return res.status(500).json({ error: 'Failed to load barcode events' });
       });
     }
   );
@@ -267,7 +317,20 @@ router.post('/', auth.requireAuth, staffRoles, (req, res) => {
     insertWorkOrder(department);
   });
 
-  function insertWorkOrder(department) {
+  async function insertWorkOrder(department) {
+  let locationId = null;
+  try {
+    const resolved = await shopLocations.resolveOrderLocation(
+      null,
+      req.user,
+      payload.location_id,
+      Number(payload.customer_id)
+    );
+    locationId = resolved.value;
+  } catch (err) {
+    const status = err.status && err.status < 500 ? err.status : 500;
+    return res.status(status).json({ error: err.publicMessage || err.message || 'Failed to create work order' });
+  }
   const {
     external_id,
     customer_id,
@@ -291,8 +354,8 @@ router.post('/', auth.requireAuth, staffRoles, (req, res) => {
 
   db.run(
     `INSERT INTO work_orders
-      (external_id, customer_id, description, quantity, status, department, stage_id, priority, assigned_department_id, assigned_user_id, estimated_hours, actual_hours, specifications, start_date, due_date, production_line, routing_instructions, attachments, notes)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      (external_id, customer_id, description, quantity, status, department, stage_id, priority, assigned_department_id, assigned_user_id, estimated_hours, actual_hours, specifications, start_date, due_date, production_line, routing_instructions, attachments, notes, location_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       external_id || null,
       Number(customer_id),
@@ -313,6 +376,7 @@ router.post('/', auth.requireAuth, staffRoles, (req, res) => {
       routing_instructions || null,
       attachments || null,
       notes || null,
+      locationId,
     ],
     function (err) {
       if (err) {
@@ -396,11 +460,13 @@ router.put('/:id', auth.requireAuth, staffRoles, (req, res) => {
   } = payload;
 
   db.get(
-    `SELECT id, status, priority, customer_id, external_id, department FROM work_orders WHERE id = ?`,
+    `SELECT id, status, priority, customer_id, external_id, department, location_id FROM work_orders WHERE id = ?`,
     [id],
     (lookupErr, previous) => {
       if (lookupErr) return res.status(500).json({ error: 'Failed to update work order' });
       if (!previous) return res.status(404).json({ error: 'Work order not found' });
+      staffSeesWorkOrder(req.user, previous.location_id).then((allowed) => {
+        if (!allowed) return res.status(404).json({ error: 'Work order not found' });
 
       db.run(
         `UPDATE work_orders SET
@@ -496,6 +562,10 @@ router.put('/:id', auth.requireAuth, staffRoles, (req, res) => {
           );
         }
       );
+      }).catch((guardErr) => {
+        console.error('WORK ORDER UPDATE ERROR:', guardErr);
+        return res.status(500).json({ error: 'Failed to update work order' });
+      });
     }
   );
   }
@@ -511,6 +581,17 @@ router.post('/:id/move', auth.requireAuth, auth.requireRole('admin', 'manager'),
     const access = await users.loadAccess(req.user.userId);
     if (access.role !== 'admin' && access.role !== 'manager') {
       return res.status(403).json({ error: 'Forbidden' });
+    }
+    const located = await new Promise((resolve, reject) => {
+      db.get(
+        `SELECT wo.location_id, o.location_id AS order_location_id
+         FROM work_orders wo LEFT JOIN orders o ON o.id = wo.order_id WHERE wo.id = ?`,
+        [id],
+        (err, row) => (err ? reject(err) : resolve(row || null))
+      );
+    });
+    if (!located || !shopLocations.matches(access, recordLocationId(located))) {
+      return res.status(404).json({ error: 'Work order not found' });
     }
     const result = await barcodeEvents.moveWorkOrder({
       workOrderId: id,
@@ -535,6 +616,15 @@ router.put('/:id/stage', auth.requireAuth, staffRoles, (req, res) => {
   const stageId = parsePositiveInteger(req.body?.stage_id);
   if (!stageId) return res.status(400).json({ error: 'stage_id must be a positive integer' });
 
+  db.get(
+    `SELECT wo.location_id, o.location_id AS order_location_id
+     FROM work_orders wo LEFT JOIN orders o ON o.id = wo.order_id WHERE wo.id = ?`,
+    [id],
+    (locateErr, located) => {
+      if (locateErr) return res.status(500).json({ error: 'Failed to update work order stage' });
+      if (!located) return res.status(404).json({ error: 'Work order not found' });
+      staffSeesWorkOrder(req.user, recordLocationId(located)).then((allowed) => {
+        if (!allowed) return res.status(404).json({ error: 'Work order not found' });
   db.get('SELECT id FROM production_stages WHERE id = ?', [stageId], (err, stage) => {
     if (err) {
       console.error('WORK ORDER STAGE ERROR:', err);
@@ -555,6 +645,12 @@ router.put('/:id/stage', auth.requireAuth, staffRoles, (req, res) => {
       }
     );
   });
+      }).catch((guardErr) => {
+        console.error('WORK ORDER STAGE ERROR:', guardErr);
+        return res.status(500).json({ error: 'Failed to update work order stage' });
+      });
+    }
+  );
 });
 
 router.put('/:id/priority', auth.requireAuth, staffRoles, (req, res) => {
@@ -566,6 +662,15 @@ router.put('/:id/priority', auth.requireAuth, staffRoles, (req, res) => {
     return res.status(400).json({ error: 'priority must be Low, Normal, High, or Rush' });
   }
 
+  db.get(
+    `SELECT wo.location_id, o.location_id AS order_location_id
+     FROM work_orders wo LEFT JOIN orders o ON o.id = wo.order_id WHERE wo.id = ?`,
+    [id],
+    (locateErr, located) => {
+      if (locateErr) return res.status(500).json({ error: 'Failed to update work order priority' });
+      if (!located) return res.status(404).json({ error: 'Work order not found' });
+      staffSeesWorkOrder(req.user, recordLocationId(located)).then((allowed) => {
+        if (!allowed) return res.status(404).json({ error: 'Work order not found' });
   db.run(
     `UPDATE work_orders SET priority = ?, updated_at = datetime('now') WHERE id = ?`,
     [priority, id],
@@ -573,6 +678,12 @@ router.put('/:id/priority', auth.requireAuth, staffRoles, (req, res) => {
       if (err) return res.status(500).json({ error: 'Failed to update work order priority' });
       if (this.changes === 0) return res.status(404).json({ error: 'Work order not found' });
       res.json({ success: true, id, priority });
+    }
+  );
+      }).catch((guardErr) => {
+        console.error('WORK ORDER PRIORITY ERROR:', guardErr);
+        return res.status(500).json({ error: 'Failed to update work order priority' });
+      });
     }
   );
 });

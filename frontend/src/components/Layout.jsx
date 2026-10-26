@@ -27,6 +27,7 @@ import BusinessIcon from '@mui/icons-material/Business';
 import DesignServicesIcon from '@mui/icons-material/DesignServices';
 import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
 import SettingsIcon from '@mui/icons-material/Settings';
+import StorefrontIcon from '@mui/icons-material/Storefront';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import HistoryIcon from '@mui/icons-material/History';
 import QrCode2Icon from '@mui/icons-material/QrCode2';
@@ -73,6 +74,7 @@ const staffNav = [
   { title: 'Departments', route: '/admin/departments', icon: <BusinessIcon />, roles: ['admin'] },
   { title: 'Services', route: '/services', icon: <DesignServicesIcon />, roles: ['admin'] },
   { title: 'Users', route: '/users', icon: <ManageAccountsIcon />, roles: ['admin'] },
+  { title: 'Locations', route: '/locations', icon: <StorefrontIcon />, roles: ['admin'] },
   { title: 'System Settings', route: '/settings', icon: <SettingsIcon />, roles: ['admin'] },
   { title: 'Notifications', route: '/notifications', icon: <NotificationsIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Activity Log', route: '/activity-log', icon: <HistoryIcon />, roles: ['admin'] },
@@ -115,6 +117,7 @@ function pageTitle(pathname) {
     ['/admin/departments', 'Departments'],
     ['/services', 'Services'],
     ['/users', 'Users'],
+    ['/locations', 'Locations'],
     ['/settings', 'System Settings'],
     ['/notifications', 'Notifications'],
     ['/activity-log', 'Activity Log'],

@@ -219,9 +219,18 @@ function consumeRate(actorId) {
 
 function footerLines(letterhead) {
   const lines = [];
-  if (letterhead && letterhead.name) lines.push(letterhead.name);
-  for (const line of (letterhead && letterhead.address_lines) || []) lines.push(line);
-  if (letterhead && letterhead.phone) lines.push(letterhead.phone);
+  function push(value) {
+    const text = String(value || '').trim();
+    if (!text) return;
+    if (lines.some((line) => line.trim().toLowerCase() === text.toLowerCase())) return;
+    lines.push(text);
+  }
+  if (letterhead && letterhead.name) push(letterhead.name);
+  if (letterhead && letterhead.location_name) push(letterhead.location_name);
+  for (const line of (letterhead && letterhead.location_address_lines) || []) push(line);
+  if (letterhead && letterhead.location_phone) push(letterhead.location_phone);
+  for (const line of (letterhead && letterhead.address_lines) || []) push(line);
+  if (letterhead && letterhead.phone) push(letterhead.phone);
   return lines;
 }
 

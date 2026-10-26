@@ -9,6 +9,7 @@ const {
   publicRulesView,
   suggestDueTime,
 } = require('../deliveryRules');
+const shopLocations = require('../shopLocations');
 
 const router = express.Router();
 const staffRoles = auth.requireRole('admin', 'manager', 'operator');
@@ -34,7 +35,9 @@ const deliverySelect = `
     wo.customer_id,
     u.display_name AS customer_name,
     o.ups_account_number,
-    o.delivery_method AS order_delivery_method
+    o.delivery_method AS order_delivery_method,
+    o.location_id AS order_location_id,
+    wo.location_id AS work_order_location_id
   FROM deliveries d
   LEFT JOIN work_orders wo ON d.work_order_id = wo.id
   LEFT JOIN users u ON wo.customer_id = u.id
@@ -138,17 +141,26 @@ function customerClause(user, params) {
 function loadDelivery(id, user, cb) {
   const params = [id];
   const scope = customerClause(user, params);
-  db.get(`${deliverySelect} WHERE d.id = ?${scope}`, params, (err, row) => {
-    if (err) return cb(err);
-    if (!row) return cb(null, null);
-    cb(null, annotate(row));
-  });
+  db.get(
+    `${deliverySelect} WHERE d.id = ?${scope}`,
+    params,
+    (err, row) => {
+      if (err) return cb(err);
+      if (!row) return cb(null, null);
+      if (user.role === 'customer') return cb(null, annotate(row));
+      shopLocations.loadAccess(user.userId).then((access) => {
+        const locationId = row.order_location_id != null ? row.order_location_id : row.work_order_location_id;
+        if (!shopLocations.matches(access, locationId)) return cb(null, null);
+        cb(null, annotate(row));
+      }).catch((accessErr) => cb(accessErr));
+    }
+  );
 }
 
 function resolveWorkOrder(value, cb) {
   if (value.work_order_id && value.external_id) {
     db.get(
-      'SELECT id, external_id, customer_id FROM work_orders WHERE id = ?',
+      'SELECT id, external_id, customer_id, location_id FROM work_orders WHERE id = ?',
       [value.work_order_id],
       (err, row) => {
         if (err) return cb(err);
@@ -164,7 +176,7 @@ function resolveWorkOrder(value, cb) {
 
   if (value.work_order_id) {
     db.get(
-      'SELECT id, external_id, customer_id FROM work_orders WHERE id = ?',
+      'SELECT id, external_id, customer_id, location_id FROM work_orders WHERE id = ?',
       [value.work_order_id],
       (err, row) => {
         if (err) return cb(err);
@@ -176,7 +188,7 @@ function resolveWorkOrder(value, cb) {
   }
 
   db.get(
-    'SELECT id, external_id, customer_id FROM work_orders WHERE external_id = ? ORDER BY id ASC',
+    'SELECT id, external_id, customer_id, location_id FROM work_orders WHERE external_id = ? ORDER BY id ASC',
     [value.external_id],
     (err, row) => {
       if (err) return cb(err);
@@ -190,7 +202,7 @@ router.get('/rules', auth.requireAuth, (req, res) => {
   res.json(publicRulesView(new Date()));
 });
 
-router.get('/', auth.requireAuth, (req, res) => {
+router.get('/', auth.requireAuth, async (req, res) => {
   const limit = parseLimit(req.query.limit);
   if (limit.error) return res.status(400).json({ error: limit.error });
   const offset = parseOffset(req.query.offset);
@@ -201,6 +213,18 @@ router.get('/', auth.requireAuth, (req, res) => {
   if (req.user.role === 'customer') {
     clauses.push('wo.customer_id = ?');
     params.push(req.user.userId);
+  } else {
+    try {
+      const access = await shopLocations.loadAccess(req.user.userId);
+      const pred = shopLocations.predicate('COALESCE(o.location_id, wo.location_id)', access);
+      if (pred.sql) {
+        clauses.push(pred.sql);
+        params.push(...pred.params);
+      }
+    } catch (err) {
+      console.error('DELIVERY LIST ERROR:', err);
+      return res.status(500).json({ error: 'Failed to load deliveries' });
+    }
   }
 
   if (req.query.status != null && req.query.status !== '') {
@@ -309,6 +333,17 @@ router.post('/', auth.requireAuth, staffRoles, (req, res) => {
     }
     if (resolved.error) return res.status(resolved.status).json({ error: resolved.error });
 
+    shopLocations.loadAccess(req.user.userId).then((access) => {
+      if (!shopLocations.matches(access, resolved.workOrder.location_id)) {
+        return res.status(404).json({ error: 'Work order not found' });
+      }
+      insertDelivery();
+    }).catch((accessErr) => {
+      console.error('DELIVERY CREATE ERROR:', accessErr);
+      return res.status(500).json({ error: 'Failed to create delivery' });
+    });
+
+    function insertDelivery() {
     const computedDue = hasDueTime ? dueTime.value : suggestDueTime(willCall.value === 1).dueTime;
     const storedCarrier = carrier.value || (willCall.value ? 'Will Call' : null);
 
@@ -331,6 +366,7 @@ router.post('/', auth.requireAuth, staffRoles, (req, res) => {
         });
       }
     );
+    }
   });
 });
 
@@ -359,6 +395,12 @@ router.put('/:id', auth.requireAuth, staffRoles, (req, res) => {
   if (hasStatus && !status.value) errors.push('status must be pending, scheduled, out-for-delivery, or complete');
   if (errors.length) return res.status(400).json({ error: errors.join('; ') });
 
+  loadDelivery(id.value, req.user, (visibleErr, visible) => {
+    if (visibleErr) {
+      console.error('DELIVERY UPDATE ERROR:', visibleErr);
+      return res.status(500).json({ error: 'Failed to update delivery' });
+    }
+    if (!visible) return res.status(404).json({ error: 'Delivery not found' });
   db.get('SELECT id, will_call, due_time, carrier, status FROM deliveries WHERE id = ?', [id.value], (err, existing) => {
     if (err) {
       console.error('DELIVERY UPDATE ERROR:', err);
@@ -396,6 +438,7 @@ router.put('/:id', auth.requireAuth, staffRoles, (req, res) => {
         });
       }
     );
+  });
   });
 });
 

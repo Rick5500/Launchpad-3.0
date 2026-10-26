@@ -179,7 +179,7 @@ function parseListQuery(query) {
 function resolveWorkOrder(scannedValue, cb) {
   const value = String(scannedValue || '').trim();
   db.get(
-    `SELECT id, external_id, description, department, status
+    `SELECT id, external_id, description, department, status, location_id
      FROM work_orders
      WHERE external_id = ?
      ORDER BY id ASC`,
@@ -191,7 +191,7 @@ function resolveWorkOrder(scannedValue, cb) {
       const id = Number(value);
       if (!Number.isSafeInteger(id)) return cb(null, null);
       db.get(
-        'SELECT id, external_id, description, department, status FROM work_orders WHERE id = ?',
+        'SELECT id, external_id, description, department, status, location_id FROM work_orders WHERE id = ?',
         [id],
         (err2, byId) => cb(err2, byId || null)
       );
@@ -755,6 +755,14 @@ function listEvents(filters, cb) {
       OR lower(trim(coalesce(e.to_department, ''))) = lower(?)
     )`);
     params.push(filters.departmentLock, filters.departmentLock, filters.departmentLock);
+  }
+  if (filters.shopLocationId != null) {
+    if (filters.shopLocationNull) {
+      clauses.push('(wo.location_id = ? OR wo.location_id IS NULL)');
+    } else {
+      clauses.push('wo.location_id = ?');
+    }
+    params.push(filters.shopLocationId);
   }
 
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';

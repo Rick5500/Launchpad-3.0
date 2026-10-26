@@ -17,6 +17,7 @@ const {
   copyToCurrentRoot,
 } = require('./fileStore');
 const { createOrder } = require('./orderService');
+const shopLocations = require('./shopLocations');
 
 const STATUSES = new Set(['new', 'converted', 'dismissed', 'converting']);
 const LIST_STATUSES = new Set(['new', 'converted', 'dismissed']);
@@ -106,6 +107,8 @@ function presentSummary(row, customers) {
     subject: row.subject || '',
     received_at: row.received_at || null,
     status: row.status,
+    location_id: row.location_id || null,
+    location_name: row.location_name || null,
     order_id: row.order_id || null,
     order_number: row.order_number || null,
     matched_customer_id: suggestion.customer_id,
@@ -166,23 +169,39 @@ function parseId(value) {
   return parsed;
 }
 
-async function listEmails(query) {
+async function assertEmailVisible(user, row) {
+  if (!user || !row) return;
+  const access = await shopLocations.loadAccess(user.userId || user.id);
+  shopLocations.assertVisible(access, row.location_id, 'Email not found');
+}
+
+async function listEmails(query, user) {
   const source = query || {};
   const limit = parseLimit(source.limit);
   const offset = parseOffset(source.offset);
   const params = [];
-  let where = '';
+  const clauses = [];
   if (source.status != null && String(source.status).trim() !== '' && String(source.status).trim() !== 'all') {
     const status = String(source.status).trim().toLowerCase();
     if (!LIST_STATUSES.has(status)) throw httpError(400, 'status must be new, converted, dismissed, or all');
-    where = 'WHERE e.status = ?';
+    clauses.push('e.status = ?');
     params.push(status);
   }
+  if (user) {
+    const access = await shopLocations.loadAccess(user.userId || user.id);
+    const pred = shopLocations.predicate('e.location_id', access);
+    if (pred.sql) {
+      clauses.push(pred.sql);
+      params.push(...pred.params);
+    }
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const totalRow = await get(`SELECT COUNT(*) AS count FROM inbound_emails e ${where}`, params);
   const rows = await all(
-    `SELECT e.*, o.order_number
+    `SELECT e.*, o.order_number, l.name AS location_name
      FROM inbound_emails e
      LEFT JOIN orders o ON o.id = e.order_id
+     LEFT JOIN locations l ON l.id = e.location_id
      ${where}
      ORDER BY e.received_at DESC, e.id DESC
      LIMIT ? OFFSET ?`,
@@ -197,16 +216,18 @@ async function listEmails(query) {
   };
 }
 
-async function getEmail(id) {
+async function getEmail(id, user) {
   const emailId = parseId(id);
   const row = await get(
-    `SELECT e.*, o.order_number
+    `SELECT e.*, o.order_number, l.name AS location_name
      FROM inbound_emails e
      LEFT JOIN orders o ON o.id = e.order_id
+     LEFT JOIN locations l ON l.id = e.location_id
      WHERE e.id = ?`,
     [emailId]
   );
   if (!row) return null;
+  if (user) await assertEmailVisible(user, row);
   return presentDetail(row, await loadCustomers());
 }
 
@@ -338,11 +359,12 @@ async function ingestMessage(message, token) {
   const bodyText = messageBody(message);
   const draft = parseDraft(subject, bodyText);
   const received = message.receivedDateTime ? String(message.receivedDateTime).slice(0, 40) : null;
+  const locationId = await shopLocations.defaultLocationId();
   const inserted = await run(
     `INSERT OR IGNORE INTO inbound_emails (
       graph_message_id, mailbox, from_address, from_name, subject, received_at,
-      body_text, status, suggestion_json, created_at, updated_at
-    ) VALUES (?,?,?,?,?,?,?,'new',?,datetime('now'),datetime('now'))`,
+      body_text, status, suggestion_json, location_id, created_at, updated_at
+    ) VALUES (?,?,?,?,?,?,?,'new',?,?,datetime('now'),datetime('now'))`,
     [
       graphId,
       graphMail.mailbox(),
@@ -352,6 +374,7 @@ async function ingestMessage(message, token) {
       received,
       bodyText,
       JSON.stringify(draft),
+      locationId,
     ]
   );
   const row = await get('SELECT id FROM inbound_emails WHERE graph_message_id = ?', [graphId]);
@@ -468,6 +491,9 @@ async function syncStatus(user) {
 }
 
 async function attachmentDownload(user, emailId, attachmentId) {
+  const email = await loadRow(parseId(emailId));
+  if (!email) return null;
+  await assertEmailVisible(user, email);
   const file = await get(
     `SELECT id, original_name, stored_name, storage_root, skipped_reason
      FROM inbound_email_attachments
@@ -649,15 +675,30 @@ async function convertEmail(user, id, body) {
   if (!claim.changes) {
     const row = await waitForRow(emailId);
     if (!row) throw httpError(404, 'Email not found');
+    await assertEmailVisible(user, row);
     if (row.status === 'converted') throw alreadyConverted(row);
     if (row.status === 'dismissed') throw httpError(409, 'This email was dismissed');
     throw httpError(409, 'This email is already being converted');
+  }
+
+  const claimed = await loadRow(emailId);
+  try {
+    await assertEmailVisible(user, claimed);
+  } catch (err) {
+    await run(
+      `UPDATE inbound_emails SET status = 'new', updated_at = datetime('now') WHERE id = ? AND status = 'converting'`,
+      [emailId]
+    );
+    throw err;
   }
 
   let created = null;
   let materialized = [];
   try {
     const payload = { ...(body || {}) };
+    if (payload.location_id == null || String(payload.location_id).trim() === '') {
+      payload.location_id = claimed && claimed.location_id ? claimed.location_id : null;
+    }
     const customerId = Number(payload.customer_id);
     if (!Number.isInteger(customerId) || customerId <= 0) {
       throw httpError(400, 'customer_id must be an existing customer');
@@ -713,6 +754,7 @@ async function dismissEmail(user, id) {
   const emailId = parseId(id);
   const existing = await loadRow(emailId);
   if (!existing) throw httpError(404, 'Email not found');
+  await assertEmailVisible(user, existing);
   if (existing.status === 'dismissed') return presentDetail(existing, await loadCustomers());
   if (existing.status === 'converted') throw alreadyConverted(existing);
   const updated = await run(

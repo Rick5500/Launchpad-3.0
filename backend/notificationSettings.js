@@ -16,6 +16,7 @@ const IN_APP_EVENTS = [
   { event_key: 'quote_accepted', label: 'Quote accepted', description: 'A customer accepted a quote.' },
   { event_key: 'quote_requested', label: 'New quote request', description: 'A customer submitted a quote request.' },
   { event_key: 'quote_declined', label: 'Quote declined', description: 'A customer declined a quote.' },
+  { event_key: 'order_created', label: 'New order', description: 'A customer or staff member submitted an order.' },
 ];
 
 const EMAIL_EVENTS = [

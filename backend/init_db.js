@@ -389,6 +389,7 @@ async function seedNotificationSettings() {
     ['quote_accepted', 1, 'in_app'],
     ['quote_requested', 1, 'in_app'],
     ['quote_declined', 1, 'in_app'],
+    ['order_created', 1, 'in_app'],
   ];
 
   for (const event of events) {
@@ -1606,7 +1607,110 @@ async function main() {
   await ensureDepartmentNameIndex();
   await ensureExternalIdUniqueIndex();
   await ensureUserIdentityIndexes();
+  await ensureShopLocations();
   console.log('Database initialization complete.');
+}
+
+// Shop locations are separate from barcode stations. Existing rows are assigned
+// to Raleigh so an upgraded database keeps every order, user, and quote visible.
+const SHOP_LOCATION_SEEDS = [
+  ['Raleigh', '8121 Brownleigh Drive\nRaleigh, NC 27617', '919-782-3332', 1],
+  ['Hickory', '725 11th Ave Blvd SE\nHickory, NC 28602', '828-322-5050', 2],
+  ['Charlotte', '920 Blairhill Road, Suite B115\nCharlotte, NC 28217', '980-237-6922', 3],
+];
+const SHOP_LOCATION_SETTING = 'shop_locations_seeded';
+
+async function ensureShopLocations() {
+  await run(`CREATE TABLE IF NOT EXISTS locations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    address TEXT,
+    phone TEXT,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME
+  )`);
+  await ensureColumns('users', [{ name: 'location_id', definition: 'INTEGER' }]);
+  await ensureColumns('orders', [{ name: 'location_id', definition: 'INTEGER' }]);
+  await ensureColumns('work_orders', [{ name: 'location_id', definition: 'INTEGER' }]);
+  await ensureColumns('quote_requests', [{ name: 'location_id', definition: 'INTEGER' }]);
+  await ensureColumns('inbound_emails', [{ name: 'location_id', definition: 'INTEGER' }]);
+  await ensureColumns('notifications', [{ name: 'location_id', definition: 'INTEGER' }]);
+
+  const setting = await get(`SELECT value FROM system_settings WHERE key = ?`, [SHOP_LOCATION_SETTING]);
+  const known = new Set(
+    String(setting && setting.value ? setting.value : '')
+      .split(',')
+      .map((name) => name.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const firstSeed = !setting;
+  for (const [name, address, phone, sortOrder] of SHOP_LOCATION_SEEDS) {
+    const key = name.toLowerCase();
+    if (!firstSeed && known.has(key)) continue;
+    const existing = await get(`SELECT id FROM locations WHERE lower(name) = lower(?)`, [name]);
+    if (!existing) {
+      await run(
+        `INSERT INTO locations (name, address, phone, is_active, sort_order, updated_at)
+         VALUES (?,?,?,?,?,datetime('now'))`,
+        [name, address, phone, 1, sortOrder]
+      );
+      console.log(`Seeded shop location ${name}`);
+    }
+    known.add(key);
+  }
+  const recorded = SHOP_LOCATION_SEEDS.map((row) => row[0]).join(',');
+  if (!setting) {
+    await run(
+      `INSERT INTO system_settings (key, value, updated_at) VALUES (?,?,datetime('now'))`,
+      [SHOP_LOCATION_SETTING, recorded]
+    );
+  } else if (setting.value !== recorded) {
+    await run(
+      `UPDATE system_settings SET value = ?, updated_at = datetime('now') WHERE key = ?`,
+      [recorded, SHOP_LOCATION_SETTING]
+    );
+  }
+
+  const raleigh = await get(`SELECT id FROM locations WHERE lower(name) = lower('Raleigh') ORDER BY id LIMIT 1`);
+  if (!raleigh) return;
+  const id = raleigh.id;
+  // One-time assignment. A later init must not turn an all-location manager
+  // (NULL location_id) back into Raleigh.
+  const backfillKey = 'shop_locations_backfilled';
+  const backfilled = await get(`SELECT value FROM system_settings WHERE key = ?`, [backfillKey]);
+  if (!backfilled) {
+    await run(`UPDATE users SET location_id = ? WHERE location_id IS NULL`, [id]);
+    await run(`UPDATE orders SET location_id = ? WHERE location_id IS NULL`, [id]);
+    await run(`UPDATE quote_requests SET location_id = ? WHERE location_id IS NULL`, [id]);
+    await run(`UPDATE inbound_emails SET location_id = ? WHERE location_id IS NULL`, [id]);
+    await run(`UPDATE notifications SET location_id = ? WHERE location_id IS NULL`, [id]);
+    await run(
+      `UPDATE work_orders
+       SET location_id = (
+         SELECT o.location_id FROM orders o WHERE o.id = work_orders.order_id
+       )
+       WHERE location_id IS NULL
+         AND order_id IS NOT NULL
+         AND EXISTS (
+           SELECT 1 FROM orders o WHERE o.id = work_orders.order_id AND o.location_id IS NOT NULL
+         )`
+    );
+    await run(`UPDATE work_orders SET location_id = ? WHERE location_id IS NULL`, [id]);
+    await run(
+      `INSERT INTO system_settings (key, value, updated_at) VALUES (?,?,datetime('now'))`,
+      [backfillKey, '1']
+    );
+    console.log('Assigned existing records with no location to Raleigh');
+  }
+  await run('CREATE INDEX IF NOT EXISTS idx_orders_location ON orders(location_id)');
+  await run('CREATE INDEX IF NOT EXISTS idx_work_orders_location ON work_orders(location_id)');
+  await run('CREATE INDEX IF NOT EXISTS idx_users_location ON users(location_id)');
+  await run('CREATE INDEX IF NOT EXISTS idx_quote_requests_location ON quote_requests(location_id)');
+  await run('CREATE INDEX IF NOT EXISTS idx_notifications_location ON notifications(location_id)');
+  await run('CREATE INDEX IF NOT EXISTS idx_inbound_emails_location ON inbound_emails(location_id)');
+  await run('CREATE UNIQUE INDEX IF NOT EXISTS idx_locations_name_nocase ON locations(name COLLATE NOCASE)');
 }
 
 // Case-insensitive uniqueness. Skip when an older database already has

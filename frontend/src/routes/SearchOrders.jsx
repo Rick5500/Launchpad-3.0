@@ -30,6 +30,7 @@ const emptyFilters = {
   service: '',
   from: '',
   to: '',
+  location_id: '',
 };
 
 export default function SearchOrders() {
@@ -37,6 +38,7 @@ export default function SearchOrders() {
   const [applied, setApplied] = useState(emptyFilters);
   const [orders, setOrders] = useState([]);
   const [services, setServices] = useState([]);
+  const [locations, setLocations] = useState([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -46,7 +48,10 @@ export default function SearchOrders() {
   useEffect(() => {
     authFetch('/api/orders/options')
       .then((response) => (response.ok ? response.json() : { services: [] }))
-      .then((body) => setServices(body.services || []))
+      .then((body) => {
+        setServices(body.services || []);
+        setLocations(body.locations || []);
+      })
       .catch(() => setServices([]));
   }, []);
 
@@ -109,6 +114,10 @@ export default function SearchOrders() {
             <MenuItem value="completed">Completed</MenuItem>
             <MenuItem value="on-hold">On hold</MenuItem>
           </TextField>
+          <TextField select label="Location" value={filters.location_id} onChange={(event) => update('location_id', event.target.value)} data-testid="search-location">
+            <MenuItem value="">All locations</MenuItem>
+            {locations.map((location) => <MenuItem key={location.id} value={String(location.id)}>{location.name}</MenuItem>)}
+          </TextField>
           <TextField select label="Service" value={filters.service} onChange={(event) => update('service', event.target.value)}>
             <MenuItem value="">Any service</MenuItem>
             {services.map((service) => <MenuItem key={service.id} value={String(service.id)}>{service.name}</MenuItem>)}
@@ -129,6 +138,7 @@ export default function SearchOrders() {
               <TableRow>
                 <TableCell>Order</TableCell>
                 <TableCell>Company</TableCell>
+                <TableCell>Location</TableCell>
                 <TableCell>Contact</TableCell>
                 <TableCell>Originals</TableCell>
                 <TableCell>Payment</TableCell>
@@ -144,6 +154,7 @@ export default function SearchOrders() {
                     <Button component={RouterLink} to={order.detail_path} size="small">{order.order_number}</Button>
                   </TableCell>
                   <TableCell>{order.company}</TableCell>
+                  <TableCell>{order.location_name || '—'}</TableCell>
                   <TableCell>{order.contact_name}</TableCell>
                   <TableCell>{order.originals_source_label || 'Not specified'}</TableCell>
                   <TableCell>{order.payment_method_label || 'Not specified'}</TableCell>
@@ -166,7 +177,7 @@ export default function SearchOrders() {
                 </TableRow>
               ))}
               {!loading && orders.length === 0 ? (
-                <TableRow><TableCell colSpan={8}>No orders match.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={9}>No orders match.</TableCell></TableRow>
               ) : null}
             </TableBody>
           </Table>

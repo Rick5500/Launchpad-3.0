@@ -10,6 +10,7 @@ const { httpError } = require('./httpError');
 const mailer = require('./mailer');
 const notifications = require('./notifications');
 const { loadLetterhead } = require('./shopProfile');
+const shopLocations = require('./shopLocations');
 
 const STATUSES = ['New', 'Quoted', 'Accepted', 'Declined'];
 const MAX_FILES = 20;
@@ -30,10 +31,14 @@ const QUOTE_SQL = `
          u.state AS customer_state,
          u.zip AS customer_zip,
          u.display_name AS customer_display_name,
-         o.order_number
+         o.order_number,
+         loc.name AS location_name,
+         loc.address AS location_address,
+         loc.phone AS location_phone
   FROM quote_requests q
   LEFT JOIN users u ON u.id = q.customer_id
   LEFT JOIN orders o ON o.id = q.converted_order_id
+  LEFT JOIN locations loc ON loc.id = q.location_id
 `;
 
 function actorId(user) {
@@ -180,6 +185,10 @@ function presentQuote(row, extras = {}) {
     decided_at: row.decided_at || null,
     converted_order_id: row.converted_order_id || null,
     order_number: row.order_number || null,
+    location_id: row.location_id == null ? null : row.location_id,
+    location_name: row.location_name || null,
+    location_address: row.location_address || null,
+    location_phone: row.location_phone || null,
     created_at: row.created_at,
     updated_at: row.updated_at || null,
   };
@@ -231,16 +240,29 @@ async function loadQuote(id, user) {
     customerClause = ' AND q.customer_id = ?';
     params.push(actorId(user));
   }
-  return get(`${QUOTE_SQL} WHERE q.id = ?${customerClause}`, params);
+  const row = await get(`${QUOTE_SQL} WHERE q.id = ?${customerClause}`, params);
+  if (!row || isCustomer(user)) return row;
+  const access = await shopLocations.loadAccess(actorId(user));
+  if (!shopLocations.matches(access, row.location_id)) return null;
+  return row;
 }
 
-function scope(user) {
+async function scope(user, query) {
   if (isCustomer(user)) return { sql: ' AND q.customer_id = ?', params: [actorId(user)] };
-  return { sql: '', params: [] };
+  const access = await shopLocations.loadAccess(actorId(user));
+  const locked = shopLocations.predicate('q.location_id', access);
+  if (locked.sql) return { sql: ` AND ${locked.sql}`, params: locked.params };
+  const raw = query && query.location_id;
+  if (raw == null || String(raw).trim() === '' || String(raw).trim().toLowerCase() === 'all') {
+    return { sql: '', params: [] };
+  }
+  const chosen = await shopLocations.resolveLocationId({ get }, raw, { required: true, activeOnly: false });
+  if (chosen.error) throw httpError(400, chosen.error);
+  return { sql: ' AND q.location_id = ?', params: [chosen.value] };
 }
 
 async function newCount(user) {
-  const visible = scope(user);
+  const visible = await scope(user);
   const row = await get(
     `SELECT COUNT(*) AS count FROM quote_requests q WHERE q.status = 'New'${visible.sql}`,
     visible.params
@@ -262,7 +284,7 @@ async function listQuotes(user, query) {
   if (limit.error) throw httpError(400, limit.error);
   const offset = parseOffset(source.offset);
   if (offset.error) throw httpError(400, offset.error);
-  const visible = scope(user);
+  const visible = await scope(user, source);
   const params = [...visible.params];
   let statusClause = '';
   if (status) {
@@ -347,12 +369,13 @@ async function createQuote(user, body) {
         if (file.quote_request_id) throw httpError(400, 'A file is already attached to a quote request');
       }
     }
+    const location = await shopLocations.resolveOrderLocation(tx, user, source.location_id, customerId);
     const inserted = await tx.run(
       `INSERT INTO quote_requests (
-        customer_id, project_name, description, quantity, size, material, finishing, needed_by,
+        customer_id, location_id, project_name, description, quantity, size, material, finishing, needed_by,
         status, created_by, updated_at
-      ) VALUES (?,?,?,?,?,?,?,?, 'New', ?, datetime('now'))`,
-      [customerId, projectName, description, quantity, size, material, finishing, neededBy, customerId]
+      ) VALUES (?,?,?,?,?,?,?,?,?, 'New', ?, datetime('now'))`,
+      [customerId, location.value, projectName, description, quantity, size, material, finishing, neededBy, customerId]
     );
     for (const fileId of fileIds) {
       const updated = await tx.run(
@@ -374,6 +397,7 @@ async function createQuote(user, body) {
   try {
     await notify(notifications.notifyQuoteRequested, {
       quoteRequestId: id,
+      locationId: quote.location_id,
       title: `New quote request from ${customerLabel}: ${quote.project_name}`,
       body: quote.needed_by ? `Needed by ${quote.needed_by}.` : '',
       dedupeKey: `quote_requested:${id}`,
@@ -404,14 +428,22 @@ async function inAppEventEnabled(eventKey) {
   return Number(row.enabled) !== 0;
 }
 
-async function quoteStaffEmails() {
+async function quoteStaffEmails(locationId) {
+  const params = [];
+  let locationSql = '';
+  if (locationId != null) {
+    locationSql = ` AND (role = 'admin' OR location_id IS NULL OR location_id = ?)`;
+    params.push(locationId);
+  }
   const rows = await all(
     `SELECT email FROM users
      WHERE role IN ('admin', 'manager')
        AND COALESCE(is_active, 1) = 1
        AND email IS NOT NULL
        AND trim(email) != ''
-     ORDER BY id`
+       ${locationSql}
+     ORDER BY id`,
+    params
   );
   const addresses = [];
   const seen = new Set();
@@ -430,13 +462,17 @@ async function quoteStaffEmails() {
 async function emailNewQuoteRequest(user, quote) {
   if (!mailer.isConfigured()) return { status: 'not_configured', recipients: [] };
   if (!(await inAppEventEnabled('quote_requested'))) return { status: 'disabled', recipients: [] };
-  const addresses = await quoteStaffEmails();
+  const addresses = await quoteStaffEmails(quote && quote.location_id);
   if (!addresses.length) return { status: 'no_recipients', recipients: [] };
   const slot = mailer.reserveEmail(actorId(user));
   if (!slot.allowed) return { status: 'rate_limited', recipients: [] };
   let letterhead;
   try {
-    letterhead = await loadLetterhead();
+    letterhead = shopLocations.overlayLetterhead(await loadLetterhead(), {
+      name: quote.location_name,
+      address: quote.location_address,
+      phone: quote.location_phone,
+    });
   } catch (err) {
     console.error('LETTERHEAD ERROR:', err.message || err);
     letterhead = { name: '', address_lines: [], phone: '' };
@@ -488,7 +524,11 @@ async function emailQuote(user, quote, version) {
   if (!slot.allowed) return { status: 'rate_limited', recipients: [] };
   let letterhead;
   try {
-    letterhead = await loadLetterhead();
+    letterhead = shopLocations.overlayLetterhead(await loadLetterhead(), {
+      name: quote.location_name,
+      address: quote.location_address,
+      phone: quote.location_phone,
+    });
   } catch (err) {
     console.error('LETTERHEAD ERROR:', err.message || err);
     letterhead = { name: '', address_lines: [], phone: '' };
@@ -592,6 +632,7 @@ async function sendQuote(user, rawId, body) {
     await notify(notifications.notifyQuoteReady, {
       quoteRequestId: id,
       customerId: quote.customer_id,
+      locationId: quote.location_id,
       title: `Quote ready for ${saved.projectName}`,
       body: [quote.price_label, quote.valid_until ? `Valid until ${quote.valid_until}` : '']
         .filter(Boolean)
@@ -664,6 +705,7 @@ async function decide(user, rawId, decision, body) {
     try {
       await notify(notifications.notifyQuoteAccepted, {
         quoteRequestId: id,
+        locationId: quote.location_id,
         title: `Quote accepted for ${saved.projectName}`,
         body: `${quote.customer_name || 'A customer'} accepted the quote${quote.price_label ? ` (${quote.price_label})` : ''}.`,
         dedupeKey: `quote_accepted:${id}:v${saved.version}`,
@@ -677,6 +719,7 @@ async function decide(user, rawId, decision, body) {
     try {
       await notify(notifications.notifyQuoteDeclined, {
         quoteRequestId: id,
+        locationId: quote.location_id,
         title: `Quote declined for ${saved.projectName}`,
         body: reasonText
           ? `${who} declined the quote. Reason: ${reasonText}`

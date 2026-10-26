@@ -482,6 +482,68 @@ function FieldInput({ id, field, value, disabled, onChange }) {
   );
 }
 
+function LocationChoices({
+  locations,
+  isStaff,
+  locked,
+  orderLocationId,
+  defaultLocationId,
+  savingDefault,
+  onOrderLocation,
+  onDefaultLocation,
+  onSaveDefault,
+}) {
+  const shops = locations || [];
+  if (!shops.length) return null;
+  const selected = shops.find((shop) => String(shop.id) === String(orderLocationId));
+  return (
+    <Box data-testid="order-location-picker" sx={{ display: 'grid', gap: 1.5, mb: 1 }}>
+      {!isStaff ? (
+        <Box sx={{ display: 'grid', gap: 1, gridTemplateColumns: { xs: '1fr', md: '1fr auto' }, alignItems: 'start' }}>
+          <TextField
+            select
+            label="Default location"
+            value={defaultLocationId}
+            onChange={(event) => onDefaultLocation(event.target.value)}
+            data-testid="default-location"
+            helperText="Saved on your account. New orders start here."
+            sx={{ '& .MuiInputBase-input': { fontSize: '1.15rem' } }}
+          >
+            {shops.map((shop) => <MenuItem key={shop.id} value={String(shop.id)}>{shop.name}</MenuItem>)}
+          </TextField>
+          <Button
+            type="button"
+            variant="outlined"
+            disabled={savingDefault || !defaultLocationId}
+            onClick={onSaveDefault}
+            sx={{ mt: { md: 1 }, fontWeight: 800, borderColor: brand.navy, color: brand.navy, fontSize: '1.05rem' }}
+          >
+            {savingDefault ? 'Saving...' : 'Save default'}
+          </Button>
+        </Box>
+      ) : null}
+      {locked ? (
+        <Typography data-testid="order-location" sx={{ fontSize: '1.2rem', fontWeight: 800, color: brand.navy }}>
+          Location: {selected?.name || 'Your shop'}
+        </Typography>
+      ) : (
+        <TextField
+          select
+          label="Location for this order"
+          value={orderLocationId}
+          onChange={(event) => onOrderLocation(event.target.value)}
+          required
+          data-testid="order-location"
+          helperText={isStaff ? 'This order is produced at the shop you choose.' : 'Starts at your default shop. Pick another shop for this order only.'}
+          sx={{ '& .MuiInputBase-input': { fontSize: '1.2rem', fontWeight: 700 } }}
+        >
+          {shops.map((shop) => <MenuItem key={shop.id} value={String(shop.id)}>{shop.name}</MenuItem>)}
+        </TextField>
+      )}
+    </Box>
+  );
+}
+
 export default function CustomerOrderForm({ inboundEmail = null }) {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
@@ -501,6 +563,9 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
   const [options, setOptions] = useState({ services: [], delivery_methods: [], due_window: null, payment_methods: PAYMENT_METHODS });
   const [customers, setCustomers] = useState([]);
   const [customerId, setCustomerId] = useState('');
+  const [orderLocationId, setOrderLocationId] = useState('');
+  const [defaultLocationId, setDefaultLocationId] = useState('');
+  const [savingDefault, setSavingDefault] = useState(false);
   const [company, setCompany] = useState('');
   const [contactName, setContactName] = useState('');
   const [phone, setPhone] = useState('');
@@ -555,6 +620,17 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
   useEffect(() => {
     if (!user || isStaff) return;
     applyProfile(user, true);
+  }, [user, isStaff]);
+
+  useEffect(() => {
+    if (!user) return;
+    const home = user.location_id ? String(user.location_id) : '';
+    if (!isStaff) {
+      setDefaultLocationId((current) => current || home);
+      setOrderLocationId((current) => current || home);
+      return;
+    }
+    if (!user.all_locations && home) setOrderLocationId(home);
   }, [user, isStaff]);
 
   useEffect(() => {
@@ -997,6 +1073,7 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
     }
     if (!seeShipLines) payload.delivery_method = deliveryMethod;
     if (isStaff) payload.customer_id = Number(customerId);
+    if (orderLocationId) payload.location_id = Number(orderLocationId);
     if (quoteRequestId) payload.quote_request_id = quoteRequestId;
 
     setSubmitting(true);
@@ -1331,6 +1408,7 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
                     setCustomerId(nextId);
                     const match = customers.find((customer) => String(customer.id) === String(nextId));
                     if (match) applyProfile(match, true);
+                    if (match && user?.all_locations && match.location_id) setOrderLocationId(String(match.location_id));
                     setBillChoice('');
                   }}
                   SelectProps={{
@@ -1349,6 +1427,34 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
                 {customers.length === 0 ? <EmptyNote>No customers are available to choose.</EmptyNote> : null}
               </>
             ) : null}
+            <LocationChoices
+              locations={options.locations || []}
+              isStaff={isStaff}
+              locked={!user?.all_locations && isStaff}
+              orderLocationId={orderLocationId}
+              defaultLocationId={defaultLocationId}
+              savingDefault={savingDefault}
+              onOrderLocation={setOrderLocationId}
+              onDefaultLocation={setDefaultLocationId}
+              onSaveDefault={async () => {
+                if (!defaultLocationId) return;
+                setSavingDefault(true);
+                setFormError('');
+                try {
+                  const response = await authFetch('/api/auth/profile', {
+                    method: 'PUT',
+                    body: JSON.stringify({ location_id: Number(defaultLocationId) }),
+                  });
+                  const body = await response.json().catch(() => ({}));
+                  if (!response.ok) throw new Error(body.error || 'Unable to save the default location');
+                  setOrderLocationId((current) => current || defaultLocationId);
+                } catch (err) {
+                  setFormError(err.message || 'Unable to save the default location');
+                } finally {
+                  setSavingDefault(false);
+                }
+              }}
+            />
             <FieldGrid>
               <TextControl id="order-company" label="Company" required value={company} disabled={locked} onChange={(event) => setCompany(event.target.value)} autoComplete="organization" />
               <TextControl id="order-contact" label="Contact" required value={contactName} disabled={locked} onChange={(event) => setContactName(event.target.value)} autoComplete="name" />

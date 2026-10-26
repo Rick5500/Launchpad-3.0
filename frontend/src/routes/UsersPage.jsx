@@ -36,6 +36,7 @@ const emptyForm = {
   state: '',
   zip: '',
   department: '',
+  location_id: '',
   password: '',
   is_active: true,
 };
@@ -56,6 +57,7 @@ export default function UsersPage() {
   const [notice, setNotice] = useState('');
   const [issuedPassword, setIssuedPassword] = useState('');
   const [departments, setDepartments] = useState([]);
+  const [locations, setLocations] = useState([]);
   const limit = 20;
 
   useEffect(() => {
@@ -64,6 +66,13 @@ export default function UsersPage() {
         const body = await response.json().catch(() => []);
         if (!response.ok || !Array.isArray(body)) return;
         setDepartments(body.map((row) => row.name).filter(Boolean));
+      })
+      .catch(() => {});
+    authFetch('/api/locations?all=1')
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) return;
+        setLocations(body.locations || []);
       })
       .catch(() => {});
   }, []);
@@ -87,6 +96,17 @@ export default function UsersPage() {
   useEffect(() => {
     load(offset, applied);
   }, [offset, applied]);
+
+  useEffect(() => {
+    if (!locations.length) return;
+    setForm((current) => {
+      if (current.location_id) return current;
+      if (current.role !== 'operator' && current.role !== 'customer') return current;
+      const raleigh = locations.find((location) => String(location.name).toLowerCase() === 'raleigh') || locations.find((location) => location.is_active);
+      if (!raleigh) return current;
+      return { ...current, location_id: String(raleigh.id) };
+    });
+  }, [locations]);
 
   function update(field, value) {
     setForm((current) => {
@@ -112,6 +132,7 @@ export default function UsersPage() {
       state: row.state || '',
       zip: row.zip || '',
       department: row.role === 'manager' || row.role === 'customer' ? '' : (row.department || ''),
+      location_id: row.location_id == null ? '' : String(row.location_id),
       password: '',
       is_active: Boolean(row.is_active),
     });
@@ -140,6 +161,7 @@ export default function UsersPage() {
       state: form.state,
       zip: form.zip,
       department: form.role === 'customer' || form.role === 'manager' ? null : (form.department || null),
+      location_id: form.location_id ? Number(form.location_id) : null,
       is_active: form.is_active,
     };
     if (!editingId && form.password) payload.password = form.password;
@@ -213,6 +235,26 @@ export default function UsersPage() {
               ))}
             </TextField>
           ) : null}
+          <TextField
+            select
+            label={form.role === 'customer' ? 'Default location' : 'Home location'}
+            value={form.location_id}
+            onChange={(event) => update('location_id', event.target.value)}
+            helperText={
+              form.role === 'manager'
+                ? 'All locations lets this manager see every shop.'
+                : form.role === 'admin'
+                  ? 'Admins always see every shop. A home location is optional.'
+                  : form.role === 'operator'
+                    ? 'Operators only see work at this shop.'
+                    : 'New orders and quotes start at this shop.'
+            }
+          >
+            {form.role === 'manager' || form.role === 'admin' ? <MenuItem value="">All locations</MenuItem> : null}
+            {locations.filter((location) => location.is_active || String(location.id) === form.location_id).map((location) => (
+              <MenuItem key={location.id} value={String(location.id)}>{location.name}</MenuItem>
+            ))}
+          </TextField>
           <TextField label="Company" value={form.company} onChange={(event) => update('company', event.target.value)} />
           <TextField label="Contact name" value={form.contact_name} onChange={(event) => update('contact_name', event.target.value)} />
           <TextField label="Phone" value={form.phone} onChange={(event) => update('phone', event.target.value)} />
@@ -254,6 +296,7 @@ export default function UsersPage() {
                 <TableCell>Name</TableCell>
                 <TableCell>Role</TableCell>
                 <TableCell>Department</TableCell>
+                <TableCell>Location</TableCell>
                 <TableCell>Email</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell>Actions</TableCell>
@@ -266,6 +309,7 @@ export default function UsersPage() {
                   <TableCell>{row.display_name}</TableCell>
                   <TableCell>{row.role}</TableCell>
                   <TableCell>{row.role === 'customer' ? '—' : row.role === 'manager' || !row.department ? 'All departments' : row.department}</TableCell>
+                  <TableCell>{row.all_locations ? 'All locations' : (locations.find((location) => location.id === row.location_id)?.name || '—')}</TableCell>
                   <TableCell>{row.email || '—'}</TableCell>
                   <TableCell><Chip size="small" label={row.is_active ? 'Active' : 'Inactive'} color={row.is_active ? 'success' : 'default'} /></TableCell>
                   <TableCell>

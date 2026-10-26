@@ -78,6 +78,13 @@ function whereSql(clauses) {
   return clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 }
 
+function pushShop(clauses, params, column, range) {
+  if (!range || range.shopLocationId == null) return;
+  if (range.shopLocationNull) clauses.push(`(${column} = ? OR ${column} IS NULL)`);
+  else clauses.push(`${column} = ?`);
+  params.push(range.shopLocationId);
+}
+
 function reportBase(range, extra) {
   return {
     from: range.from,
@@ -90,6 +97,7 @@ function reportBase(range, extra) {
 function loadStatusReport(range, cb) {
   const params = [];
   const clauses = dateClauses('created_at', range, params);
+  pushShop(clauses, params, 'location_id', range);
   db.all(
     `SELECT
        CASE
@@ -122,6 +130,7 @@ function loadStatusReport(range, cb) {
 function loadDepartmentReport(range, cb) {
   const params = [];
   const clauses = dateClauses('created_at', range, params);
+  pushShop(clauses, params, 'location_id', range);
   db.all(
     `SELECT
        CASE
@@ -146,6 +155,7 @@ function loadDepartmentReport(range, cb) {
 function loadStageReport(range, cb) {
   const params = [];
   const clauses = dateClauses('wo.created_at', range, params);
+  pushShop(clauses, params, 'wo.location_id', range);
   db.all(
     `SELECT wo.stage_id AS stage_id, COUNT(*) AS count
      FROM work_orders wo
@@ -203,6 +213,7 @@ function loadThroughputReport(range, bucket, cb) {
     clauses.push('COALESCE(updated_at, created_at) <= ?');
     params.push(range.to);
   }
+  pushShop(clauses, params, 'location_id', range);
   db.all(
     `SELECT
        strftime(?, COALESCE(updated_at, created_at)) AS bucket,
@@ -241,6 +252,7 @@ function loadDeliveryReport(range, cb) {
     clauses.push('d.due_time <= ?');
     params.push(range.to);
   }
+  pushShop(clauses, params, 'COALESCE(o.location_id, wo.location_id)', range);
   const now = new Date();
   const rules = getRules();
   db.all(
@@ -297,6 +309,7 @@ function loadDeliveryReport(range, cb) {
 function loadScansByOperator(range, cb) {
   const params = [];
   const clauses = dateClauses('e.event_time', range, params);
+  pushShop(clauses, params, 'wo.location_id', range);
   db.all(
     `SELECT
        e.operator_id AS operator_id,
@@ -305,6 +318,7 @@ function loadScansByOperator(range, cb) {
        COUNT(*) AS scan_count
      FROM barcode_events e
      LEFT JOIN users u ON u.id = e.operator_id
+     LEFT JOIN work_orders wo ON wo.id = e.work_order_id
      ${whereSql(clauses)}
      GROUP BY e.operator_id, u.username, u.display_name
      ORDER BY scan_count DESC, operator_username COLLATE NOCASE ASC`,
@@ -325,15 +339,17 @@ function loadScansByOperator(range, cb) {
 
 function loadScansByLocation(range, cb) {
   const params = [];
-  const clauses = dateClauses('event_time', range, params);
+  const clauses = dateClauses('e.event_time', range, params);
+  pushShop(clauses, params, 'wo.location_id', range);
   db.all(
     `SELECT
        CASE
-         WHEN location IS NULL OR trim(location) = '' THEN '(none)'
-         ELSE trim(location)
+         WHEN e.location IS NULL OR trim(e.location) = '' THEN '(none)'
+         ELSE trim(e.location)
        END AS location,
        COUNT(*) AS scan_count
-     FROM barcode_events
+     FROM barcode_events e
+     LEFT JOIN work_orders wo ON wo.id = e.work_order_id
      ${whereSql(clauses)}
      GROUP BY 1
      ORDER BY scan_count DESC, location COLLATE NOCASE ASC`,
@@ -417,9 +433,15 @@ function loadStageDurationReport(range, cb) {
     `SELECT e.work_order_id, e.event_time, e.stage_id, e.id, ps.name AS stage_name
      FROM barcode_events e
      LEFT JOIN production_stages ps ON ps.id = e.stage_id
+     LEFT JOIN work_orders wo ON wo.id = e.work_order_id
      WHERE e.stage_id IS NOT NULL
+       ${range && range.shopLocationId != null
+    ? (range.shopLocationNull
+      ? 'AND (wo.location_id = ? OR wo.location_id IS NULL)'
+      : 'AND wo.location_id = ?')
+    : ''}
      ORDER BY e.work_order_id ASC, e.event_time ASC, e.id ASC`,
-    [],
+    range && range.shopLocationId != null ? [range.shopLocationId] : [],
     (err, events) => {
       if (err) return cb(err);
       const rows = averageStageRows(events, range);

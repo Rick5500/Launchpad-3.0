@@ -5,6 +5,7 @@ const notifyEmail = require('./notifyEmail');
 const { resetUserPassword, passwordPolicyError } = require('./passwordReset');
 const { get, all, withTransaction } = require('./dbAsync');
 const { httpError } = require('./httpError');
+const shopLocations = require('./shopLocations');
 const {
   parseText,
   parseBool,
@@ -29,7 +30,7 @@ const SORTS = {
 };
 
 const PUBLIC_COLUMNS = `id, username, role, display_name, company, contact_name, phone, email,
-  address_line1, address_line2, city, state, zip, department, is_active, created_at, updated_at`;
+  address_line1, address_line2, city, state, zip, department, location_id, is_active, created_at, updated_at`;
 
 function present(row) {
   return {
@@ -47,6 +48,8 @@ function present(row) {
     state: row.state || '',
     zip: row.zip || '',
     department: row.department || null,
+    location_id: row.location_id == null ? null : row.location_id,
+    all_locations: row.role === 'admin' || (row.role === 'manager' && row.location_id == null),
     is_active: row.is_active !== 0,
     created_at: row.created_at,
     updated_at: row.updated_at || null,
@@ -192,8 +195,8 @@ async function insertUserRow(tx, row) {
   return tx.run(
     `INSERT INTO users (
        username, password_hash, role, display_name, company, contact_name, phone, email,
-       address_line1, address_line2, city, state, zip, department, is_active, created_at, updated_at
-     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))`,
+       address_line1, address_line2, city, state, zip, department, location_id, is_active, created_at, updated_at
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))`,
     [
       row.username,
       row.passwordHash,
@@ -209,6 +212,7 @@ async function insertUserRow(tx, row) {
       row.state,
       row.zip,
       row.department,
+      row.locationId == null ? null : row.locationId,
       row.isActive,
     ]
   );
@@ -325,6 +329,8 @@ async function createUser(actorId, body) {
     if (taken) throw httpError(409, 'Username is already in use');
     const department = await departmentForRole(tx, source, role.value, null);
     if (department.error) throw httpError(400, department.error);
+    const location = await shopLocations.locationForRole(tx, source, role.value, null);
+    if (location.error) throw httpError(400, location.error);
     const inserted = await insertUserRow(tx, {
       username: username.value,
       passwordHash: hash,
@@ -340,12 +346,14 @@ async function createUser(actorId, body) {
       state: profile.value.state,
       zip: profile.value.zip,
       department: department.value,
+      locationId: location.value,
       isActive: active.value,
     });
     await activityLog.recordOn(tx, actorId, 'user.created', 'user', inserted.lastID, {
       username: username.value,
       role: role.value,
       department: department.value,
+      location_id: location.value,
       message: department.value
         ? `Created ${role.value} ${username.value} in ${department.value}`
         : `Created ${role.value} ${username.value}`,
@@ -415,6 +423,8 @@ async function updateUser(actorId, id, body) {
 
     const department = await departmentForRole(tx, source, role.value, existing.department || null);
     if (department.error) throw httpError(400, department.error);
+    const location = await shopLocations.locationForRole(tx, source, role.value, existing.location_id || null);
+    if (location.error) throw httpError(400, location.error);
     const previousDepartment = existing.department || null;
     const departmentChanged = previousDepartment !== department.value;
 
@@ -427,7 +437,7 @@ async function updateUser(actorId, id, body) {
       `UPDATE users
        SET username = ?, role = ?, display_name = ?, company = ?, contact_name = ?, phone = ?, email = ?,
            address_line1 = ?, address_line2 = ?, city = ?, state = ?, zip = ?, department = ?,
-           is_active = ?, updated_at = datetime('now')
+           location_id = ?, is_active = ?, updated_at = datetime('now')
        WHERE id = ?`,
       [
         nextUsername,
@@ -443,6 +453,7 @@ async function updateUser(actorId, id, body) {
         profile.value.state,
         profile.value.zip,
         department.value,
+        location.value,
         active.value,
         existing.id,
       ]
@@ -586,6 +597,8 @@ async function registerCustomer(body) {
         [username.value, email.value]
       );
       if (taken) throw httpError(409, 'An account with that email already exists');
+      const location = await shopLocations.locationForRole(tx, source, 'customer', null);
+      if (location.error) throw httpError(400, location.error);
       const inserted = await insertUserRow(tx, {
         username: username.value,
         passwordHash: hash,
@@ -601,6 +614,7 @@ async function registerCustomer(body) {
         state: address.value.state,
         zip: address.value.zip,
         department: null,
+        locationId: location.value,
         isActive: 1,
       });
       await activityLog.recordOn(tx, inserted.lastID, 'customer.self_registered', 'user', inserted.lastID, {
@@ -618,8 +632,8 @@ async function registerCustomer(body) {
       if (!disabled) {
         const stored = await tx.run(
           `INSERT INTO notifications
-             (type, title, body, customer_id, work_order_id, delivery_id, dedupe_key)
-           VALUES (?,?,?,?,?,?,?)`,
+             (type, title, body, customer_id, work_order_id, delivery_id, location_id, dedupe_key)
+           VALUES (?,?,?,?,?,?,?,?)`,
           [
             'customer_registered',
             `New customer account: ${company.value}`,
@@ -627,6 +641,7 @@ async function registerCustomer(body) {
             null,
             null,
             null,
+            location.value,
             `customer_registered:${inserted.lastID}`,
           ]
         );
@@ -659,10 +674,7 @@ async function registerCustomer(body) {
 }
 
 async function loadAccess(userId) {
-  const row = await get(`SELECT role, department FROM users WHERE id = ?`, [userId]);
-  if (!row) return { role: null, department: null };
-  const department = row.department && String(row.department).trim() ? String(row.department).trim() : null;
-  return { role: row.role, department };
+  return shopLocations.loadAccess(userId);
 }
 
 module.exports = {

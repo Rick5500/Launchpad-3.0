@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Alert, Box, Button, Typography } from '@mui/material';
+import { Alert, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, MenuItem, TextField, Typography } from '@mui/material';
 import CustomerShell from '../components/CustomerShell';
 import { useDocumentTitle } from '../useDocumentTitle';
 import FilesFromAccent from '../components/FilesFromAccent';
@@ -47,6 +47,11 @@ export default function OrderDetail() {
   const [order, setOrder] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [locations, setLocations] = useState([]);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferLocation, setTransferLocation] = useState('');
+  const [transferError, setTransferError] = useState('');
+  const [transferring, setTransferring] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -71,6 +76,43 @@ export default function OrderDetail() {
     };
   }, [id]);
 
+  const canTransfer = user?.role === 'admin' || user?.role === 'manager';
+
+  useEffect(() => {
+    if (!canTransfer) return undefined;
+    authFetch('/api/locations')
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({}));
+        if (response.ok) setLocations(body.locations || []);
+      })
+      .catch(() => {});
+    return undefined;
+  }, [canTransfer]);
+
+  async function transferOrder() {
+    if (!transferLocation) return;
+    setTransferring(true);
+    setTransferError('');
+    try {
+      const response = await authFetch(`/api/orders/${id}/location`, {
+        method: 'POST',
+        body: JSON.stringify({ location_id: Number(transferLocation) }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Unable to transfer the order');
+      setTransferOpen(false);
+      if (body.order) setOrder(body.order);
+      else if (body.transferred) {
+        setError(`Order moved to ${body.location_name}. It is no longer in your location.`);
+        setOrder(null);
+      }
+    } catch (err) {
+      setTransferError(err.message || 'Unable to transfer the order');
+    } finally {
+      setTransferring(false);
+    }
+  }
+
   useDocumentTitle(order?.order_number ? `Order ${order.order_number}` : 'Submitted Order');
   const name = user?.contact_name || user?.display_name || user?.username || '';
   const welcome = user?.company && user.company !== name ? `Welcome, ${name} (${user.company})` : `Welcome, ${name}`;
@@ -92,6 +134,9 @@ export default function OrderDetail() {
         <Box sx={{ display: 'grid', gap: 2 }}>
           <Box sx={{ bgcolor: '#fff', border: `2px solid ${brand.green}`, borderRadius: 1.5, p: 3 }}>
             <Typography sx={{ color: brand.green, fontWeight: 800, fontSize: 24 }}>Order {order.order_number}</Typography>
+            <Typography sx={{ color: brand.navy, fontWeight: 800, fontSize: 20, mt: 0.5 }}>
+              {order.location_name || 'Location'}
+            </Typography>
             <Typography sx={{ color: brand.muted, mt: 0.5 }}>
               Due {order.due_date} at {formatClockLabel(order.due_time)}
             </Typography>
@@ -99,6 +144,20 @@ export default function OrderDetail() {
               <Button variant="outlined" onClick={() => navigate(`/orders/${order.id}/print`)}>Print Work Orders</Button>
               <Button variant="outlined" onClick={() => window.print()}>Print Confirmation</Button>
               <Button variant="contained" onClick={() => navigate('/order')} sx={{ bgcolor: brand.navy }}>Create Another Order</Button>
+              {canTransfer ? (
+                <Button
+                  variant="contained"
+                  data-testid="transfer-order"
+                  onClick={() => {
+                    setTransferLocation(order.location_id ? String(order.location_id) : '');
+                    setTransferError('');
+                    setTransferOpen(true);
+                  }}
+                  sx={{ bgcolor: brand.orange, color: '#111', fontWeight: 800 }}
+                >
+                  Transfer location
+                </Button>
+              ) : null}
             </Box>
           </Box>
 
@@ -214,6 +273,34 @@ export default function OrderDetail() {
           </Box>
         </Box>
       )}
+      <Dialog open={transferOpen} onClose={() => setTransferOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle sx={{ fontWeight: 800, color: brand.navy, fontSize: '1.4rem' }}>Transfer this order</DialogTitle>
+        <DialogContent>
+          <Typography sx={{ mb: 2, fontSize: '1.05rem' }}>
+            The work orders, proofs, and files move with the order. This is written to the activity log.
+          </Typography>
+          {transferError ? <Alert severity="error" sx={{ mb: 2 }}>{transferError}</Alert> : null}
+          <TextField
+            select
+            fullWidth
+            label="New location"
+            value={transferLocation}
+            onChange={(event) => setTransferLocation(event.target.value)}
+            data-testid="transfer-location"
+            sx={{ mt: 1, '& .MuiInputBase-input': { fontSize: '1.15rem' } }}
+          >
+            {locations.map((location) => (
+              <MenuItem key={location.id} value={String(location.id)}>{location.name}</MenuItem>
+            ))}
+          </TextField>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setTransferOpen(false)}>Cancel</Button>
+          <Button variant="contained" disabled={transferring || !transferLocation} onClick={transferOrder} sx={{ bgcolor: brand.orange, color: '#111', fontWeight: 800 }}>
+            {transferring ? 'Moving...' : 'Move order'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </CustomerShell>
   );
 }

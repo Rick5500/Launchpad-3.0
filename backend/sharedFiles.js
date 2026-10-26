@@ -13,6 +13,7 @@ const {
 const { httpError } = require('./httpError');
 const mailer = require('./mailer');
 const notifications = require('./notifications');
+const shopLocations = require('./shopLocations');
 const systemSettings = require('./systemSettings');
 
 const STAFF = new Set(['admin', 'manager', 'operator']);
@@ -68,7 +69,8 @@ const FILE_SELECT = `
          f.deleted_at, f.stored_name, f.storage_root, f.customer_id, f.transfer_id,
          wo.external_id AS work_order_number,
          COALESCE(NULLIF(trim(u.display_name), ''), NULLIF(trim(u.username), '')) AS sender_name,
-         o.customer_id AS order_customer_id, o.order_number, o.email AS order_email
+         o.customer_id AS order_customer_id, o.order_number, o.email AS order_email,
+         o.location_id AS order_location_id
   FROM shared_files f
   LEFT JOIN orders o ON o.id = f.order_id
   LEFT JOIN work_orders wo ON wo.id = f.work_order_id
@@ -77,7 +79,7 @@ const FILE_SELECT = `
 
 async function loadOrder(orderId) {
   const order = await get(
-    `SELECT id, customer_id, order_number, email, company
+    `SELECT id, customer_id, order_number, email, company, location_id
      FROM orders WHERE id = ?`,
     [orderId]
   );
@@ -85,15 +87,23 @@ async function loadOrder(orderId) {
   return order;
 }
 
-function assertOrderAccess(user, order) {
-  if (isStaff(user)) return;
+async function assertStaffLocation(user, locationId, message) {
+  const access = await shopLocations.loadAccess(actorId(user));
+  shopLocations.assertVisible(access, locationId, message);
+}
+
+async function assertOrderAccess(user, order) {
+  if (isStaff(user)) {
+    await assertStaffLocation(user, order.location_id, 'Order not found');
+    return;
+  }
   if (user.role === 'customer' && Number(order.customer_id) === actorId(user)) return;
   throw httpError(404, 'Order not found');
 }
 
 async function listForUser(user, orderId, workOrderQuery) {
   const order = await loadOrder(orderId);
-  assertOrderAccess(user, order);
+  await assertOrderAccess(user, order);
   const workOrderId = parseOptionalId(workOrderQuery, 'work_order_id');
   if (workOrderId) {
     const workOrder = await get(
@@ -319,6 +329,7 @@ async function shareFiles(user, orderId, body, files) {
         workOrderId: workOrder ? workOrder.id : null,
         batchId,
         transferId: saved.transferId,
+        locationId: order.location_id,
         title,
         body: note || `${saved.ids.length} file${saved.ids.length === 1 ? '' : 's'} ready to download.`,
       }, (err) => {
@@ -328,7 +339,7 @@ async function shareFiles(user, orderId, body, files) {
     });
 
     if (emailPlan === 'pending') {
-      const letterhead = await loadLetterheadSafe();
+      const letterhead = await loadLetterheadSafe(order.location_id);
       const rendered = mailer.renderShareEmail({
         letterhead,
         orderNumber: order.order_number,
@@ -382,9 +393,9 @@ async function shareFiles(user, orderId, body, files) {
   };
 }
 
-async function loadLetterheadSafe() {
+async function loadLetterheadSafe(locationId) {
   try {
-    return await require('./shopProfile').loadLetterhead();
+    return await shopLocations.letterheadForLocationId(locationId);
   } catch (err) {
     console.error('LETTERHEAD ERROR:', err.message || err);
     return { name: '', address: '', address_lines: [], phone: '' };
@@ -394,7 +405,10 @@ async function loadLetterheadSafe() {
 async function loadVisible(user, id) {
   const file = await get(`${FILE_SELECT} WHERE f.id = ?`, [id]);
   if (!file || file.deleted_at) throw httpError(404, 'File not found');
-  if (isStaff(user)) return file;
+  if (isStaff(user)) {
+    if (file.order_id) await assertStaffLocation(user, file.order_location_id, 'File not found');
+    return file;
+  }
   if (user.role === 'customer' && fileOwnerId(file) === actorId(user)) return file;
   throw httpError(404, 'File not found');
 }
@@ -436,6 +450,7 @@ async function removeFile(user, id) {
   if (!isStaff(user)) throw httpError(403, 'Forbidden');
   const file = await get(`${FILE_SELECT} WHERE f.id = ?`, [id]);
   if (!file || file.deleted_at) throw httpError(404, 'File not found');
+  if (file.order_id) await assertStaffLocation(user, file.order_location_id, 'File not found');
   await withTransaction(async (tx) => {
     const updated = await tx.run(
       `UPDATE shared_files
@@ -472,6 +487,7 @@ async function replaceFile(user, id, body, files) {
   assertFiles(files);
   const existing = await get(`${FILE_SELECT} WHERE f.id = ?`, [id]);
   if (!existing || existing.deleted_at) throw httpError(404, 'File not found');
+  if (existing.order_id) await assertStaffLocation(user, existing.order_location_id, 'File not found');
   const source = body || {};
   let note = existing.message || null;
   if (Object.prototype.hasOwnProperty.call(source, 'message') && source.message != null && String(source.message).trim() !== '') {
@@ -640,9 +656,19 @@ async function listTransfers(user, query) {
     params.push(actorId(user));
   } else if (!isStaff(user)) {
     throw httpError(403, 'Forbidden');
-  } else if (source.customer_id != null && String(source.customer_id).trim() !== '') {
+  } else {
+    const access = await shopLocations.loadAccess(actorId(user));
+    const pred = shopLocations.predicate('o.location_id', access);
+    if (pred.sql) {
+      where.push(`(t.order_id IS NULL OR EXISTS (
+        SELECT 1 FROM orders o WHERE o.id = t.order_id AND ${pred.sql}
+      ))`);
+      params.push(...pred.params);
+    }
+    if (source.customer_id != null && String(source.customer_id).trim() !== '') {
     where.push('t.customer_id = ?');
-    params.push(parseOptionalId(source.customer_id, 'customer_id'));
+      params.push(parseOptionalId(source.customer_id, 'customer_id'));
+    }
   }
   const whereSql = `WHERE ${where.join(' AND ')}`;
   const totalRow = await get(`SELECT COUNT(*) AS total FROM file_transfers t ${whereSql}`, params);
@@ -673,6 +699,10 @@ async function getTransfer(user, id) {
   if (!row) throw httpError(404, 'File transfer not found');
   if (!isStaff(user) && !(user.role === 'customer' && Number(row.customer_id) === actorId(user))) {
     throw httpError(404, 'File transfer not found');
+  }
+  if (isStaff(user) && row.order_id) {
+    const order = await get('SELECT location_id FROM orders WHERE id = ?', [row.order_id]);
+    await assertStaffLocation(user, order ? order.location_id : null, 'File transfer not found');
   }
   const files = await all(
     `${FILE_SELECT} WHERE f.transfer_id = ? AND f.deleted_at IS NULL ORDER BY f.id`,

@@ -54,12 +54,14 @@ const activityRouter = require('./routes/activity');
 const searchRouter = require('./routes/search');
 const inboundEmailRouter = require('./routes/inboundEmails');
 const quotesRouter = require('./routes/quotes');
+const locationsRouter = require('./routes/locations');
 const inboundEmailPoller = require('./inboundEmailPoller');
 const systemSettings = require('./systemSettings');
 const mailer = require('./mailer');
 const userAdmin = require('./userAdmin');
 const registerLimit = require('./registerLimit');
 const { sendError } = require('./httpError');
+const shopLocations = require('./shopLocations');
 
 
 // Health check
@@ -75,8 +77,15 @@ function clientIp(req) {
 // Auth routes
 app.get('/api/auth/config', async (req, res) => {
   try {
+    const locations = await shopLocations.listLocations({ includeInactive: false });
     res.json({
       customer_self_signup_enabled: await systemSettings.customerSelfSignupEnabled(),
+      locations: locations.map((location) => ({
+        id: location.id,
+        name: location.name,
+        address: location.address,
+        phone: location.phone,
+      })),
     });
   } catch (err) {
     sendError(res, err, 'AUTH CONFIG ERROR:', 'Unable to load sign-in options');
@@ -144,38 +153,76 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/auth/me', auth.requireAuth, (req, res) => {
-  db.get(
-    `SELECT id, username, role, display_name, company, contact_name, phone, email,
-            address_line1, address_line2, city, state, zip, department
-     FROM users WHERE id = ?`,
-    [req.user.userId],
-    (err, row) => {
-      if (err || !row) {
-        if (err) console.error('AUTH ME ERROR:', err);
-        return res.json({ user: req.user });
-      }
-      res.json({
-        user: {
-          id: row.id,
-          userId: row.id,
-          username: row.username,
-          role: row.role,
-          display_name: row.display_name,
-          company: row.company || '',
-          contact_name: row.contact_name || '',
-          phone: row.phone || '',
-          email: row.email || '',
-          address_line1: row.address_line1 || '',
-          address_line2: row.address_line2 || '',
-          city: row.city || '',
-          state: row.state || '',
-          zip: row.zip || '',
-          department: row.department || null,
-        },
-      });
+app.get('/api/auth/me', auth.requireAuth, async (req, res) => {
+  try {
+    const row = await new Promise((resolve, reject) => {
+      db.get(
+        `SELECT id, username, role, display_name, company, contact_name, phone, email,
+                address_line1, address_line2, city, state, zip, department
+         FROM users WHERE id = ?`,
+        [req.user.userId],
+        (err, found) => (err ? reject(err) : resolve(found))
+      );
+    });
+    if (!row) return res.json({ user: req.user });
+    const locationFields = await shopLocations.publicUserFields(row.id);
+    res.json({
+      user: {
+        id: row.id,
+        userId: row.id,
+        username: row.username,
+        role: row.role,
+        display_name: row.display_name,
+        company: row.company || '',
+        contact_name: row.contact_name || '',
+        phone: row.phone || '',
+        email: row.email || '',
+        address_line1: row.address_line1 || '',
+        address_line2: row.address_line2 || '',
+        city: row.city || '',
+        state: row.state || '',
+        zip: row.zip || '',
+        department: row.department || null,
+        location_id: locationFields.location_id,
+        location_name: locationFields.location_name,
+        all_locations: locationFields.all_locations,
+      },
+    });
+  } catch (err) {
+    console.error('AUTH ME ERROR:', err);
+    return res.json({ user: req.user });
+  }
+});
+
+app.put('/api/auth/profile', auth.requireAuth, async (req, res) => {
+  try {
+    if (req.user.role !== 'customer') {
+      return res.status(403).json({ error: 'Only a customer can change their default location' });
     }
-  );
+    const source = req.body || {};
+    if (!Object.prototype.hasOwnProperty.call(source, 'location_id')) {
+      return res.status(400).json({ error: 'location_id is required' });
+    }
+    const resolved = await shopLocations.resolveLocationId({ get: require('./dbAsync').get }, source.location_id, {
+      required: true,
+      activeOnly: true,
+    });
+    if (resolved.error) return res.status(400).json({ error: resolved.error });
+    await new Promise((resolve, reject) => {
+      db.run(
+        `UPDATE users SET location_id = ?, updated_at = datetime('now') WHERE id = ? AND role = 'customer'`,
+        [resolved.value, req.user.userId],
+        (err) => (err ? reject(err) : resolve())
+      );
+    });
+    const locationFields = await shopLocations.publicUserFields(req.user.userId);
+    res.json({
+      location_id: locationFields.location_id,
+      location_name: locationFields.location_name,
+    });
+  } catch (err) {
+    sendError(res, err, 'PROFILE ERROR:', 'Unable to update your location');
+  }
 });
 
 app.use('/api/dashboard', dashboardRouter);
@@ -188,6 +235,7 @@ app.use('/api/delivery', deliveryRouter);
 app.use('/api/barcode', barcodeRouter);
 app.use('/api/departments', departmentsRouter);
 app.use('/api/orders', ordersRouter);
+app.use('/api/locations', locationsRouter);
 app.use('/api/uploads', uploadsRouter);
 app.use('/api/shared-files', sharedFileRoutes.fileRouter);
 app.use('/api/file-transfers', sharedFileRoutes.transferRouter);
