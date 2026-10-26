@@ -12,7 +12,7 @@ import {
 import CloseIcon from '@mui/icons-material/Close';
 import { authFetch } from '../api';
 import { brand, formatShopStamp } from '../brand';
-import { UrgencyChips } from './boardUrgency';
+import { ReadyForPickupChip, UrgencyChips } from './boardUrgency';
 import ProofStatusChip from './ProofStatusChip';
 
 function textOn(hex) {
@@ -153,6 +153,7 @@ export default function BoardDetailPane({ row, refreshKey, timeZone, canMove, on
 
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 1.25 }}>
         <UrgencyChips urgency={row.urgency} />
+        <ReadyForPickupChip status={row.order_status || detail?.order_status} />
         {detail?.routing?.current_status_label && (
           <Chip
             label={boardStatusName(detail.routing.current_status_label, detail.routing.current_status)}

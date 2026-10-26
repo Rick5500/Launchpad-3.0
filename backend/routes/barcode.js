@@ -3,6 +3,7 @@ const auth = require('../auth');
 const barcodeEvents = require('../barcodeEvents');
 const barcodeLocations = require('../barcodeLocations');
 const users = require('../userAdmin');
+const shopLocations = require('../shopLocations');
 const { createFixedWindowLimiter } = require('../rateLimit');
 
 const router = express.Router();
@@ -97,6 +98,11 @@ router.get('/events', auth.requireAuth, staffRoles, async (req, res) => {
     if (access.role === 'operator' && access.department) {
       parsed.value.departmentLock = access.department;
     }
+    const shop = await shopLocations.boardFilter(access, req.query);
+    if (shop.locationId != null) {
+      parsed.value.shopLocationId = shop.locationId;
+      parsed.value.shopLocationNull = shop.includeNull;
+    }
   } catch (err) {
     return sendServiceError(res, err, 'BARCODE LIST ERROR:', 'Failed to load barcode events');
   }
@@ -142,9 +148,18 @@ router.post('/', auth.requireAuth, staffRoles, limitBarcodeScans, async (req, re
     requestedWorkOrderId = Number(text);
   }
 
-  barcodeEvents.resolveWorkOrder(scanned.value, (resolveErr, workOrder) => {
+  barcodeEvents.resolveWorkOrder(scanned.value, async (resolveErr, workOrder) => {
     if (resolveErr) return sendServiceError(res, resolveErr, 'BARCODE CREATE ERROR:', 'Failed to record barcode event');
     if (!workOrder) return res.status(404).json({ error: 'Work order not found' });
+    try {
+      const access = await shopLocations.loadAccess(req.user.userId);
+      shopLocations.assertVisible(access, workOrder.location_id, 'Work order not found');
+    } catch (guardErr) {
+      if (guardErr && guardErr.status) {
+        return res.status(guardErr.status).json({ error: guardErr.publicMessage || guardErr.message });
+      }
+      return sendServiceError(res, guardErr, 'BARCODE CREATE ERROR:', 'Failed to record barcode event');
+    }
     if (requestedWorkOrderId && requestedWorkOrderId !== workOrder.id) {
       return res.status(400).json({ error: 'work_order_id does not match the scanned work order' });
     }

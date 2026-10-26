@@ -13,6 +13,7 @@ const {
 const { httpError } = require('./httpError');
 const mailer = require('./mailer');
 const notifications = require('./notifications');
+const shopLocations = require('./shopLocations');
 const systemSettings = require('./systemSettings');
 
 const STAFF = new Set(['admin', 'manager', 'operator']);
@@ -29,6 +30,7 @@ const PROOF_SELECT = `
          p.created_at, p.decided_at, p.decision_comment, p.created_by, p.decided_by,
          wo.external_id AS work_order_number,
          o.order_number, o.customer_id AS order_customer_id, o.email AS order_email,
+         o.location_id AS order_location_id,
          COALESCE(NULLIF(trim(sender.display_name), ''), NULLIF(trim(sender.username), '')) AS sender_name,
          COALESCE(NULLIF(trim(decider.display_name), ''), NULLIF(trim(decider.username), '')) AS decided_by_name,
          COALESCE(NULLIF(trim(customer.display_name), ''), NULLIF(trim(customer.username), '')) AS customer_name
@@ -141,7 +143,7 @@ async function presentRows(rows) {
 
 async function loadOrder(orderId) {
   const order = await get(
-    `SELECT id, customer_id, order_number, email, company
+    `SELECT id, customer_id, order_number, email, company, location_id
      FROM orders WHERE id = ?`,
     [orderId]
   );
@@ -149,8 +151,12 @@ async function loadOrder(orderId) {
   return order;
 }
 
-function assertOrderAccess(user, order) {
-  if (isStaff(user)) return;
+async function assertOrderAccess(user, order) {
+  if (isStaff(user)) {
+    const access = await shopLocations.loadAccess(actorId(user));
+    shopLocations.assertVisible(access, order.location_id, 'Order not found');
+    return;
+  }
   if (user.role === 'customer' && Number(order.customer_id) === actorId(user)) return;
   throw httpError(404, 'Order not found');
 }
@@ -159,9 +165,13 @@ async function loadProofRow(id) {
   return get(`${PROOF_SELECT} WHERE p.id = ?`, [id]);
 }
 
-function assertProofAccess(user, proof) {
+async function assertProofAccess(user, proof) {
   if (!proof) throw httpError(404, 'Proof not found');
-  if (isStaff(user)) return;
+  if (isStaff(user)) {
+    const access = await shopLocations.loadAccess(actorId(user));
+    shopLocations.assertVisible(access, proof.order_location_id, 'Proof not found');
+    return;
+  }
   if (user.role === 'customer' && Number(proof.order_customer_id) === actorId(user)) return;
   throw httpError(404, 'Proof not found');
 }
@@ -281,7 +291,7 @@ async function recordProofActivity(tx, user, action, proof, message, extra) {
 
 async function listForUser(user, orderId) {
   const order = await loadOrder(orderId);
-  assertOrderAccess(user, order);
+  await assertOrderAccess(user, order);
   const proofs = await presentRows(await all(
     `${PROOF_SELECT} WHERE p.order_id = ? ORDER BY p.created_at, p.id`,
     [order.id]
@@ -323,6 +333,13 @@ async function listPending(user) {
     if (user.role !== 'customer') throw httpError(403, 'Forbidden');
     customerClause = ' AND o.customer_id = ?';
     params.push(actorId(user));
+  } else {
+    const access = await shopLocations.loadAccess(actorId(user));
+    const locked = shopLocations.predicate('o.location_id', access);
+    if (locked.sql) {
+      customerClause = ` AND ${locked.sql}`;
+      params.push(...locked.params);
+    }
   }
   const rows = await all(
     `${PROOF_SELECT}
@@ -370,9 +387,9 @@ function notifyDecision(item) {
   });
 }
 
-async function loadLetterheadSafe() {
+async function loadLetterheadSafe(locationId) {
   try {
-    return await require('./shopProfile').loadLetterhead();
+    return await shopLocations.letterheadForLocationId(locationId);
   } catch (err) {
     console.error('LETTERHEAD ERROR:', err.message || err);
     return { name: '', address: '', address_lines: [], phone: '' };
@@ -522,11 +539,12 @@ async function sendProof(user, orderId, body, files) {
       customerId: order.customer_id,
       workOrderId: workOrder ? workOrder.id : null,
       proofId,
+      locationId: order.location_id,
       title,
       body: `Proof v${version} is ready to review. ${message.value}`,
     });
     if (emailPlan === 'pending') {
-      const letterhead = await loadLetterheadSafe();
+      const letterhead = await loadLetterheadSafe(order.location_id);
       const rendered = mailer.renderProofEmail({
         letterhead,
         orderNumber: order.order_number,
@@ -593,7 +611,7 @@ async function emailStaffChanges(user, proof, comment) {
   if (!slot.allowed) return { status: 'rate_limited', recipients: [] };
   const addresses = await staffRecipients();
   if (!addresses.length) return { status: 'no_recipients', recipients: [] };
-  const letterhead = await loadLetterheadSafe();
+  const letterhead = await loadLetterheadSafe(proof.order_location_id);
   const rendered = mailer.renderProofChangesEmail({
     letterhead,
     orderNumber: proof.order_number,
@@ -629,7 +647,7 @@ async function decide(user, rawId, decision, comment) {
   }
   const id = parseProofId(rawId);
   const visible = await loadProofRow(id);
-  assertProofAccess(user, visible);
+  await assertProofAccess(user, visible);
   let note = null;
   if (decision === 'changes_requested') {
     const parsed = parseText(comment, 'comment', { required: true, max: 2000, allowNewlines: true });
@@ -727,7 +745,7 @@ async function prepareFile(user, rawId) {
   const id = parseProofId(rawId);
   const file = await get(
     `SELECT pf.id, pf.original_name, pf.stored_name, pf.storage_root, pf.proof_id,
-            p.order_id, o.customer_id AS order_customer_id
+            p.order_id, o.customer_id AS order_customer_id, o.location_id AS order_location_id
      FROM proof_files pf
      JOIN proofs p ON p.id = pf.proof_id
      JOIN orders o ON o.id = p.order_id
@@ -735,7 +753,10 @@ async function prepareFile(user, rawId) {
     [id]
   );
   if (!file) throw httpError(404, 'File not found');
-  if (!isStaff(user)) {
+  if (isStaff(user)) {
+    const access = await shopLocations.loadAccess(actorId(user));
+    shopLocations.assertVisible(access, file.order_location_id, 'File not found');
+  } else if (!isStaff(user)) {
     if (!user || user.role !== 'customer' || Number(file.order_customer_id) !== actorId(user)) {
       throw httpError(404, 'File not found');
     }

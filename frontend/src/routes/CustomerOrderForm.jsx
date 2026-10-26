@@ -11,6 +11,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   GlobalStyles,
   MenuItem,
   TextField,
@@ -27,12 +28,14 @@ import Inventory2OutlinedIcon from '@mui/icons-material/Inventory2Outlined';
 import LocalShippingOutlinedIcon from '@mui/icons-material/LocalShippingOutlined';
 import BrushOutlinedIcon from '@mui/icons-material/BrushOutlined';
 import CloseIcon from '@mui/icons-material/Close';
+import { DivisionCredit } from '../components/AcgMark';
 import CustomerShell from '../components/CustomerShell';
 import BrandLogo from '../components/BrandLogo';
 import { useDocumentTitle } from '../useDocumentTitle';
 import { useAuth } from '../context/AuthContext';
 import { authFetch } from '../api';
 import { brand, formatClockLabel, formatFileSize } from '../brand';
+import { SMS_CONSENT } from '../smsConsent';
 
 const SERVICE_ICONS = {
   'Large Format': DescriptionOutlinedIcon,
@@ -482,9 +485,71 @@ function FieldInput({ id, field, value, disabled, onChange }) {
   );
 }
 
+function LocationChoices({
+  locations,
+  isStaff,
+  locked,
+  orderLocationId,
+  defaultLocationId,
+  savingDefault,
+  onOrderLocation,
+  onDefaultLocation,
+  onSaveDefault,
+}) {
+  const shops = locations || [];
+  if (!shops.length) return null;
+  const selected = shops.find((shop) => String(shop.id) === String(orderLocationId));
+  return (
+    <Box data-testid="order-location-picker" sx={{ display: 'grid', gap: 1.5, mb: 1 }}>
+      {!isStaff ? (
+        <Box sx={{ display: 'grid', gap: 1, gridTemplateColumns: { xs: '1fr', md: '1fr auto' }, alignItems: 'start' }}>
+          <TextField
+            select
+            label="Default location"
+            value={defaultLocationId}
+            onChange={(event) => onDefaultLocation(event.target.value)}
+            data-testid="default-location"
+            helperText="Saved on your account. New orders start here."
+            sx={{ '& .MuiInputBase-input': { fontSize: '1.15rem' } }}
+          >
+            {shops.map((shop) => <MenuItem key={shop.id} value={String(shop.id)}>{shop.name}</MenuItem>)}
+          </TextField>
+          <Button
+            type="button"
+            variant="outlined"
+            disabled={savingDefault || !defaultLocationId}
+            onClick={onSaveDefault}
+            sx={{ mt: { md: 1 }, fontWeight: 800, borderColor: brand.navy, color: brand.navy, fontSize: '1.05rem' }}
+          >
+            {savingDefault ? 'Saving...' : 'Save default'}
+          </Button>
+        </Box>
+      ) : null}
+      {locked ? (
+        <Typography data-testid="order-location" sx={{ fontSize: '1.2rem', fontWeight: 800, color: brand.navy }}>
+          Location: {selected?.name || 'Your shop'}
+        </Typography>
+      ) : (
+        <TextField
+          select
+          label="Location for this order"
+          value={orderLocationId}
+          onChange={(event) => onOrderLocation(event.target.value)}
+          required
+          data-testid="order-location"
+          helperText={isStaff ? 'This order is produced at the shop you choose.' : 'Starts at your default shop. Pick another shop for this order only.'}
+          sx={{ '& .MuiInputBase-input': { fontSize: '1.2rem', fontWeight: 700 } }}
+        >
+          {shops.map((shop) => <MenuItem key={shop.id} value={String(shop.id)}>{shop.name}</MenuItem>)}
+        </TextField>
+      )}
+    </Box>
+  );
+}
+
 export default function CustomerOrderForm({ inboundEmail = null }) {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout, refreshUser } = useAuth();
   const isStaff = user?.role === 'admin' || user?.role === 'manager' || user?.role === 'operator';
   const [searchParams] = useSearchParams();
   const fromQuote = searchParams.get('fromQuote');
@@ -501,6 +566,9 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
   const [options, setOptions] = useState({ services: [], delivery_methods: [], due_window: null, payment_methods: PAYMENT_METHODS });
   const [customers, setCustomers] = useState([]);
   const [customerId, setCustomerId] = useState('');
+  const [orderLocationId, setOrderLocationId] = useState('');
+  const [defaultLocationId, setDefaultLocationId] = useState('');
+  const [savingDefault, setSavingDefault] = useState(false);
   const [company, setCompany] = useState('');
   const [contactName, setContactName] = useState('');
   const [phone, setPhone] = useState('');
@@ -538,6 +606,42 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
   const [result, setResult] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [openSteps, setOpenSteps] = useState(openAllSteps);
+  const [mobilePhone, setMobilePhone] = useState('');
+  const [smsOptIn, setSmsOptIn] = useState(false);
+  const [textingSaving, setTextingSaving] = useState(false);
+  const [textingError, setTextingError] = useState('');
+  const [textingNotice, setTextingNotice] = useState('');
+
+  useEffect(() => {
+    if (!user || isStaff) return;
+    setMobilePhone(user.mobile_phone || '');
+    setSmsOptIn(Boolean(user.sms_opt_in));
+  }, [user, isStaff]);
+
+  async function saveTexting(event) {
+    if (event && event.preventDefault) event.preventDefault();
+    setTextingSaving(true);
+    setTextingError('');
+    setTextingNotice('');
+    try {
+      const response = await authFetch('/api/auth/profile', {
+        method: 'PUT',
+        body: JSON.stringify({ mobile_phone: mobilePhone, sms_opt_in: smsOptIn }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Unable to save texting preferences');
+      const refreshed = await refreshUser();
+      if (refreshed) {
+        setMobilePhone(refreshed.mobile_phone || '');
+        setSmsOptIn(Boolean(refreshed.sms_opt_in));
+      }
+      setTextingNotice(smsOptIn ? 'Text updates are on for this mobile number.' : 'Text updates are off.');
+    } catch (err) {
+      setTextingError(err.message || 'Unable to save texting preferences');
+    } finally {
+      setTextingSaving(false);
+    }
+  }
 
   function applyProfile(source, includeCompanyFallback) {
     if (!source) return;
@@ -555,6 +659,17 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
   useEffect(() => {
     if (!user || isStaff) return;
     applyProfile(user, true);
+  }, [user, isStaff]);
+
+  useEffect(() => {
+    if (!user) return;
+    const home = user.location_id ? String(user.location_id) : '';
+    if (!isStaff) {
+      setDefaultLocationId((current) => current || home);
+      setOrderLocationId((current) => current || home);
+      return;
+    }
+    if (!user.all_locations && home) setOrderLocationId(home);
   }, [user, isStaff]);
 
   useEffect(() => {
@@ -997,6 +1112,7 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
     }
     if (!seeShipLines) payload.delivery_method = deliveryMethod;
     if (isStaff) payload.customer_id = Number(customerId);
+    if (orderLocationId) payload.location_id = Number(orderLocationId);
     if (quoteRequestId) payload.quote_request_id = quoteRequestId;
 
     setSubmitting(true);
@@ -1241,6 +1357,57 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
             </Box>
           </Box>
 
+          {!isStaff ? (
+            <Box
+              data-testid="profile-texting"
+              sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderLeft: `6px solid ${brand.navy}`, borderRadius: 2, p: { xs: 2, sm: 2.5 } }}
+            >
+              <Typography sx={{ color: brand.navy, fontWeight: 800, fontSize: '1.45rem' }}>
+                Order status texts
+              </Typography>
+              <Typography sx={{ color: brand.muted, fontSize: '1.1rem', mt: 0.5, mb: 1.5, maxWidth: 760 }}>
+                Add a mobile number if you want a text when an order is ready for pickup. This stays off until you agree.
+              </Typography>
+              {textingError ? <Alert severity="error" sx={{ mb: 1.5 }}>{textingError}</Alert> : null}
+              {textingNotice ? <Alert severity="success" sx={{ mb: 1.5 }}>{textingNotice}</Alert> : null}
+              <Box sx={{ display: 'grid', gap: 1.5, maxWidth: 640 }}>
+                <TextField
+                  id="profile-mobile"
+                  label="Mobile phone"
+                  value={mobilePhone}
+                  onChange={(event) => setMobilePhone(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') saveTexting(event);
+                  }}
+                  placeholder="919-555-0100"
+                  autoComplete="tel"
+                  sx={{ '& .MuiInputBase-input': { fontSize: '1.25rem' }, '& .MuiInputLabel-root': { fontSize: '1.05rem' } }}
+                />
+                <FormControlLabel
+                  sx={{ alignItems: 'flex-start', m: 0, '& .MuiFormControlLabel-label': { fontSize: '1.2rem', lineHeight: 1.45, color: brand.text } }}
+                  control={(
+                    <Checkbox
+                      checked={smsOptIn}
+                      onChange={(event) => setSmsOptIn(event.target.checked)}
+                      inputProps={{ 'data-testid': 'sms-opt-in', 'aria-label': SMS_CONSENT }}
+                      sx={{ color: brand.navy, '&.Mui-checked': { color: brand.orange } }}
+                    />
+                  )}
+                  label={SMS_CONSENT}
+                />
+                <Button
+                  type="button"
+                  onClick={saveTexting}
+                  variant="contained"
+                  disabled={textingSaving}
+                  sx={{ justifySelf: 'start', bgcolor: brand.navy, fontWeight: 800, fontSize: '1.05rem', px: 2.5 }}
+                >
+                  {textingSaving ? 'Saving...' : 'Save texting preferences'}
+                </Button>
+              </Box>
+            </Box>
+          ) : null}
+
           <Box
             role="navigation"
             aria-label="Order steps"
@@ -1331,6 +1498,7 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
                     setCustomerId(nextId);
                     const match = customers.find((customer) => String(customer.id) === String(nextId));
                     if (match) applyProfile(match, true);
+                    if (match && user?.all_locations && match.location_id) setOrderLocationId(String(match.location_id));
                     setBillChoice('');
                   }}
                   SelectProps={{
@@ -1349,6 +1517,34 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
                 {customers.length === 0 ? <EmptyNote>No customers are available to choose.</EmptyNote> : null}
               </>
             ) : null}
+            <LocationChoices
+              locations={options.locations || []}
+              isStaff={isStaff}
+              locked={!user?.all_locations && isStaff}
+              orderLocationId={orderLocationId}
+              defaultLocationId={defaultLocationId}
+              savingDefault={savingDefault}
+              onOrderLocation={setOrderLocationId}
+              onDefaultLocation={setDefaultLocationId}
+              onSaveDefault={async () => {
+                if (!defaultLocationId) return;
+                setSavingDefault(true);
+                setFormError('');
+                try {
+                  const response = await authFetch('/api/auth/profile', {
+                    method: 'PUT',
+                    body: JSON.stringify({ location_id: Number(defaultLocationId) }),
+                  });
+                  const body = await response.json().catch(() => ({}));
+                  if (!response.ok) throw new Error(body.error || 'Unable to save the default location');
+                  setOrderLocationId((current) => current || defaultLocationId);
+                } catch (err) {
+                  setFormError(err.message || 'Unable to save the default location');
+                } finally {
+                  setSavingDefault(false);
+                }
+              }}
+            />
             <FieldGrid>
               <TextControl id="order-company" label="Company" required value={company} disabled={locked} onChange={(event) => setCompany(event.target.value)} autoComplete="organization" />
               <TextControl id="order-contact" label="Contact" required value={contactName} disabled={locked} onChange={(event) => setContactName(event.target.value)} autoComplete="name" />
@@ -1782,18 +1978,20 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
           py: 1.25,
         }}
         >
-          <Box sx={{ maxWidth: 1440, mx: 'auto', display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 1.25, alignItems: { xs: 'stretch', sm: 'center' }, justifyContent: 'space-between' }}>
+          <Box sx={{ maxWidth: 1440, mx: 'auto', display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+            {!isStaff ? <DivisionCredit height={22} /> : null}
+            <Box sx={{ display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 1.25, alignItems: { xs: 'stretch', sm: 'center' }, justifyContent: 'space-between' }}>
             <Box sx={{ minWidth: 0 }}>
-              <Typography aria-live="polite" sx={{ fontWeight: 800, color: brand.navy, fontSize: 15 }}>
-                {countLabel(selectedServices.length, 'service', 'services')}
-                {' · '}
-                {countLabel(lines.length, 'line', 'lines')}
-                {filesAttached ? ` · ${countLabel(uploadedCount, 'file', 'files')}` : ''}
-              </Typography>
-              <Typography sx={{ fontSize: 12, color: brand.muted }}>
-                {uploading ? 'Uploading files…' : result ? `Order ${result.order_number} submitted.` : 'Submit stays here while you fill the order.'}
-              </Typography>
-            </Box>
+                <Typography aria-live="polite" sx={{ fontWeight: 800, color: brand.navy, fontSize: 15 }}>
+                  {countLabel(selectedServices.length, 'service', 'services')}
+                  {' · '}
+                  {countLabel(lines.length, 'line', 'lines')}
+                  {filesAttached ? ` · ${countLabel(uploadedCount, 'file', 'files')}` : ''}
+                </Typography>
+                <Typography sx={{ fontSize: 12, color: brand.muted }}>
+                  {uploading ? 'Uploading files…' : result ? `Order ${result.order_number} submitted.` : 'Submit stays here while you fill the order.'}
+                </Typography>
+              </Box>
             <Button
               className="order-submit"
               data-testid="submit-order"
@@ -1815,6 +2013,7 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
             >
               {submitting ? 'Submitting…' : result ? 'Submitted' : inboundEmail ? 'Create order' : 'Submit Order'}
             </Button>
+            </Box>
           </Box>
         </Box>
       </Box>
@@ -1890,12 +2089,12 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
         </DialogActions>
       </Dialog>
 
-      <Box className="no-print" sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderLeft: `4px solid ${brand.orange}`, borderRadius: 2, overflow: 'hidden', mb: { xs: 18, sm: 14 } }}>
+      <Box className="no-print" sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderLeft: `4px solid ${brand.orange}`, borderRadius: 2, overflow: 'hidden', mb: { xs: 22, sm: 16 } }}>
         <Box sx={{ bgcolor: brand.navy, px: 2, py: 1 }}>
           <Typography sx={{ color: '#fff', fontWeight: 800 }}>Important Information</Typography>
         </Box>
         <Box component="ul" sx={{ m: 0, px: 2, py: 1.5, pl: 4.5, color: brand.text, fontSize: 14 }}>
-          <li>Order status is available in LaunchPad. Email updates are not enabled yet.</li>
+          <li>Order status is available in LaunchPad. When an order is ready for pickup, the customer is emailed and texted if they opted in.</li>
           <li>If you have any questions, please contact us at 919-782-3332.</li>
           <li>Thank you for your business!</li>
         </Box>
@@ -1908,6 +2107,7 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
       title={isStaff ? 'Create Order' : 'Customer Order Form'}
       welcome={welcomeText(user)}
       onLogout={logout}
+      showDivision={false}
       extra={isStaff ? <Button color="inherit" onClick={() => navigate('/')}>Dashboard</Button> : null}
     >
       {content}

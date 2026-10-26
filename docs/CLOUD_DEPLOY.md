@@ -14,7 +14,8 @@ Do not commit `.env`, database files, or upload files. Set secrets in the host's
 
 Optional, only if you use them today:
 
-- SMTP values (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`) for file-share and quote email.
+- SMTP values (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`) for file-share, quote, and Ready for Pickup email.
+- Twilio values (`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`) for Ready for Pickup texts. Leave them unset to log each text as `SMS dry-run:` and not send it.
 - Microsoft 365 values (`M365_TENANT_ID`, `M365_CLIENT_ID`, `M365_CLIENT_SECRET`, `M365_MAILBOX`) for Email Orders.
 - S3-compatible credentials if you choose object storage instead of the disk for uploads. This stays off unless `FILE_STORAGE_DRIVER=s3`.
 
@@ -28,17 +29,26 @@ Copy the names from `backend/.env.example`. For a single HTTPS service:
 | `PORT` | set by the host | One public port |
 | `DATABASE_PATH` | `/var/data/launchpad.db` | SQLite file on the persistent disk. Wins over `DATABASE_FILE` |
 | `UPLOADS_DIR` | `/var/data/uploads` | Local upload folder on that disk. Wins over `UPLOAD_DIR` |
-| `PUBLIC_APP_URL` | `https://launchpad.acgprinting.com` | Links in email |
+| `PUBLIC_APP_URL` | `https://launchpad.acgprinting.com` | Sign-in links and email logo URLs (`/brand/logo.png`, `/brand/acg-logo.png`, `/brand/accent-imaging-logo.png`) |
 | `TRUST_PROXY` | `1` | The HTTPS proxy's client IP is used for rate limits |
 | `DELIVERY_TIMEZONE` | `America/New_York` | Same shop clock as the PC |
 | `INIT_ADMIN_PASSWORD` | choose one | Used only when the admin user does not exist yet |
 | `BACKUP_ENABLED` | `false` until you want it | Nightly SQLite online backup |
+| `TWILIO_ACCOUNT_SID` | leave unset | Optional. With the auth token and from number, sends Ready for Pickup texts |
+| `TWILIO_AUTH_TOKEN` | leave unset | Optional. Unset means the text is logged and not sent |
+| `TWILIO_FROM_NUMBER` | leave unset | Optional. E.164 number, such as `+19195550100` |
 
 `CORS_ORIGINS` can stay unset. The browser loads the app and the API from the same host. Production does not allow `http://localhost:5173` unless you list it in `CORS_ORIGINS`. Development still allows the Vite origins. Sign-in uses the bearer token in the browser. The server does not set a session cookie. `COOKIE_SECURE` is unused.
 
 Leave `FILE_STORAGE_DRIVER` unset or set it to `local` to keep files on `UPLOADS_DIR`. Production creates that absolute folder at startup. Development on the PC does not.
 
-On startup in production the process runs `node init_db.js` before it listens. That applies the same idempotent migrations and seeds as a manual init. It does not reset an existing admin password. A sample work order is inserted again only when its number, such as `WO-1001`, is not already in the database.
+On startup in production the process runs `node init_db.js` before it listens. That applies the same idempotent migrations and seeds as a manual init. Running it again on the database at `/var/data/launchpad.db` does not reset or overwrite any existing user's password. `INIT_ADMIN_PASSWORD` is used only when no admin row exists. A sample work order is inserted again only when its number, such as `WO-1001`, is not already in the database.
+
+The same init seeds the shop locations Raleigh, Hickory, and Charlotte once. Records that already have no location are assigned to Raleigh a single time. An admin or manager with no home shop stays able to see every location. A later init does not put that person back on Raleigh and does not change passwords.
+
+`PUBLIC_APP_URL` is also the host for the logos in customer email. The Docker build runs `npm run build` in `frontend/`, which copies `frontend/public/brand/` into `frontend/dist/brand/`. The production process serves those files, including `/brand/logo.png`, `/brand/acg-logo.png`, and `/brand/accent-imaging-logo.png`. Customer mail uses those absolute URLs and the sentence "A service of Accent Imaging and Accent Corporate Graphics".
+
+Ready for Pickup email uses that same public URL. The text uses Twilio only when `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_NUMBER` are all set. Otherwise the server logs `SMS dry-run:` and does not call Twilio. `render.yaml` lists the three names with `sync: false` and no values. Put them in the host dashboard when you want texts to go out.
 
 ## Build and run
 
@@ -58,7 +68,7 @@ NODE_ENV=production npm start
 1. Push the repository to the Git remote Render can see.
 2. New Blueprint, or a new Web Service with runtime Docker and `Dockerfile` at the repository root.
 3. Attach a persistent disk at `/var/data`.
-4. Set the environment from the table above. Put `INIT_ADMIN_PASSWORD`, SMTP, and Microsoft 365 values in the dashboard, not in git.
+4. Set the environment from the table above. Put `INIT_ADMIN_PASSWORD`, SMTP, Twilio, and Microsoft 365 values in the dashboard, not in git. Leave the Twilio values empty to keep texts as a dry-run.
 5. Deploy. The first boot migrates the database. Open `/health` and expect `{ "status": "ok" }`.
 6. Open the service URL and sign in.
 
@@ -148,7 +158,7 @@ A successful run stores `last_backup_at`. The admin board backup alert reads tha
    - Render or Railway: CNAME `launchpad` to the hostname they show you. Do not CNAME the zone apex this way.
    - A droplet or load balancer: A record `launchpad` to that IPv4 address. Add AAAA if you have an IPv6 address.
 3. In the host, add the custom domain `launchpad.acgprinting.com` and turn on its managed certificate.
-4. Set `PUBLIC_APP_URL=https://launchpad.acgprinting.com` and redeploy so email links use that name.
+4. Set `PUBLIC_APP_URL=https://launchpad.acgprinting.com` and redeploy so email links and logo images use that name.
 5. Wait until `https://launchpad.acgprinting.com/health` returns `{ "status": "ok" }` and the certificate is valid.
 
 ## Cutover

@@ -43,7 +43,7 @@ router.post('/sync', auth.requireAuth, auth.requireRole('admin'), async (req, re
 
 router.get('/', auth.requireAuth, staff, async (req, res) => {
   try {
-    res.json(await inboundEmail.listEmails(req.query || {}));
+    res.json(await inboundEmail.listEmails(req.query || {}, req.user));
   } catch (err) {
     sendError(res, err, 'INBOUND MAIL LIST ERROR:', 'Failed to load emails');
   }
@@ -64,7 +64,7 @@ router.get('/:id/attachments/:attachmentId/download', auth.requireAuth, staff, a
 
 router.get('/:id', auth.requireAuth, staff, async (req, res) => {
   try {
-    const email = await inboundEmail.getEmail(req.params.id);
+    const email = await inboundEmail.getEmail(req.params.id, req.user);
     if (!email) return res.status(404).json({ error: 'Email not found' });
     res.json(email);
   } catch (err) {

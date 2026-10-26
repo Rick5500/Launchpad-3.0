@@ -144,7 +144,7 @@ function request(port, options) {
         const text = buffer.toString('utf8');
         let json = null;
         try { json = JSON.parse(text); } catch (err) { json = null; }
-        resolve({ status: res.statusCode, text, json, headers: res.headers });
+        resolve({ status: res.statusCode, text, buffer, json, headers: res.headers });
       });
     });
     req.on('error', reject);
@@ -262,6 +262,17 @@ async function checkConfig() {
   }, () => {
     assert(runtime.corsOrigins().includes('http://localhost:5173'), 'CORS_ORIGINS can still name localhost in production');
   });
+  const dockerfile = fs.readFileSync(path.join(backendDir, '..', 'Dockerfile'), 'utf8');
+  assert(/USER node/.test(dockerfile), 'the image should run as the node user');
+  assert(/npm run build --prefix frontend/.test(dockerfile), 'the image should build the frontend, including public brand files');
+  const blueprint = fs.readFileSync(path.join(backendDir, '..', 'render.yaml'), 'utf8');
+  for (const key of ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM_NUMBER']) {
+    const at = blueprint.indexOf(`key: ${key}`);
+    assert(at >= 0, `render.yaml should list ${key}`);
+    const entry = blueprint.slice(at, at + 80);
+    assert(/sync:\s*false/.test(entry), `${key} should be an unsynced optional value`);
+    assert(!/^\s*value:/m.test(entry), `${key} should not ship a secret value`);
+  }
   console.log('PASS config aliases, CORS, migrate flag');
 }
 
@@ -513,6 +524,18 @@ async function checkRelocate() {
   console.log('PASS storage relocate');
 }
 
+const BRAND_FILES = ['logo.png', 'acg-logo.png', 'accent-imaging-logo.png'];
+
+function copyBrandLogos(dist) {
+  const source = path.join(backendDir, '..', 'frontend', 'public', 'brand');
+  const dest = path.join(dist, 'brand');
+  fs.mkdirSync(dest, { recursive: true });
+  for (const name of BRAND_FILES) {
+    fs.copyFileSync(path.join(source, name), path.join(dest, name));
+  }
+  return source;
+}
+
 async function checkServers() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-cloud-http-'));
   const dist = path.join(tmp, 'dist');
@@ -520,8 +543,9 @@ async function checkServers() {
   const marker = 'LAUNCHPAD_SPA_MARKER';
   fs.writeFileSync(path.join(dist, 'index.html'), `<!doctype html><html><body>${marker}</body></html>`);
   fs.writeFileSync(path.join(dist, 'assets', 'app.js'), 'ASSET_OK');
-  const prodDb = path.join(tmp, 'disk', 'nested', 'launchpad.db');
-  const prodUploads = path.join(tmp, 'disk', 'uploads');
+  const brandSource = copyBrandLogos(dist);
+  const prodDb = path.join(tmp, 'var', 'data', 'launchpad.db');
+  const prodUploads = path.join(tmp, 'var', 'data', 'uploads');
   const prodPort = 3195;
   const child = startServer({
     NODE_ENV: 'production',
@@ -538,6 +562,9 @@ async function checkServers() {
     DELIVERY_TIMEZONE: 'UTC',
     FILE_STORAGE_DRIVER: '',
     BACKUP_ENABLED: '',
+    TWILIO_ACCOUNT_SID: '',
+    TWILIO_AUTH_TOKEN: '',
+    TWILIO_FROM_NUMBER: '',
     M365_TENANT_ID: '',
     M365_CLIENT_ID: '',
     M365_CLIENT_SECRET: '',
@@ -553,6 +580,12 @@ async function checkServers() {
     assert(spa.status === 200 && spa.text.includes(marker), 'production client routes should fall back to index.html');
     const asset = await request(prodPort, { path: '/assets/app.js' });
     assert(asset.status === 200 && asset.text.includes('ASSET_OK'), 'production should serve built assets');
+    for (const name of BRAND_FILES) {
+      const logo = await request(prodPort, { path: `/brand/${name}` });
+      const expected = fs.readFileSync(path.join(brandSource, name));
+      assert(logo.status === 200 && logo.buffer && logo.buffer.equals(expected), `production should serve /brand/${name}`);
+      assert(String(logo.headers['content-type'] || '').includes('image/png'), `/brand/${name} should be an image`);
+    }
     const missingAsset = await request(prodPort, { path: '/assets/missing.js' });
     assert(missingAsset.status === 404 && !missingAsset.text.includes(marker), 'a missing asset should not return the SPA');
     const health = await request(prodPort, { path: '/api/health' });
@@ -587,6 +620,15 @@ async function checkServers() {
       headers: { Authorization: `Bearer ${login.json.token}` },
     });
     assert(me.status === 200 && me.json && me.json.user && me.json.user.username === 'admin', `bearer token should authenticate, got ${me.status} ${me.text}`);
+    const locations = await request(prodPort, {
+      path: '/api/locations',
+      headers: { Authorization: `Bearer ${login.json.token}` },
+    });
+    const names = ((locations.json && locations.json.locations) || []).map((row) => row.name).sort();
+    assert(locations.status === 200 && names.join(',') === 'Charlotte,Hickory,Raleigh', `production should list the shop locations, got ${locations.status} ${names.join(',')}`);
+    const signup = await request(prodPort, { path: '/api/auth/config' });
+    const publicNames = ((signup.json && signup.json.locations) || []).map((row) => row.name).sort();
+    assert(publicNames.join(',') === 'Charlotte,Hickory,Raleigh', 'the public auth config should list the shop locations');
     const cookieOnly = await request(prodPort, {
       path: '/api/auth/me',
       headers: { Cookie: `lp_session=${login.json.token}` },
@@ -611,6 +653,47 @@ async function checkServers() {
   } finally {
     await stopServer(child);
   }
+
+  const beforeDb = new sqlite3.Database(prodDb);
+  const beforeUsers = await runSql(beforeDb, 'all', `SELECT username, password_hash, role, location_id FROM users ORDER BY lower(username)`);
+  const beforeLocations = await runSql(beforeDb, 'all', `SELECT name FROM locations ORDER BY name`);
+  await new Promise((resolve) => beforeDb.close(() => resolve()));
+  assert(beforeUsers.some((row) => String(row.username).toLowerCase() === 'admin' && row.password_hash), 'the existing database should already have an admin password');
+  assert(beforeLocations.map((row) => row.name).join(',') === 'Charlotte,Hickory,Raleigh', 'the first production init should seed the three shops');
+
+  const again = await spawnNode(['init_db.js'], {
+    NODE_ENV: 'production',
+    DATABASE_PATH: prodDb,
+    DATABASE_FILE: '',
+    INIT_ADMIN_PASSWORD: 'DifferentAdminPass999',
+    UPLOADS_DIR: prodUploads,
+    UPLOAD_DIR: '',
+    DELIVERY_TIMEZONE: 'UTC',
+  });
+  assert(again.code === 0, `second init on the existing database failed: ${again.err || again.out}`);
+  assert(/Admin user already exists/.test(again.out), 'a second init should leave the existing admin alone');
+  assert(!/INIT_ADMIN_PASSWORD/.test(again.out), 'INIT_ADMIN_PASSWORD must not be applied when an admin already exists');
+
+  const third = await spawnNode(['init_db.js'], {
+    NODE_ENV: 'production',
+    DATABASE_PATH: prodDb,
+    DATABASE_FILE: '',
+    INIT_ADMIN_PASSWORD: 'AnotherUnusedPass999',
+    UPLOADS_DIR: prodUploads,
+    UPLOAD_DIR: '',
+    DELIVERY_TIMEZONE: 'UTC',
+  });
+  assert(third.code === 0, `third init on the existing database failed: ${third.err || third.out}`);
+
+  const afterDb = new sqlite3.Database(prodDb);
+  const afterUsers = await runSql(afterDb, 'all', `SELECT username, password_hash, role, location_id FROM users ORDER BY lower(username)`);
+  const afterLocations = await runSql(afterDb, 'all', `SELECT name FROM locations ORDER BY name`);
+  await new Promise((resolve) => afterDb.close(() => resolve()));
+  assert(JSON.stringify(afterUsers) === JSON.stringify(beforeUsers), 'init on an existing database must not change passwords, roles, or location assignments');
+  assert(afterLocations.map((row) => row.name).join(',') === beforeLocations.map((row) => row.name).join(','), 'a later init must not duplicate shop locations');
+  const admin = afterUsers.find((row) => String(row.username).toLowerCase() === 'admin');
+  assert(admin && admin.location_id == null, 'an admin with no home shop stays able to see every location');
+  console.log('PASS existing database init leaves passwords alone');
 
   const devDb = path.join(tmp, 'dev.db');
   const devUploads = path.join(tmp, 'dev-uploads');

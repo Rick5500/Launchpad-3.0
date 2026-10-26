@@ -4,6 +4,7 @@ import {
   Alert,
   Box,
   Button,
+  Chip,
   MenuItem,
   Table,
   TableBody,
@@ -30,6 +31,7 @@ const emptyFilters = {
   service: '',
   from: '',
   to: '',
+  location_id: '',
 };
 
 export default function SearchOrders() {
@@ -37,6 +39,7 @@ export default function SearchOrders() {
   const [applied, setApplied] = useState(emptyFilters);
   const [orders, setOrders] = useState([]);
   const [services, setServices] = useState([]);
+  const [locations, setLocations] = useState([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -46,7 +49,10 @@ export default function SearchOrders() {
   useEffect(() => {
     authFetch('/api/orders/options')
       .then((response) => (response.ok ? response.json() : { services: [] }))
-      .then((body) => setServices(body.services || []))
+      .then((body) => {
+        setServices(body.services || []);
+        setLocations(body.locations || []);
+      })
       .catch(() => setServices([]));
   }, []);
 
@@ -102,12 +108,23 @@ export default function SearchOrders() {
           <TextField label="Contact" value={filters.contact} onChange={(event) => update('contact', event.target.value)} />
           <TextField label="Phone" value={filters.phone} onChange={(event) => update('phone', event.target.value)} />
           <TextField label="Email" value={filters.email} onChange={(event) => update('email', event.target.value)} />
-          <TextField select label="Status" value={filters.status} onChange={(event) => update('status', event.target.value)}>
+          <TextField
+            select
+            label="Status"
+            value={filters.status}
+            onChange={(event) => update('status', event.target.value)}
+            SelectProps={{ inputProps: { 'data-testid': 'search-status' } }}
+          >
             <MenuItem value="">Any status</MenuItem>
             <MenuItem value="open">Open</MenuItem>
             <MenuItem value="in-progress">In progress</MenuItem>
             <MenuItem value="completed">Completed</MenuItem>
             <MenuItem value="on-hold">On hold</MenuItem>
+            <MenuItem value="ready for pickup">Ready for Pickup</MenuItem>
+          </TextField>
+          <TextField select label="Location" value={filters.location_id} onChange={(event) => update('location_id', event.target.value)} data-testid="search-location">
+            <MenuItem value="">All locations</MenuItem>
+            {locations.map((location) => <MenuItem key={location.id} value={String(location.id)}>{location.name}</MenuItem>)}
           </TextField>
           <TextField select label="Service" value={filters.service} onChange={(event) => update('service', event.target.value)}>
             <MenuItem value="">Any service</MenuItem>
@@ -128,7 +145,9 @@ export default function SearchOrders() {
             <TableHead>
               <TableRow>
                 <TableCell>Order</TableCell>
+                <TableCell>Order status</TableCell>
                 <TableCell>Company</TableCell>
+                <TableCell>Location</TableCell>
                 <TableCell>Contact</TableCell>
                 <TableCell>Originals</TableCell>
                 <TableCell>Payment</TableCell>
@@ -143,7 +162,13 @@ export default function SearchOrders() {
                   <TableCell>
                     <Button component={RouterLink} to={order.detail_path} size="small">{order.order_number}</Button>
                   </TableCell>
+                  <TableCell data-testid="search-order-status">
+                    {order.status === 'Ready for Pickup' ? (
+                      <Chip size="small" label="Ready for Pickup" sx={{ bgcolor: '#F58220', color: '#111', fontWeight: 800 }} />
+                    ) : (order.status || 'In Production')}
+                  </TableCell>
                   <TableCell>{order.company}</TableCell>
+                  <TableCell>{order.location_name || '—'}</TableCell>
                   <TableCell>{order.contact_name}</TableCell>
                   <TableCell>{order.originals_source_label || 'Not specified'}</TableCell>
                   <TableCell>{order.payment_method_label || 'Not specified'}</TableCell>
@@ -166,7 +191,7 @@ export default function SearchOrders() {
                 </TableRow>
               ))}
               {!loading && orders.length === 0 ? (
-                <TableRow><TableCell colSpan={8}>No orders match.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={10}>No orders match.</TableCell></TableRow>
               ) : null}
             </TableBody>
           </Table>

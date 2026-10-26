@@ -4,13 +4,16 @@ import {
   Alert,
   Box,
   Button,
+  MenuItem,
   TextField,
   Typography,
 } from '@mui/material';
+import { QuotePrintCredit } from '../components/AcgMark';
 import QuoteStatusChip from '../components/QuoteStatusChip';
 import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
 import { authFetch, downloadAuthorized } from '../api';
+import { useAuth } from '../context/AuthContext';
 import { brand, formatFileSize } from '../brand';
 import { quoteBodySx, quoteFieldSx, quotePrimaryButtonSx } from '../quoteUi';
 
@@ -29,7 +32,10 @@ export default function QuoteRequests() {
 }
 
 function QuoteList({ onOpen }) {
+  const { user } = useAuth();
   const [status, setStatus] = useState('New');
+  const [locationId, setLocationId] = useState('');
+  const [locations, setLocations] = useState([]);
   const [quotes, setQuotes] = useState([]);
   const [newCount, setNewCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -38,7 +44,10 @@ function QuoteList({ onOpen }) {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    const query = status === 'All' ? '' : `?status=${encodeURIComponent(status)}`;
+    const params = new URLSearchParams();
+    if (status !== 'All') params.set('status', status);
+    if (locationId) params.set('location_id', locationId);
+    const query = params.toString() ? `?${params.toString()}` : '';
     authFetch(`/api/quote-requests${query}`)
       .then(async (response) => {
         const body = await response.json().catch(() => ({}));
@@ -60,7 +69,18 @@ function QuoteList({ onOpen }) {
     return () => {
       cancelled = true;
     };
-  }, [status]);
+  }, [status, locationId]);
+
+  useEffect(() => {
+    if (!(user?.role === 'admin' || user?.all_locations)) return undefined;
+    authFetch('/api/locations')
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({}));
+        if (response.ok) setLocations(body.locations || []);
+      })
+      .catch(() => {});
+    return undefined;
+  }, [user]);
 
   return (
     <Box data-testid="quote-requests-list" sx={{ maxWidth: 1100, mx: 'auto' }}>
@@ -70,6 +90,19 @@ function QuoteList({ onOpen }) {
       <Typography sx={{ ...quoteBodySx, color: brand.muted, mt: 0.75, mb: 2 }}>
         {newCount} new {newCount === 1 ? 'request' : 'requests'}. Open one to review the specs and send a price.
       </Typography>
+      {(user?.role === 'admin' || user?.all_locations) ? (
+        <TextField
+          select
+          label="Location"
+          value={locationId}
+          onChange={(event) => setLocationId(event.target.value)}
+          data-testid="quote-location-filter"
+          sx={{ minWidth: 240, mb: 2, bgcolor: '#fff', '& .MuiInputBase-input': { fontSize: '1.1rem' } }}
+        >
+          <MenuItem value="">All locations</MenuItem>
+          {locations.map((location) => <MenuItem key={location.id} value={String(location.id)}>{location.name}</MenuItem>)}
+        </TextField>
+      ) : null}
       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
         {FILTERS.map((item) => {
           const selected = status === item;
@@ -113,6 +146,7 @@ function QuoteList({ onOpen }) {
                   {quote.customer_name || 'Customer'}
                   {quote.customer_company ? ` · ${quote.customer_company}` : ''}
                   {quote.needed_by ? ` · Needed by ${quote.needed_by}` : ''}
+                  {quote.location_name ? ` · ${quote.location_name}` : ''}
                 </Typography>
               </Box>
               <QuoteStatusChip status={quote.status} />
@@ -347,6 +381,7 @@ function QuoteDetail({ id, onBack }) {
           This quote was converted to an order, so the price is locked.
         </Alert>
       )}
+      <QuotePrintCredit />
     </Box>
   );
 }

@@ -11,6 +11,7 @@ const {
   likePattern,
 } = require('./fields');
 const { displayFieldList, readFieldValues, PAYMENT_UNSPECIFIED } = require('./serviceFields');
+const shopLocations = require('./shopLocations');
 
 const SORTS = {
   created_at: 'o.created_at',
@@ -21,6 +22,7 @@ const SORTS = {
 };
 
 const STATUSES = new Set(['open', 'in-progress', 'completed', 'on-hold', 'complete']);
+const READY_STATUS = 'ready for pickup';
 
 function parseListQuery(query) {
   const source = query || {};
@@ -50,7 +52,9 @@ function parseListQuery(query) {
   let status = null;
   if (source.status != null && String(source.status).trim() !== '') {
     status = String(source.status).trim().toLowerCase();
-    if (!STATUSES.has(status)) return { error: 'status must be open, in-progress, completed, or on-hold' };
+    if (status !== READY_STATUS && !STATUSES.has(status)) {
+      return { error: 'status must be open, in-progress, completed, on-hold, or Ready for Pickup' };
+    }
   }
   let serviceId = null;
   if (source.service != null && String(source.service).trim() !== '') {
@@ -133,7 +137,10 @@ function buildWhere(filters) {
     work.push(`IFNULL(wo.external_id, '') LIKE ? ESCAPE '\\'`);
     workParams.push(likePattern(filters.work_order_number));
   }
-  if (filters.status === 'completed' || filters.status === 'complete') {
+  if (filters.status === READY_STATUS) {
+    clauses.push(`lower(trim(coalesce(o.status, ''))) = ?`);
+    params.push(READY_STATUS);
+  } else if (filters.status === 'completed' || filters.status === 'complete') {
     work.push(`lower(trim(coalesce(wo.status, ''))) IN ('completed', 'complete')`);
   } else if (filters.status) {
     work.push(`lower(trim(coalesce(wo.status, ''))) = ?`);
@@ -219,18 +226,35 @@ function presentWorkOrder(row) {
   };
 }
 
-async function searchOrders(query) {
+async function searchOrders(query, access) {
   const parsed = parseListQuery(query);
   if (parsed.error) throw httpError(400, parsed.error);
   const filters = parsed.value;
   const where = buildWhere(filters);
+  if (access) {
+    const pred = shopLocations.predicate('o.location_id', access);
+    if (pred.sql) {
+      where.sql = where.sql ? `${where.sql} AND ${pred.sql}` : `WHERE ${pred.sql}`;
+      where.params.push(...pred.params);
+    }
+    if (shopLocations.seesAll(access)) {
+      const chosen = await shopLocations.boardFilter(access, query);
+      const extra = shopLocations.filterSql('o.location_id', chosen);
+      if (extra.sql) {
+        where.sql = where.sql ? `${where.sql}${extra.sql}` : `WHERE ${extra.sql.replace(/^\s*AND\s+/, '')}`;
+        where.params.push(...extra.params);
+      }
+    }
+  }
   const count = await get(`SELECT COUNT(*) AS count FROM orders o ${where.sql}`, where.params);
   const orders = await all(
     `SELECT o.id, o.order_number, o.company, o.contact_name, o.phone, o.email,
             o.due_date, o.due_time, o.created_at, o.delivery_method, o.ups_account_number, o.project_name,
             o.originals_source, o.address_line1, o.address_line2, o.city, o.state, o.zip,
-            o.payment_method, o.return_to, o.bill_to_company
+            o.payment_method, o.return_to, o.bill_to_company, o.location_id, o.status,
+            l.name AS location_name
      FROM orders o
+     LEFT JOIN locations l ON l.id = o.location_id
      ${where.sql}
      ORDER BY ${SORTS[filters.sort]} ${filters.dir.toUpperCase()}, o.id DESC
      LIMIT ? OFFSET ?`,
@@ -283,6 +307,9 @@ async function searchOrders(query) {
       payment_method_label: row.payment_method ? String(row.payment_method) : PAYMENT_UNSPECIFIED,
       return_to: row.return_to || null,
       bill_to_company: row.bill_to_company || '',
+      location_id: row.location_id || null,
+      location_name: row.location_name || null,
+      status: String(row.status || '').trim().toLowerCase() === READY_STATUS ? 'Ready for Pickup' : 'In Production',
       line_details: lineDetails.get(row.id) || [],
       detail_path: `/orders/${row.id}`,
       work_orders: grouped.get(row.id) || [],

@@ -103,6 +103,10 @@ function orderFilesLink(orderId) {
   return `${base}/login?next=${encodeURIComponent(next)}`;
 }
 
+function orderPageLink(orderId) {
+  return appLink(`/orders/${Number(orderId)}`);
+}
+
 // Login next path for one transfer. The frontend safeAppPath accepts this path.
 function transferFilesLink(transferId) {
   const id = Number(transferId);
@@ -125,6 +129,10 @@ function orderProofLink(orderId) {
 
 function quoteLink(quoteId) {
   return appLink(`/quotes/${Number(quoteId)}`);
+}
+
+function staffQuoteLink(quoteId) {
+  return appLink(`/quote-requests/${Number(quoteId)}`);
 }
 
 function proofReviewLink(orderId, workOrderId) {
@@ -215,9 +223,18 @@ function consumeRate(actorId) {
 
 function footerLines(letterhead) {
   const lines = [];
-  if (letterhead && letterhead.name) lines.push(letterhead.name);
-  for (const line of (letterhead && letterhead.address_lines) || []) lines.push(line);
-  if (letterhead && letterhead.phone) lines.push(letterhead.phone);
+  function push(value) {
+    const text = String(value || '').trim();
+    if (!text) return;
+    if (lines.some((line) => line.trim().toLowerCase() === text.toLowerCase())) return;
+    lines.push(text);
+  }
+  if (letterhead && letterhead.name) push(letterhead.name);
+  if (letterhead && letterhead.location_name) push(letterhead.location_name);
+  for (const line of (letterhead && letterhead.location_address_lines) || []) push(line);
+  if (letterhead && letterhead.location_phone) push(letterhead.location_phone);
+  for (const line of (letterhead && letterhead.address_lines) || []) push(line);
+  if (letterhead && letterhead.phone) push(letterhead.phone);
   return lines;
 }
 
@@ -244,6 +261,56 @@ function emailBannerHtml(name) {
   return `<tr><td style="background:#0A2F6E;padding:16px 24px;border-bottom:4px solid #F58220;">${logo}${title}</td></tr>`;
 }
 
+// Small customer credit. Images use the same absolute-URL rule as the
+// Launchpad logo and are omitted until PUBLIC_APP_URL is set. Staff-only
+// mail (proof changes, quote-request alerts, and the test email) leaves
+// this block off. The letterhead lines stay either way.
+const EMAIL_ACG_LOGO_PATH = '/brand/acg-logo.png';
+const EMAIL_AI_LOGO_PATH = '/brand/accent-imaging-logo.png';
+const CREDIT_SENTENCE = 'A service of Accent Imaging and Accent Corporate Graphics';
+
+function emailCreditHtml() {
+  const sentence = `<div style="margin:8px 0 0;font-size:12px;line-height:1.35;color:#0A2F6E;font-weight:700;text-align:center;">${CREDIT_SENTENCE}</div>`;
+  const base = publicAppUrl();
+  if (!base) {
+    return `<div style="font-size:12px;line-height:1.35;color:#0A2F6E;font-weight:700;text-align:center;">${CREDIT_SENTENCE}</div>`;
+  }
+  const ai = escapeHtml(`${base}${EMAIL_AI_LOGO_PATH}`);
+  const acg = escapeHtml(`${base}${EMAIL_ACG_LOGO_PATH}`);
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+            <tr>
+              <td align="center" style="text-align:center;">
+                <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:0 auto;">
+                  <tr>
+                    <td valign="middle" style="padding:0 8px 0 0;"><img src="${ai}" alt="Accent Imaging" width="37" height="36" style="display:block;width:37px;height:36px;border:0;outline:none;text-decoration:none;" /></td>
+                    <td valign="middle"><img src="${acg}" alt="Accent Corporate Graphics" width="56" height="36" style="display:block;width:56px;height:36px;border:0;outline:none;text-decoration:none;" /></td>
+                  </tr>
+                </table>
+                ${sentence}
+              </td>
+            </tr>
+          </table>`;
+}
+
+function footerText(lines, options = {}) {
+  if (!options.credit) return lines;
+  return [...lines, CREDIT_SENTENCE];
+}
+
+function emailFooterHtml(lines, options = {}) {
+  const text = (lines || []).map((line) => escapeHtml(line)).join('<br>');
+  if (!options.credit) {
+    return `<tr><td style="padding:16px 24px;background:#F4F7FB;border-top:1px solid #E2E8F0;font-size:13px;color:#5E6A78;line-height:1.5;">${text}</td></tr>`;
+  }
+  const address = text
+    ? `<div style="font-size:13px;color:#5E6A78;line-height:1.5;">${text}</div>`
+    : '';
+  return `<tr><td style="padding:16px 24px;background:#F4F7FB;border-top:1px solid #E2E8F0;">
+          ${address}
+          <div style="margin-top:${address ? '12px' : '0'};">${emailCreditHtml()}</div>
+        </td></tr>`;
+}
+
 function renderShareEmail({ letterhead, orderNumber, message, fileNames, link }) {
   const name = letterhead && letterhead.name ? letterhead.name : '';
   const orderLabel = orderNumber || 'your order';
@@ -266,7 +333,7 @@ function renderShareEmail({ letterhead, orderNumber, message, fileNames, link })
     '',
     'This link opens Launchpad. You need to sign in. Files are not available from a public link.',
     '',
-    footer.join('\n'),
+    footerText(footer, { credit: true }).join('\n'),
   ].join('\n').replace(/\n{3,}/g, '\n\n');
 
   const html = `<!DOCTYPE html>
@@ -285,9 +352,7 @@ function renderShareEmail({ letterhead, orderNumber, message, fileNames, link })
           <p style="margin:0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>
           <p style="margin:16px 0 0;font-size:13px;color:#5E6A78;">You need to sign in. These files are not available from a public download link.</p>
         </td></tr>
-        <tr><td style="padding:16px 24px;background:#F4F7FB;border-top:1px solid #E2E8F0;font-size:13px;color:#5E6A78;line-height:1.5;">
-          ${footer.map((line) => escapeHtml(line)).join('<br>')}
-        </td></tr>
+        ${emailFooterHtml(footer, { credit: true })}
       </table>
     </td></tr>
   </table>
@@ -323,7 +388,7 @@ function renderTransferEmail({ letterhead, subject, message, fileNames, link }) 
     '',
     'This link opens Launchpad. You need to sign in. Files are not available from a public link.',
     '',
-    footer.join('\n'),
+    footerText(footer, { credit: true }).join('\n'),
   ].join('\n').replace(/\n{3,}/g, '\n\n');
 
   const html = `<!DOCTYPE html>
@@ -342,9 +407,7 @@ function renderTransferEmail({ letterhead, subject, message, fileNames, link }) 
           <p style="margin:0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>
           <p style="margin:16px 0 0;font-size:13px;color:#5E6A78;">You need to sign in. These files are not available from a public download link.</p>
         </td></tr>
-        <tr><td style="padding:16px 24px;background:#F4F7FB;border-top:1px solid #E2E8F0;font-size:13px;color:#5E6A78;line-height:1.5;">
-          ${footer.map((line) => escapeHtml(line)).join('<br>')}
-        </td></tr>
+        ${emailFooterHtml(footer, { credit: true })}
       </table>
     </td></tr>
   </table>
@@ -385,7 +448,7 @@ function renderQuoteEmail({ letterhead, projectName, price, notes, validUntil, l
     '',
     'This link opens Launchpad. You need to sign in.',
     '',
-    footer.join('\n'),
+    footerText(footer, { credit: true }).join('\n'),
   ].filter((line) => line !== undefined).join('\n').replace(/\n{3,}/g, '\n\n');
 
   const notesHtml = notesText
@@ -411,9 +474,7 @@ function renderQuoteEmail({ letterhead, projectName, price, notes, validUntil, l
           <p style="margin:0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>
           <p style="margin:16px 0 0;font-size:13px;color:#5E6A78;">You need to sign in to accept or decline this quote.</p>
         </td></tr>
-        <tr><td style="padding:16px 24px;background:#F4F7FB;border-top:1px solid #E2E8F0;font-size:13px;color:#5E6A78;line-height:1.5;">
-          ${footer.map((line) => escapeHtml(line)).join('<br>')}
-        </td></tr>
+        ${emailFooterHtml(footer, { credit: true })}
       </table>
     </td></tr>
   </table>
@@ -450,7 +511,7 @@ function renderProofEmail({ letterhead, orderNumber, version, message, fileNames
     '',
     'This link opens Launchpad. You need to sign in. The proof is not available from a public link.',
     '',
-    footer.join('\n'),
+    footerText(footer, { credit: true }).join('\n'),
   ].join('\n').replace(/\n{3,}/g, '\n\n');
 
   const html = `<!DOCTYPE html>
@@ -469,9 +530,7 @@ function renderProofEmail({ letterhead, orderNumber, version, message, fileNames
           <p style="margin:0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>
           <p style="margin:16px 0 0;font-size:13px;color:#5E6A78;">You need to sign in. This proof is not available from a public download link.</p>
         </td></tr>
-        <tr><td style="padding:16px 24px;background:#F4F7FB;border-top:1px solid #E2E8F0;font-size:13px;color:#5E6A78;line-height:1.5;">
-          ${footer.map((line) => escapeHtml(line)).join('<br>')}
-        </td></tr>
+        ${emailFooterHtml(footer, { credit: true })}
       </table>
     </td></tr>
   </table>
@@ -504,7 +563,7 @@ function renderProofChangesEmail({ letterhead, orderNumber, version, comment, cu
     'Sign in to upload a new proof version:',
     link,
     '',
-    footer.join('\n'),
+    footerText(footer).join('\n'),
   ].join('\n').replace(/\n{3,}/g, '\n\n');
 
   const html = `<!DOCTYPE html>
@@ -521,9 +580,7 @@ function renderProofChangesEmail({ letterhead, orderNumber, version, comment, cu
           <p style="margin:0 0 16px;"><a href="${href}" style="display:inline-block;background:#F58220;color:#111111;text-decoration:none;font-weight:700;padding:10px 16px;">Sign in to send a new version</a></p>
           <p style="margin:0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>
         </td></tr>
-        <tr><td style="padding:16px 24px;background:#F4F7FB;border-top:1px solid #E2E8F0;font-size:13px;color:#5E6A78;line-height:1.5;">
-          ${footer.map((line) => escapeHtml(line)).join('<br>')}
-        </td></tr>
+        ${emailFooterHtml(footer)}
       </table>
     </td></tr>
   </table>
@@ -532,6 +589,121 @@ function renderProofChangesEmail({ letterhead, orderNumber, version, comment, cu
 
   return {
     subject: safeSubject(`Changes requested on proof ${versionLabel} for order ${orderLabel}`),
+    text,
+    html,
+  };
+}
+
+function renderQuoteRequestEmail({ letterhead, customerName, projectName, neededBy, link }) {
+  const name = letterhead && letterhead.name ? letterhead.name : '';
+  const customer = customerName || 'A customer';
+  const project = projectName || 'a project';
+  const footer = footerLines(letterhead);
+  const safeLink = escapeHtml(link);
+  const href = String(link || '').replace(/"/g, '%22');
+  const headline = `New quote request from ${customer}: ${project}`;
+  const needed = neededBy ? `Needed by ${neededBy}.` : '';
+  const text = [
+    name,
+    '',
+    headline,
+    needed,
+    '',
+    'Sign in to review this quote request.',
+    link,
+    '',
+    footerText(footer).join('\n'),
+  ].filter((line) => line !== '').join('\n');
+
+  const neededHtml = needed
+    ? `<p style="margin:0 0 16px;line-height:1.5;">${escapeHtml(needed)}</p>`
+    : '';
+  const html = `<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#F4F7FB;font-family:Arial,Helvetica,sans-serif;color:#1B2838;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F7FB;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#ffffff;border:1px solid #E2E8F0;">
+        ${emailBannerHtml(name)}
+        <tr><td style="padding:24px;">
+          <h1 style="margin:0 0 12px;font-size:20px;color:#0A2F6E;">${escapeHtml(headline)}</h1>
+          ${neededHtml}
+          <p style="margin:0 0 16px;"><a href="${href}" style="display:inline-block;background:#F58220;color:#111111;text-decoration:none;font-weight:700;padding:10px 16px;">Sign in to review this request</a></p>
+          <p style="margin:0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>
+        </td></tr>
+        ${emailFooterHtml(footer)}
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+  return {
+    subject: safeSubject(headline),
+    text,
+    html,
+  };
+}
+
+function renderPickupReadyEmail({ letterhead, orderNumber, locationName, locationAddress, locationPhone, link }) {
+  const name = letterhead && letterhead.name ? letterhead.name : '';
+  const orderLabel = orderNumber || 'your order';
+  const placeName = String(locationName || '').trim();
+  const place = placeName ? `our ${placeName} location` : 'our shop';
+  const addressLines = String(locationAddress || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const phone = String(locationPhone || '').trim();
+  const footer = footerLines(letterhead);
+  const safeLink = escapeHtml(link);
+  const href = String(link || '').replace(/"/g, '%22');
+  const addressText = addressLines.join('\n');
+  const text = [
+    name,
+    '',
+    `Order #${orderLabel} is ready for pickup at ${place}.`,
+    addressText,
+    phone ? `Questions? ${phone}` : '',
+    '',
+    link ? 'Sign in to view this order:' : '',
+    link || '',
+    '',
+    footerText(footer, { credit: true }).join('\n'),
+  ].filter((line) => line !== '').join('\n').replace(/\n{3,}/g, '\n\n');
+
+  const addressHtml = addressLines.length
+    ? `<p style="margin:0 0 8px;line-height:1.5;">${addressLines.map((line) => escapeHtml(line)).join('<br>')}</p>`
+    : '';
+  const phoneHtml = phone
+    ? `<p style="margin:0 0 16px;line-height:1.5;">Questions? ${escapeHtml(phone)}</p>`
+    : '';
+  const linkHtml = link
+    ? `<p style="margin:16px 0 0;"><a href="${href}" style="display:inline-block;background:#F58220;color:#111111;text-decoration:none;font-weight:700;padding:10px 16px;">Sign in to view your order</a></p>
+          <p style="margin:12px 0 0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>`
+    : '';
+  const html = `<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#F4F7FB;font-family:Arial,Helvetica,sans-serif;color:#1B2838;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F7FB;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#ffffff;border:1px solid #E2E8F0;">
+        ${emailBannerHtml(name)}
+        <tr><td style="padding:24px;">
+          <h1 style="margin:0 0 12px;font-size:20px;color:#0A2F6E;">Your order is ready for pickup</h1>
+          <p style="margin:0 0 12px;line-height:1.5;">Order #${escapeHtml(orderLabel)} is ready for pickup at ${escapeHtml(place)}.</p>
+          ${addressHtml}
+          ${phoneHtml}
+          ${linkHtml}
+        </td></tr>
+        ${emailFooterHtml(footer, { credit: true })}
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  return {
+    subject: safeSubject(`Order ${orderLabel} is ready for pickup`),
     text,
     html,
   };
@@ -548,7 +720,7 @@ function renderTestEmail({ letterhead }) {
     'If you received it, mail sending is working.',
     appUrl ? `App: ${appUrl}` : '',
     '',
-    footer.join('\n'),
+    footerText(footer).join('\n'),
   ].filter((line) => line !== '').join('\n');
   const html = `<!DOCTYPE html>
 <html>
@@ -562,9 +734,7 @@ function renderTestEmail({ letterhead }) {
           <p style="margin:0 0 12px;line-height:1.5;">This is a test email from Launchpad. If you received it, mail sending is working.</p>
           ${appUrl ? `<p style="margin:0;font-size:13px;color:#5E6A78;">App: ${escapeHtml(appUrl)}</p>` : ''}
         </td></tr>
-        <tr><td style="padding:16px 24px;background:#F4F7FB;border-top:1px solid #E2E8F0;font-size:13px;color:#5E6A78;line-height:1.5;">
-          ${footer.map((line) => escapeHtml(line)).join('<br>')}
-        </td></tr>
+        ${emailFooterHtml(footer)}
       </table>
     </td></tr>
   </table>
@@ -666,9 +836,11 @@ module.exports = {
   publicFrom,
   publicAppUrl,
   orderFilesLink,
+  orderPageLink,
   transferFilesLink,
   orderProofLink,
   quoteLink,
+  staffQuoteLink,
   proofReviewLink,
   escapeHtml,
   parseAddressList,
@@ -678,8 +850,10 @@ module.exports = {
   renderShareEmail,
   renderTransferEmail,
   renderQuoteEmail,
+  renderQuoteRequestEmail,
   renderProofEmail,
   renderProofChangesEmail,
+  renderPickupReadyEmail,
   renderTestEmail,
   deliver,
   sendTest,

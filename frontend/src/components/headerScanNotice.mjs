@@ -45,6 +45,9 @@ export function reduceNotice(current, incoming, now = Date.now()) {
     id: incoming.id,
     severity: incoming.severity,
     message: incoming.message,
+    orderId: incoming.orderId || null,
+    orderNumber: incoming.orderNumber || '',
+    orderStatus: incoming.orderStatus || '',
   };
   if (!current) return { ...item, shownAt: now, queue: [] };
   if (severityRank(incoming.severity) > severityRank(current.severity)) {

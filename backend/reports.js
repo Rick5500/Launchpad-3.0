@@ -78,6 +78,13 @@ function whereSql(clauses) {
   return clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 }
 
+function pushShop(clauses, params, column, range) {
+  if (!range || range.shopLocationId == null) return;
+  if (range.shopLocationNull) clauses.push(`(${column} = ? OR ${column} IS NULL)`);
+  else clauses.push(`${column} = ?`);
+  params.push(range.shopLocationId);
+}
+
 function reportBase(range, extra) {
   return {
     from: range.from,
@@ -89,16 +96,18 @@ function reportBase(range, extra) {
 
 function loadStatusReport(range, cb) {
   const params = [];
-  const clauses = dateClauses('created_at', range, params);
+  const clauses = dateClauses('wo.created_at', range, params);
+  pushShop(clauses, params, 'COALESCE(wo.location_id, o.location_id)', range);
   db.all(
     `SELECT
        CASE
-         WHEN trim(COALESCE(status, '')) = '' THEN '(none)'
-         WHEN lower(trim(status)) = 'complete' THEN 'completed'
-         ELSE lower(trim(status))
+         WHEN trim(COALESCE(wo.status, '')) = '' THEN '(none)'
+         WHEN lower(trim(wo.status)) = 'complete' THEN 'completed'
+         ELSE lower(trim(wo.status))
        END AS status,
        COUNT(*) AS count
-     FROM work_orders
+     FROM work_orders wo
+     LEFT JOIN orders o ON o.id = wo.order_id
      ${whereSql(clauses)}
      GROUP BY 1`,
     params,
@@ -121,15 +130,17 @@ function loadStatusReport(range, cb) {
 
 function loadDepartmentReport(range, cb) {
   const params = [];
-  const clauses = dateClauses('created_at', range, params);
+  const clauses = dateClauses('wo.created_at', range, params);
+  pushShop(clauses, params, 'COALESCE(wo.location_id, o.location_id)', range);
   db.all(
     `SELECT
        CASE
-         WHEN department IS NULL OR trim(department) = '' THEN '(none)'
-         ELSE trim(department)
+         WHEN wo.department IS NULL OR trim(wo.department) = '' THEN '(none)'
+         ELSE trim(wo.department)
        END AS department,
        COUNT(*) AS count
-     FROM work_orders
+     FROM work_orders wo
+     LEFT JOIN orders o ON o.id = wo.order_id
      ${whereSql(clauses)}
      GROUP BY 1
      ORDER BY count DESC, department COLLATE NOCASE ASC`,
@@ -146,9 +157,11 @@ function loadDepartmentReport(range, cb) {
 function loadStageReport(range, cb) {
   const params = [];
   const clauses = dateClauses('wo.created_at', range, params);
+  pushShop(clauses, params, 'COALESCE(wo.location_id, o.location_id)', range);
   db.all(
     `SELECT wo.stage_id AS stage_id, COUNT(*) AS count
      FROM work_orders wo
+     LEFT JOIN orders o ON o.id = wo.order_id
      ${whereSql(clauses)}
      GROUP BY wo.stage_id`,
     params,
@@ -192,22 +205,24 @@ function loadThroughputReport(range, bucket, cb) {
   const format = bucket === 'week' ? '%Y-W%W' : '%Y-%m-%d';
   const params = [format];
   const clauses = [
-    `lower(trim(COALESCE(status, ''))) IN ('completed', 'complete')`,
-    `COALESCE(updated_at, created_at) IS NOT NULL`,
+    `lower(trim(COALESCE(wo.status, ''))) IN ('completed', 'complete')`,
+    `COALESCE(wo.updated_at, wo.created_at) IS NOT NULL`,
   ];
   if (range.from) {
-    clauses.push('COALESCE(updated_at, created_at) >= ?');
+    clauses.push('COALESCE(wo.updated_at, wo.created_at) >= ?');
     params.push(range.from);
   }
   if (range.to) {
-    clauses.push('COALESCE(updated_at, created_at) <= ?');
+    clauses.push('COALESCE(wo.updated_at, wo.created_at) <= ?');
     params.push(range.to);
   }
+  pushShop(clauses, params, 'COALESCE(wo.location_id, o.location_id)', range);
   db.all(
     `SELECT
-       strftime(?, COALESCE(updated_at, created_at)) AS bucket,
+       strftime(?, COALESCE(wo.updated_at, wo.created_at)) AS bucket,
        COUNT(*) AS count
-     FROM work_orders
+     FROM work_orders wo
+     LEFT JOIN orders o ON o.id = wo.order_id
      WHERE ${clauses.join(' AND ')}
      GROUP BY bucket
      ORDER BY bucket ASC`,
@@ -241,6 +256,7 @@ function loadDeliveryReport(range, cb) {
     clauses.push('d.due_time <= ?');
     params.push(range.to);
   }
+  pushShop(clauses, params, 'COALESCE(o.location_id, wo.location_id)', range);
   const now = new Date();
   const rules = getRules();
   db.all(
@@ -297,6 +313,7 @@ function loadDeliveryReport(range, cb) {
 function loadScansByOperator(range, cb) {
   const params = [];
   const clauses = dateClauses('e.event_time', range, params);
+  pushShop(clauses, params, 'COALESCE(wo.location_id, o.location_id)', range);
   db.all(
     `SELECT
        e.operator_id AS operator_id,
@@ -305,6 +322,8 @@ function loadScansByOperator(range, cb) {
        COUNT(*) AS scan_count
      FROM barcode_events e
      LEFT JOIN users u ON u.id = e.operator_id
+     LEFT JOIN work_orders wo ON wo.id = e.work_order_id
+     LEFT JOIN orders o ON o.id = wo.order_id
      ${whereSql(clauses)}
      GROUP BY e.operator_id, u.username, u.display_name
      ORDER BY scan_count DESC, operator_username COLLATE NOCASE ASC`,
@@ -325,15 +344,18 @@ function loadScansByOperator(range, cb) {
 
 function loadScansByLocation(range, cb) {
   const params = [];
-  const clauses = dateClauses('event_time', range, params);
+  const clauses = dateClauses('e.event_time', range, params);
+  pushShop(clauses, params, 'COALESCE(wo.location_id, o.location_id)', range);
   db.all(
     `SELECT
        CASE
-         WHEN location IS NULL OR trim(location) = '' THEN '(none)'
-         ELSE trim(location)
+         WHEN e.location IS NULL OR trim(e.location) = '' THEN '(none)'
+         ELSE trim(e.location)
        END AS location,
        COUNT(*) AS scan_count
-     FROM barcode_events
+     FROM barcode_events e
+     LEFT JOIN work_orders wo ON wo.id = e.work_order_id
+     LEFT JOIN orders o ON o.id = wo.order_id
      ${whereSql(clauses)}
      GROUP BY 1
      ORDER BY scan_count DESC, location COLLATE NOCASE ASC`,
@@ -417,9 +439,16 @@ function loadStageDurationReport(range, cb) {
     `SELECT e.work_order_id, e.event_time, e.stage_id, e.id, ps.name AS stage_name
      FROM barcode_events e
      LEFT JOIN production_stages ps ON ps.id = e.stage_id
+     LEFT JOIN work_orders wo ON wo.id = e.work_order_id
+     LEFT JOIN orders o ON o.id = wo.order_id
      WHERE e.stage_id IS NOT NULL
+       ${range && range.shopLocationId != null
+    ? (range.shopLocationNull
+      ? 'AND (COALESCE(wo.location_id, o.location_id) = ? OR COALESCE(wo.location_id, o.location_id) IS NULL)'
+      : 'AND COALESCE(wo.location_id, o.location_id) = ?')
+    : ''}
      ORDER BY e.work_order_id ASC, e.event_time ASC, e.id ASC`,
-    [],
+    range && range.shopLocationId != null ? [range.shopLocationId] : [],
     (err, events) => {
       if (err) return cb(err);
       const rows = averageStageRows(events, range);

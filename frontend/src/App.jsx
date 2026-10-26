@@ -1,13 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { keyframes } from '@emotion/react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { ThemeProvider, CssBaseline, Box, Typography, TextField, Button, CircularProgress, Alert } from '@mui/material';
+import { ThemeProvider, CssBaseline, Box, Typography, TextField, Button, CircularProgress, Alert, MenuItem } from '@mui/material';
 import AdminBoard from './routes/AdminBoard';
 import PlaceholderPage from './routes/PlaceholderPage';
 import SearchOrders from './routes/SearchOrders';
 import ServicesPage from './routes/ServicesPage';
 import UsersPage from './routes/UsersPage';
 import SystemSettingsPage from './routes/SystemSettingsPage';
+import LocationsPage from './routes/LocationsPage';
 import ActivityLogPage from './routes/ActivityLogPage';
 import BarcodeSettingsPage from './routes/BarcodeSettingsPage';
 import WorkOrdersList from './routes/WorkOrdersList';
@@ -30,6 +31,7 @@ import Notifications from './routes/Notifications';
 import SendFiles from './routes/SendFiles';
 import EmailOrders from './routes/EmailOrders';
 import CustomerFiles from './routes/CustomerFiles';
+import { DivisionCredit } from './components/AcgMark';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -199,6 +201,8 @@ function LoginScreen() {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [website, setWebsite] = useState('');
+  const [locations, setLocations] = useState([]);
+  const [locationId, setLocationId] = useState('');
   const [localError, setLocalError] = useState('');
   const location = useLocation();
   const nextPath = returnPath(location);
@@ -339,7 +343,13 @@ function LoginScreen() {
       .then(async (response) => {
         const body = await response.json().catch(() => ({}));
         if (!response.ok) return;
-        if (!cancelled) setSignupEnabled(body.customer_self_signup_enabled === true);
+        if (!cancelled) {
+          setSignupEnabled(body.customer_self_signup_enabled === true);
+          const shops = Array.isArray(body.locations) ? body.locations : [];
+          setLocations(shops);
+          const raleigh = shops.find((shop) => String(shop.name || '').toLowerCase() === 'raleigh');
+          setLocationId((current) => current || (raleigh ? String(raleigh.id) : (shops[0] ? String(shops[0].id) : '')));
+        }
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -412,6 +422,7 @@ function LoginScreen() {
       password: newPassword,
       password_confirm: confirmPassword,
       website,
+      location_id: locationId ? Number(locationId) : undefined,
     });
   }
 
@@ -537,6 +548,7 @@ function LoginScreen() {
         ) : null}
       </Box>
       {formVisible ? (
+        <>
         <Box
           data-testid="sign-in-card"
           sx={{
@@ -655,6 +667,21 @@ function LoginScreen() {
                     sx={darkFieldSx}
                   />
                   <TextField
+                    select
+                    label="Default location"
+                    value={locationId}
+                    onChange={(event) => setLocationId(event.target.value)}
+                    fullWidth
+                    required
+                    data-testid="signup-location"
+                    helperText="Orders and quotes start at this shop. You can pick a different shop on each order."
+                    sx={darkFieldSx}
+                  >
+                    {locations.map((shop) => (
+                      <MenuItem key={shop.id} value={String(shop.id)}>{shop.name}</MenuItem>
+                    ))}
+                  </TextField>
+                  <TextField
                     label="Password"
                     type="password"
                     value={newPassword}
@@ -696,6 +723,26 @@ function LoginScreen() {
             )}
           </Box>
         </Box>
+        <DivisionCredit
+          height={36}
+          sx={{
+            alignSelf: 'center',
+            width: '100%',
+            maxWidth: 440,
+            mt: 2,
+            mb: 1,
+            px: 1.5,
+            py: 1,
+            borderRadius: 1.5,
+            bgcolor: 'rgba(255,255,255,0.94)',
+            boxShadow: '0 6px 16px rgba(0,0,0,0.28)',
+            animation: animateForm ? `${loginCardIn} 500ms ease` : 'none',
+            '@media (prefers-reduced-motion: reduce)': {
+              animation: 'none',
+            },
+          }}
+        />
+        </>
       ) : null}
     </Box>
   );
@@ -742,7 +789,7 @@ function AppRoutes() {
         <Route path="work-orders/:id/edit" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><WorkOrderForm /></ProtectedRoute>} />
         <Route path="production-board" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><ProductionBoard /></ProtectedRoute>} />
         <Route path="scan" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><BarcodeScan /></ProtectedRoute>} />
-        <Route path="customers" element={<ProtectedRoute roles={['admin']}><Customers /></ProtectedRoute>} />
+        <Route path="customers" element={<ProtectedRoute roles={['admin', 'manager']}><Customers /></ProtectedRoute>} />
         <Route path="delivery" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><Deliveries /></ProtectedRoute>} />
         <Route path="reports" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><Reports /></ProtectedRoute>} />
         <Route path="reports/:reportId" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><Reports /></ProtectedRoute>} />
@@ -763,6 +810,7 @@ function AppRoutes() {
         <Route path="services" element={<ProtectedRoute roles={['admin']}><ServicesPage /></ProtectedRoute>} />
         <Route path="users" element={<ProtectedRoute roles={['admin']}><UsersPage /></ProtectedRoute>} />
         <Route path="settings" element={<ProtectedRoute roles={['admin']}><SystemSettingsPage /></ProtectedRoute>} />
+        <Route path="locations" element={<ProtectedRoute roles={['admin']}><LocationsPage /></ProtectedRoute>} />
         <Route path="activity-log" element={<ProtectedRoute roles={['admin']}><ActivityLogPage /></ProtectedRoute>} />
         <Route path="barcode-settings" element={<ProtectedRoute roles={['admin']}><BarcodeSettingsPage /></ProtectedRoute>} />
         <Route path="admin" element={<ProtectedRoute roles={['admin']}><PlaceholderPage title="Admin" /></ProtectedRoute>} />

@@ -26,7 +26,15 @@ services:
         value: local
       # Set this in the dashboard before the first boot if you want a chosen admin password.
       # A copied launchpad.db already has its admin user, and this value is ignored then.
+      # init_db.js never updates an existing password.
       - key: INIT_ADMIN_PASSWORD
+        sync: false
+      # Optional Ready for Pickup texts. Leave all three unset to log the text (dry-run) and not send it.
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM_NUMBER
         sync: false
     disk:
       name: launchpad-data

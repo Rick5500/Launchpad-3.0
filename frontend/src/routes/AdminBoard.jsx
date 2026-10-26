@@ -40,7 +40,7 @@ import { authFetch } from '../api';
 import { BOARD_REFRESH_EVENT, requestBoardRefresh } from '../boardEvents';
 import MoveWorkOrderDialog from '../components/MoveWorkOrderDialog';
 import BoardDetailPane from '../components/BoardDetailPane';
-import { UrgencyChips, UrgencyLegend, rowSurface, splitInstant, splitWall } from '../components/boardUrgency';
+import { ReadyForPickupChip, UrgencyChips, UrgencyLegend, rowSurface, splitInstant, splitWall } from '../components/boardUrgency';
 import { useAuth } from '../context/AuthContext';
 import { brand } from '../brand';
 import LoadingState from '../components/LoadingState';
@@ -200,12 +200,23 @@ function linkButton(label, onClick) {
   );
 }
 
+function quoteRequestPath(quote) {
+  if (quote && quote.status === 'Accepted') return `/order?fromQuote=${quote.id}`;
+  return `/quote-requests/${quote.id}`;
+}
+
+function quoteActivityPath(item) {
+  if (item.action === 'quote_request.accepted') return `/order?fromQuote=${item.entity_id}`;
+  return `/quote-requests/${item.entity_id}`;
+}
+
 export default function AdminBoard() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const canApprove = user?.role === 'admin';
   const canMove = user?.role === 'admin' || user?.role === 'manager';
   const [summary, setSummary] = useState(null);
+  const showQuotePanel = (user?.role === 'admin' || user?.role === 'manager') && Boolean(summary?.quote_requests);
   const [summaryError, setSummaryError] = useState('');
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]);
@@ -213,6 +224,7 @@ export default function AdminBoard() {
   const [tableError, setTableError] = useState('');
   const [tableLoading, setTableLoading] = useState(true);
   const [department, setDepartment] = useState('Active');
+  const [shopLocation, setShopLocation] = useState('all');
   const [viewAll, setViewAll] = useState(false);
   const [searchInput, setSearchInput] = useState('');
   const [q, setQ] = useState('');
@@ -253,7 +265,10 @@ export default function AdminBoard() {
 
   useEffect(() => {
     let cancelled = false;
-    const summaryPath = viewAll ? '/api/admin-board?scope=all' : '/api/admin-board';
+    const summaryParams = new URLSearchParams();
+    if (viewAll) summaryParams.set('scope', 'all');
+    if (shopLocation && shopLocation !== 'all') summaryParams.set('location_id', shopLocation);
+    const summaryPath = `/api/admin-board?${summaryParams.toString()}`;
     authFetch(summaryPath, { cache: 'no-store' })
       .then(async (response) => {
         const body = await response.json().catch(() => ({}));
@@ -275,7 +290,7 @@ export default function AdminBoard() {
     return () => {
       cancelled = true;
     };
-  }, [refreshKey, viewAll]);
+  }, [refreshKey, viewAll, shopLocation]);
 
   useEffect(() => {
     let cancelled = false;
@@ -294,6 +309,7 @@ export default function AdminBoard() {
     if (filters.category) params.set('category', filters.category);
     if (filters.due_from) params.set('due_from', filters.due_from);
     if (filters.due_to) params.set('due_to', filters.due_to);
+    if (shopLocation && shopLocation !== 'all') params.set('location_id', shopLocation);
 
     authFetch(`/api/admin-board/work-orders?${params.toString()}`, { cache: 'no-store' })
       .then(async (response) => {
@@ -320,7 +336,7 @@ export default function AdminBoard() {
     return () => {
       cancelled = true;
     };
-  }, [department, q, filters, offset, sort, refreshKey, viewAll, summary?.viewer?.restricted]);
+  }, [department, q, filters, offset, sort, refreshKey, viewAll, summary?.viewer?.restricted, shopLocation]);
 
   useEffect(() => {
     if (!summary?.viewer?.restricted || viewAll || !summary.viewer.department) return;
@@ -445,6 +461,14 @@ export default function AdminBoard() {
         caption: 'Category',
         color: '#1565C0',
         Icon: DescriptionOutlinedIcon,
+      },
+      {
+        key: 'ready-for-pickup',
+        value: summary.stats.ready_for_pickup || 0,
+        label: 'Ready for Pickup',
+        caption: 'Orders',
+        color: brand.orange,
+        Icon: AssignmentOutlinedIcon,
       },
     ];
     for (const departmentStat of summary.stats.departments || []) {
@@ -579,6 +603,55 @@ export default function AdminBoard() {
 
   return (
     <Box sx={{ display: 'grid', gap: 2 }}>
+      {summary?.viewer?.can_pick_location ? (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+          <TextField
+            select
+            label="Location"
+            value={shopLocation}
+            data-testid="location-picker"
+            onChange={(event) => {
+              setShopLocation(event.target.value);
+              setOffset(0);
+            }}
+            sx={{ minWidth: 280, bgcolor: '#fff', '& .MuiInputBase-input': { fontSize: '1.2rem', fontWeight: 700 } }}
+          >
+            <MenuItem value="all">All locations</MenuItem>
+            {(summary.locations || []).map((location) => (
+              <MenuItem key={location.id} value={String(location.id)}>{location.name}</MenuItem>
+            ))}
+          </TextField>
+        </Box>
+      ) : summary?.viewer?.location_name ? (
+        <Chip
+          data-testid="operator-location-chip"
+          label={`Showing: ${summary.viewer.location_name}`}
+          sx={{ fontWeight: 800, fontSize: '1.05rem', bgcolor: brand.navy, color: '#fff', height: 40 }}
+        />
+      ) : null}
+      {summary?.viewer?.can_pick_location && shopLocation === 'all' && (summary.location_summary || []).length ? (
+        <Box
+          data-testid="location-summary"
+          sx={{
+            display: 'grid',
+            gap: 1.5,
+            gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' },
+          }}
+        >
+          {summary.location_summary.map((location) => (
+            <Box
+              key={location.id}
+              data-testid={`location-summary-${location.name}`}
+              sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderTop: `6px solid ${brand.orange}`, borderRadius: 2, p: 2 }}
+            >
+              <Typography sx={{ color: brand.navy, fontWeight: 800, fontSize: '1.6rem' }}>{location.name}</Typography>
+              <Typography sx={{ fontSize: '2rem', fontWeight: 800, lineHeight: 1.15, mt: 1 }}>{location.active_work_orders}</Typography>
+              <Typography sx={{ fontSize: '1.05rem', fontWeight: 700 }}>Active work orders</Typography>
+              <Typography sx={{ fontSize: '1.15rem', mt: 1 }}>{location.orders} orders · {location.new_quotes} new quotes</Typography>
+            </Box>
+          ))}
+        </Box>
+      ) : null}
       {(summary?.viewer?.restricted || summary?.viewer?.can_clear) && (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
           {summary.viewer.restricted && (
@@ -792,6 +865,9 @@ export default function AdminBoard() {
                         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.15, minWidth: 0 }} aria-label={signalText || undefined}>
                           <Box component="span" title={row.order_number || undefined} sx={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.order_number}</Box>
                           <Box component="span" title={row.company || undefined} sx={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.company || '—'}</Box>
+                          {summary?.viewer?.can_pick_location && row.location_name ? (
+                            <Box component="span" sx={{ color: brand.navy, fontWeight: 800 }}>{row.location_name}</Box>
+                          ) : null}
                           <Box component="span" title={row.contact_name || undefined} sx={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.contact_name || '—'}</Box>
                           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.4, mt: 0.35 }}>
                             <UrgencyChips urgency={row.urgency} fresh={fresh} />
@@ -836,6 +912,7 @@ export default function AdminBoard() {
                       <TableCell><StackedStamp date={due.date} time={due.time} /></TableCell>
                       <TableCell data-testid="board-process">
                         <Box sx={{ whiteSpace: 'nowrap' }}>{row.status_label || 'LiveOrder'}</Box>
+                        <Box sx={{ mt: 0.4 }}><ReadyForPickupChip status={row.order_status} /></Box>
                         <Box sx={{ fontSize: 12, whiteSpace: 'nowrap' }}>{row.files_label || '0 / 0'}</Box>
                       </TableCell>
                     </TableRow>
@@ -886,7 +963,7 @@ export default function AdminBoard() {
         </Box>
 
         <Box sx={{ gridColumn: '1 / -1', display: 'grid', gap: 2 }}>
-          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr', lg: showQuotePanel ? '1fr 1fr 1fr' : '1fr 1fr' }, gap: 2 }}>
             <Panel title="Scan Activity (Last 10 Scans)" action={linkButton('View Full Scan History', openScans)}>
               <Box sx={{ overflowX: 'auto' }}>
                 <Table size="small" sx={{ minWidth: 420 }}>
@@ -932,6 +1009,43 @@ export default function AdminBoard() {
                 <Typography sx={{ mt: 1, fontSize: 12, color: brand.muted }}>An administrator approves or rejects these requests.</Typography>
               )}
             </Panel>
+
+            {showQuotePanel && (
+              <Panel
+                title="Quote Requests"
+                badge={(summary.quote_requests.new_count || 0) + (summary.quote_requests.accepted_count || 0) || null}
+                action={linkButton('View All Quote Requests', () => navigate('/quote-requests'))}
+              >
+                <Box data-testid="dashboard-quote-requests" sx={{ display: 'grid', gap: 1.25 }}>
+                  <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                    <Typography sx={{ fontSize: 14 }}>
+                      New <Box component="span" sx={{ fontWeight: 700 }}>{summary.quote_requests.new_count || 0}</Box>
+                    </Typography>
+                    <Typography sx={{ fontSize: 14 }}>
+                      Accepted - ready to convert <Box component="span" sx={{ fontWeight: 700 }}>{summary.quote_requests.accepted_count || 0}</Box>
+                    </Typography>
+                  </Box>
+                  {(summary.quote_requests.quotes || []).length ? summary.quote_requests.quotes.map((quote) => (
+                    <Box
+                      key={quote.id}
+                      onClick={() => navigate(quoteRequestPath(quote))}
+                      sx={{ cursor: 'pointer', minWidth: 0 }}
+                    >
+                      <Typography sx={{ fontWeight: 700, fontSize: 14, color: brand.navy }}>{quote.project_name}</Typography>
+                      <Typography sx={{ fontSize: 13, color: brand.muted }}>
+                        {quote.customer_name || 'Customer'}
+                        {' · '}
+                        Needed by {quote.needed_by_display || quote.needed_by || '—'}
+                        {' · '}
+                        {quote.status}
+                      </Typography>
+                    </Box>
+                  )) : (
+                    <Typography color="text.secondary" sx={{ fontSize: 14 }}>No open quote requests.</Typography>
+                  )}
+                </Box>
+              </Panel>
+            )}
           </Box>
         </Box>
 
@@ -964,10 +1078,16 @@ export default function AdminBoard() {
                 <Box key={item.id}>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1 }}>
                     <Typography
-                      sx={{ fontWeight: 700, fontSize: 14, color: item.entity_type === 'work_order' ? brand.navy : brand.text, cursor: item.entity_type === 'work_order' ? 'pointer' : 'default' }}
+                      sx={{
+                        fontWeight: 700,
+                        fontSize: 14,
+                        color: item.entity_type === 'work_order' || item.entity_type === 'order' || (item.entity_type === 'quote_request' && showQuotePanel) ? brand.navy : brand.text,
+                        cursor: item.entity_type === 'work_order' || item.entity_type === 'order' || (item.entity_type === 'quote_request' && showQuotePanel) ? 'pointer' : 'default',
+                      }}
                       onClick={() => {
                         if (item.entity_type === 'work_order' && item.entity_id) navigate(`/work-orders/${item.entity_id}`);
                         if (item.entity_type === 'order' && item.entity_id) navigate(`/orders/${item.entity_id}`);
+                        if (item.entity_type === 'quote_request' && item.entity_id && showQuotePanel) navigate(quoteActivityPath(item));
                       }}
                     >
                       {item.external_id || item.summary}
@@ -999,8 +1119,23 @@ export default function AdminBoard() {
               {visibleAlerts.length ? visibleAlerts.map((alert) => {
                 const Icon = ALERT_ICONS[alert.severity] || InfoOutlinedIcon;
                 const color = ALERT_COLORS[alert.severity] || brand.navy;
+                const quoteAlert = alert.id === 'quote-requests' || alert.id === 'quote-accepted';
                 return (
-                  <Box key={alert.id} sx={{ display: 'flex', gap: 1 }}>
+                  <Box
+                    key={alert.id}
+                    onClick={quoteAlert && showQuotePanel ? () => {
+                      if (alert.id === 'quote-accepted') {
+                        const listed = (summary?.quote_requests?.quotes || []).find((quote) => quote.status === 'Accepted');
+                        const target = alert.quote_request_id || listed?.id;
+                        if (target) {
+                          navigate(`/order?fromQuote=${target}`);
+                          return;
+                        }
+                      }
+                      navigate('/quote-requests');
+                    } : undefined}
+                    sx={{ display: 'flex', gap: 1, cursor: quoteAlert && showQuotePanel ? 'pointer' : 'default' }}
+                  >
                     <Icon sx={{ color, fontSize: 20, mt: 0.2 }} />
                     <Box>
                       <Typography sx={{ fontSize: 14, fontWeight: 700 }}>{alert.message}</Typography>

@@ -5,6 +5,18 @@
 
 PRAGMA foreign_keys = ON;
 
+-- Shop locations. Distinct from barcode_locations, which are scan stations.
+CREATE TABLE IF NOT EXISTS locations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  address TEXT,
+  phone TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME
+);
+
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT NOT NULL UNIQUE,
@@ -15,12 +27,15 @@ CREATE TABLE IF NOT EXISTS users (
   contact_name TEXT,
   phone TEXT,
   email TEXT,
+  mobile_phone TEXT, -- E.164 mobile used for order-status texts; separate from phone
+  sms_opt_in INTEGER NOT NULL DEFAULT 0, -- customer consent for order-status texts; off until set
   address_line1 TEXT, -- company street address, snapshotted onto orders at submission
   address_line2 TEXT,
   city TEXT,
   state TEXT,
   zip TEXT,
   department TEXT, -- staff home department; NULL means every department. Managers are stored with NULL
+  location_id INTEGER, -- staff home location, or a customer's default location. NULL manager = every location. Admins see every location.
   is_active INTEGER DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME
@@ -86,6 +101,7 @@ CREATE TABLE IF NOT EXISTS orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   order_number TEXT NOT NULL UNIQUE,
   customer_id INTEGER NOT NULL,
+  location_id INTEGER, -- shop that will produce this order
   company TEXT NOT NULL,
   contact_name TEXT NOT NULL,
   phone TEXT NOT NULL,
@@ -117,6 +133,13 @@ CREATE TABLE IF NOT EXISTS orders (
   bill_to_zip TEXT,
   due_date TEXT NOT NULL, -- YYYY-MM-DD in the shop calendar
   due_time TEXT NOT NULL, -- HH:MM slot inside the method window (Will Call 08:00-17:00, delivery 09:00-16:00)
+  status TEXT NOT NULL DEFAULT 'In Production', -- In Production, or Ready for Pickup
+  pickup_ready_generation INTEGER NOT NULL DEFAULT 0, -- increments each time the order becomes ready
+  pickup_notified_generation INTEGER, -- generation already claimed, so a repeated save does not send again
+  pickup_email_sent_at DATETIME,
+  pickup_sms_sent_at DATETIME,
+  pickup_email_status TEXT,
+  pickup_sms_status TEXT,
   created_by INTEGER,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME,
@@ -152,6 +175,7 @@ CREATE TABLE IF NOT EXISTS work_orders (
   attachments TEXT,
   notes TEXT,
   order_id INTEGER,
+  location_id INTEGER, -- copied from the order; standalone work orders store their own
   service_id INTEGER,
   next_department TEXT,
   requires_approval INTEGER DEFAULT 0,
@@ -468,6 +492,7 @@ CREATE TABLE IF NOT EXISTS inbound_emails (
   received_at TEXT,
   body_text TEXT,
   status TEXT NOT NULL DEFAULT 'new',
+  location_id INTEGER, -- shop this draft belongs to
   suggestion_json TEXT,
   order_id INTEGER,
   converted_by INTEGER,
@@ -519,7 +544,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_proofs_scope_version ON proofs(order_id, I
 CREATE INDEX IF NOT EXISTS idx_proof_files_proof ON proof_files(proof_id);
 
 -- In-app notifications. One row per event. Read state is per user in notification_reads.
--- type: delivery_overdue, delivery_due_soon, work_order_on_hold, work_order_completed, work_order_rush, files_shared, proof_ready, proof_decision, quote_ready, quote_accepted
+-- type: delivery_overdue, delivery_due_soon, work_order_on_hold, work_order_completed, work_order_rush, files_shared, proof_ready, proof_decision, quote_ready, quote_accepted, quote_requested, quote_declined
 CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   type TEXT NOT NULL,
@@ -531,6 +556,7 @@ CREATE TABLE IF NOT EXISTS notifications (
   order_id INTEGER,
   transfer_id INTEGER,
   quote_request_id INTEGER,
+  location_id INTEGER, -- shop this event belongs to; NULL is treated as Raleigh
   dedupe_key TEXT NOT NULL UNIQUE,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(customer_id) REFERENCES users(id),
@@ -560,6 +586,7 @@ CREATE INDEX IF NOT EXISTS idx_notification_reads_user ON notification_reads(use
 CREATE TABLE IF NOT EXISTS quote_requests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   customer_id INTEGER NOT NULL,
+  location_id INTEGER, -- shop the customer asked to quote
   project_name TEXT NOT NULL,
   description TEXT,
   quantity TEXT,

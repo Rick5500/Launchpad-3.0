@@ -13,6 +13,7 @@ const {
 const { httpError } = require('./httpError');
 const mailer = require('./mailer');
 const notifications = require('./notifications');
+const shopLocations = require('./shopLocations');
 const systemSettings = require('./systemSettings');
 
 const STAFF = new Set(['admin', 'manager', 'operator']);
@@ -65,10 +66,11 @@ function publicFile(row) {
 const FILE_SELECT = `
   SELECT f.id, f.order_id, f.work_order_id, f.original_name, f.mime_type, f.size_bytes,
          f.message, f.batch_id, f.created_at, f.customer_downloaded_at, f.replaces_id,
-         f.deleted_at, f.stored_name, f.storage_root, f.customer_id, f.transfer_id,
+         f.deleted_at, f.stored_name, f.storage_root, f.customer_id, f.uploaded_by, f.transfer_id,
          wo.external_id AS work_order_number,
          COALESCE(NULLIF(trim(u.display_name), ''), NULLIF(trim(u.username), '')) AS sender_name,
-         o.customer_id AS order_customer_id, o.order_number, o.email AS order_email
+         o.customer_id AS order_customer_id, o.order_number, o.email AS order_email,
+         o.location_id AS order_location_id
   FROM shared_files f
   LEFT JOIN orders o ON o.id = f.order_id
   LEFT JOIN work_orders wo ON wo.id = f.work_order_id
@@ -77,7 +79,7 @@ const FILE_SELECT = `
 
 async function loadOrder(orderId) {
   const order = await get(
-    `SELECT id, customer_id, order_number, email, company
+    `SELECT id, customer_id, order_number, email, company, location_id
      FROM orders WHERE id = ?`,
     [orderId]
   );
@@ -85,15 +87,84 @@ async function loadOrder(orderId) {
   return order;
 }
 
-function assertOrderAccess(user, order) {
-  if (isStaff(user)) return;
+async function assertStaffLocation(user, locationId, message) {
+  const access = await shopLocations.loadAccess(actorId(user));
+  shopLocations.assertVisible(access, locationId, message);
+}
+
+// A share with no order takes the customer's default shop. A customer with no
+// default, and an operator or customer sender with no home shop, count as
+// Raleigh. An all-location sender with no customer is visible only to staff
+// who already see every shop.
+function looseLocationSql(customerColumn, senderColumn) {
+  return `CASE
+    WHEN EXISTS (SELECT 1 FROM users cu WHERE cu.id = ${customerColumn}) THEN
+      COALESCE((SELECT cu.location_id FROM users cu WHERE cu.id = ${customerColumn}), ?)
+    ELSE
+      COALESCE(
+        (SELECT su.location_id FROM users su WHERE su.id = ${senderColumn}),
+        CASE WHEN EXISTS (
+          SELECT 1 FROM users su
+          WHERE su.id = ${senderColumn}
+            AND lower(trim(su.role)) IN ('operator', 'customer')
+        ) THEN ? ELSE NULL END
+      )
+  END`;
+}
+
+async function looseLocationId(row) {
+  if (row && row.customer_id) {
+    const customer = await get(`SELECT location_id FROM users WHERE id = ?`, [row.customer_id]);
+    if (customer) {
+      if (customer.location_id != null) return customer.location_id;
+      return shopLocations.defaultLocationId();
+    }
+  }
+  if (row && row.uploaded_by) {
+    const sender = await get(`SELECT location_id, role FROM users WHERE id = ?`, [row.uploaded_by]);
+    if (!sender) return null;
+    if (sender.location_id != null) return sender.location_id;
+    const role = String(sender.role || '').trim().toLowerCase();
+    if (role === 'operator' || role === 'customer') return shopLocations.defaultLocationId();
+    return null;
+  }
+  return null;
+}
+
+async function assertLooseStaff(user, row, message) {
+  const access = await shopLocations.loadAccess(actorId(user));
+  const locationId = await looseLocationId(row);
+  if (locationId == null) {
+    if (!shopLocations.seesAll(access)) throw httpError(404, message);
+    return;
+  }
+  shopLocations.assertVisible(access, locationId, message);
+}
+
+async function assertCanAddressLoose(user, row) {
+  const access = await shopLocations.loadAccess(actorId(user));
+  const locationId = await looseLocationId(row);
+  if (locationId == null) {
+    if (!shopLocations.seesAll(access)) throw httpError(403, 'You can only use your own location');
+    return;
+  }
+  if (!shopLocations.matches(access, locationId)) {
+    throw httpError(403, 'You can only use your own location');
+  }
+}
+
+async function assertOrderAccess(user, order) {
+  if (isStaff(user)) {
+    await assertStaffLocation(user, order.location_id, 'Order not found');
+    return;
+  }
   if (user.role === 'customer' && Number(order.customer_id) === actorId(user)) return;
   throw httpError(404, 'Order not found');
 }
 
 async function listForUser(user, orderId, workOrderQuery) {
   const order = await loadOrder(orderId);
-  assertOrderAccess(user, order);
+  await assertOrderAccess(user, order);
   const workOrderId = parseOptionalId(workOrderQuery, 'work_order_id');
   if (workOrderId) {
     const workOrder = await get(
@@ -224,6 +295,7 @@ async function shareFiles(user, orderId, body, files) {
   assertFiles(files);
   const order = await loadOrder(orderId);
   if (!isStaff(user)) throw httpError(403, 'Forbidden');
+  await assertOrderAccess(user, order);
   const source = body || {};
   const message = parseText(source.message, 'message', { max: 2000, allowNewlines: true });
   if (message.error) throw httpError(400, message.error);
@@ -319,6 +391,7 @@ async function shareFiles(user, orderId, body, files) {
         workOrderId: workOrder ? workOrder.id : null,
         batchId,
         transferId: saved.transferId,
+        locationId: order.location_id,
         title,
         body: note || `${saved.ids.length} file${saved.ids.length === 1 ? '' : 's'} ready to download.`,
       }, (err) => {
@@ -328,7 +401,7 @@ async function shareFiles(user, orderId, body, files) {
     });
 
     if (emailPlan === 'pending') {
-      const letterhead = await loadLetterheadSafe();
+      const letterhead = await loadLetterheadSafe(order.location_id);
       const rendered = mailer.renderShareEmail({
         letterhead,
         orderNumber: order.order_number,
@@ -382,9 +455,9 @@ async function shareFiles(user, orderId, body, files) {
   };
 }
 
-async function loadLetterheadSafe() {
+async function loadLetterheadSafe(locationId) {
   try {
-    return await require('./shopProfile').loadLetterhead();
+    return await shopLocations.letterheadForLocationId(locationId);
   } catch (err) {
     console.error('LETTERHEAD ERROR:', err.message || err);
     return { name: '', address: '', address_lines: [], phone: '' };
@@ -394,7 +467,11 @@ async function loadLetterheadSafe() {
 async function loadVisible(user, id) {
   const file = await get(`${FILE_SELECT} WHERE f.id = ?`, [id]);
   if (!file || file.deleted_at) throw httpError(404, 'File not found');
-  if (isStaff(user)) return file;
+  if (isStaff(user)) {
+    if (file.order_id) await assertStaffLocation(user, file.order_location_id, 'File not found');
+    else await assertLooseStaff(user, file, 'File not found');
+    return file;
+  }
   if (user.role === 'customer' && fileOwnerId(file) === actorId(user)) return file;
   throw httpError(404, 'File not found');
 }
@@ -436,6 +513,8 @@ async function removeFile(user, id) {
   if (!isStaff(user)) throw httpError(403, 'Forbidden');
   const file = await get(`${FILE_SELECT} WHERE f.id = ?`, [id]);
   if (!file || file.deleted_at) throw httpError(404, 'File not found');
+  if (file.order_id) await assertStaffLocation(user, file.order_location_id, 'File not found');
+  else await assertLooseStaff(user, file, 'File not found');
   await withTransaction(async (tx) => {
     const updated = await tx.run(
       `UPDATE shared_files
@@ -472,6 +551,8 @@ async function replaceFile(user, id, body, files) {
   assertFiles(files);
   const existing = await get(`${FILE_SELECT} WHERE f.id = ?`, [id]);
   if (!existing || existing.deleted_at) throw httpError(404, 'File not found');
+  if (existing.order_id) await assertStaffLocation(user, existing.order_location_id, 'File not found');
+  else await assertLooseStaff(user, existing, 'File not found');
   const source = body || {};
   let note = existing.message || null;
   if (Object.prototype.hasOwnProperty.call(source, 'message') && source.message != null && String(source.message).trim() !== '') {
@@ -545,7 +626,8 @@ const TRANSFER_SELECT = `
          COALESCE(NULLIF(trim(c.display_name), ''), NULLIF(trim(c.company), ''), NULLIF(trim(c.username), '')) AS customer_name,
          c.email AS customer_email,
          o.order_number,
-         COALESCE(NULLIF(trim(u.display_name), ''), NULLIF(trim(u.username), '')) AS sender_name
+         COALESCE(NULLIF(trim(u.display_name), ''), NULLIF(trim(u.username), '')) AS sender_name,
+         t.uploaded_by
   FROM file_transfers t
   JOIN users c ON c.id = t.customer_id
   LEFT JOIN orders o ON o.id = t.order_id
@@ -640,9 +722,25 @@ async function listTransfers(user, query) {
     params.push(actorId(user));
   } else if (!isStaff(user)) {
     throw httpError(403, 'Forbidden');
-  } else if (source.customer_id != null && String(source.customer_id).trim() !== '') {
-    where.push('t.customer_id = ?');
-    params.push(parseOptionalId(source.customer_id, 'customer_id'));
+  } else {
+    const access = await shopLocations.loadAccess(actorId(user));
+    const orderPred = shopLocations.predicate('o.location_id', access);
+    if (orderPred.sql === '1 = 0') {
+      where.push('1 = 0');
+    } else if (orderPred.sql) {
+      const raleighId = await shopLocations.defaultLocationId();
+      where.push(`(
+        (t.order_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM orders o WHERE o.id = t.order_id AND ${orderPred.sql}
+        ))
+        OR (t.order_id IS NULL AND (${looseLocationSql('t.customer_id', 't.uploaded_by')}) = ?)
+      )`);
+      params.push(...orderPred.params, raleighId, raleighId, access.location_id);
+    }
+    if (source.customer_id != null && String(source.customer_id).trim() !== '') {
+      where.push('t.customer_id = ?');
+      params.push(parseOptionalId(source.customer_id, 'customer_id'));
+    }
   }
   const whereSql = `WHERE ${where.join(' AND ')}`;
   const totalRow = await get(`SELECT COUNT(*) AS total FROM file_transfers t ${whereSql}`, params);
@@ -674,6 +772,14 @@ async function getTransfer(user, id) {
   if (!isStaff(user) && !(user.role === 'customer' && Number(row.customer_id) === actorId(user))) {
     throw httpError(404, 'File transfer not found');
   }
+  if (isStaff(user)) {
+    if (row.order_id) {
+      const order = await get('SELECT location_id FROM orders WHERE id = ?', [row.order_id]);
+      await assertStaffLocation(user, order ? order.location_id : null, 'File transfer not found');
+    } else {
+      await assertLooseStaff(user, row, 'File transfer not found');
+    }
+  }
   const files = await all(
     `${FILE_SELECT} WHERE f.transfer_id = ? AND f.deleted_at IS NULL ORDER BY f.id`,
     [id]
@@ -704,6 +810,7 @@ async function createTransfer(user, body, files) {
   const customerId = parseOptionalId(source.customer_id, 'customer_id');
   if (!customerId) throw httpError(400, 'customer_id is required');
   const customer = await loadCustomerAccount(customerId);
+  await assertCanAddressLoose(user, { customer_id: customer.id, uploaded_by: actorId(user) });
   const subject = parseText(source.subject, 'subject', { max: 180 });
   if (subject.error) throw httpError(400, subject.error);
   const message = parseText(source.message, 'message', { max: 2000, allowNewlines: true });

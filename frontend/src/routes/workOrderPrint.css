@@ -122,6 +122,24 @@
   color: #fff;
 }
 
+.wo-location {
+  margin-top: 0.04in;
+}
+
+.wo-location-name {
+  font-size: 18pt;
+  font-weight: 800;
+  line-height: 1.15;
+  color: #f58220;
+}
+
+.wo-location-line {
+  font-size: 12pt;
+  font-weight: 700;
+  line-height: 1.25;
+  color: #fff;
+}
+
 .wo-number {
   min-width: 0;
   margin-top: 0;
@@ -428,11 +446,54 @@
   padding-top: 0.06in;
   border-top: 2px solid #0a2f6e;
   display: flex;
+  flex-direction: column;
+  gap: 0.08in;
+  font-size: 11pt;
+  line-height: 1.5;
+}
+
+.wo-footer-main {
+  display: flex;
   justify-content: space-between;
   gap: 0.16in;
   align-items: flex-end;
-  font-size: 11pt;
-  line-height: 1.5;
+}
+
+.wo-credit {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.06in;
+  width: 100%;
+  max-width: 100%;
+}
+
+.wo-credit-logos {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1in;
+  flex-shrink: 0;
+}
+
+.wo-credit-ai,
+.wo-credit-acg {
+  height: 0.36in;
+  width: auto;
+  flex-shrink: 0;
+  display: block;
+}
+
+.wo-credit-text {
+  width: 100%;
+  max-width: 100%;
+  font-size: 8pt;
+  font-weight: 700;
+  line-height: 1.25;
+  color: #0a2f6e;
+  text-align: center;
 }
 
 .wo-shop-footer {
@@ -451,7 +512,7 @@
   .wo-columns,
   .wo-columns:has(> :nth-child(3)),
   .wo-facts,
-  .wo-footer {
+  .wo-footer-main {
     grid-template-columns: 1fr;
     display: grid;
   }
@@ -807,6 +868,12 @@
   .wo-band-copy {
     width: 100%;
     max-width: 3.6in;
+  }
+
+  .wo-credit-ai,
+  .wo-credit-acg {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 
   .wo-barcode img {

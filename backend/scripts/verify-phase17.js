@@ -414,6 +414,10 @@ async function main() {
     assert(html && html.includes('&lt;script&gt;'), 'the proof email should escape the message');
     assert(html.includes('/login?next=') && html.includes('%23proofs'), `the email should link to sign-in, got ${html}`);
     assert(!html.includes('/api/proof-files') && !html.includes('token='), 'the email should not offer a public download');
+    assert(html.includes(`${appUrl}/brand/logo.png`), 'the proof email should keep the Launchpad logo');
+    assert(html.includes(`${appUrl}/brand/acg-logo.png`), 'the proof email footer should include the ACG logo');
+    assert(html.includes(`${appUrl}/brand/accent-imaging-logo.png`), 'the proof email footer should include the Accent Imaging logo');
+    assert(html.includes('A service of Accent Imaging and Accent Corporate Graphics'), 'the proof email should credit both companies');
 
     const held = await db.get(`SELECT status, proof_status FROM work_orders WHERE id = ?`, [first.workA.id]);
     const sibling = await db.get(`SELECT status, proof_status FROM work_orders WHERE id = ?`, [first.workB.id]);
@@ -507,6 +511,8 @@ async function main() {
     assert(changes.json.email && changes.json.email.status === 'sent', `staff should be emailed, got ${JSON.stringify(changes.json.email)}`);
     const staffHtml = changes.json.email.preview && changes.json.email.preview.html;
     assert(staffHtml && staffHtml.includes('Please darken the logo'), 'the staff email should include the comment');
+    assert(!staffHtml.includes('/brand/acg-logo.png') && !staffHtml.includes('/brand/accent-imaging-logo.png'), 'the proof-changes email should not include the customer credit logos');
+    assert(!staffHtml.includes('A service of Accent Imaging'), 'the proof-changes email should not include the customer credit');
     assert(staffHtml.includes('/login?next='), 'the staff email should link to sign-in');
     const staffAddresses = (changes.json.email.recipients || []).map((row) => row.address).sort();
     assert(staffAddresses.includes('admin@phase17.example') && staffAddresses.includes('op@phase17.example'), `staff emails were ${staffAddresses.join(',')}`);

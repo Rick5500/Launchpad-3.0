@@ -255,8 +255,9 @@ function WorkOrderSheet({ payload, sheet }) {
   const instructions = (payload.scan_instructions || []).join(' ');
   const shopLines = [
     payload.shop?.name,
-    ...((payload.shop?.address_lines || []).filter((line) => String(line || '').trim())),
-    payload.shop?.phone,
+    payload.location?.name || payload.shop?.location_name,
+    ...((payload.location?.address_lines || payload.shop?.address_lines || []).filter((line) => String(line || '').trim())),
+    payload.location?.phone || payload.shop?.phone,
   ].filter((line) => String(line || '').trim());
   const projectNotes = String(sheet.project?.notes || '').trim();
   const special = String(sheet.special_instructions || '').trim();
@@ -279,6 +280,17 @@ function WorkOrderSheet({ payload, sheet }) {
           <img className="wo-logo" src="/brand/logo-print.png" alt="Launchpad" />
           <div className="wo-band-copy">
             <div className="wo-kicker">Work Order</div>
+            {(payload.location?.name || payload.shop?.location_name) ? (
+              <div className="wo-location" data-testid="print-location">
+                <div className="wo-location-name">{payload.location?.name || payload.shop?.location_name}</div>
+                {(payload.location?.address_lines || []).map((line) => (
+                  <div key={line} className="wo-location-line">{line}</div>
+                ))}
+                {(payload.location?.phone || payload.shop?.phone) ? (
+                  <div className="wo-location-line">{payload.location?.phone || payload.shop?.phone}</div>
+                ) : null}
+              </div>
+            ) : null}
             <div className="wo-number">{display(sheet.barcode_value, '')}</div>
           </div>
         </div>
@@ -475,11 +487,20 @@ function WorkOrderSheet({ payload, sheet }) {
         <WriteInGrid />
 
         <footer className="wo-footer">
-          <div className="wo-shop-footer">
-            {shopLines.map((line) => <div key={line}>{line}</div>)}
+          <div className="wo-footer-main">
+            <div className="wo-shop-footer">
+              {shopLines.map((line) => <div key={line}>{line}</div>)}
+            </div>
+            <div className="wo-footer-meta">
+              <div>Printed {display(shopStamp(payload.generated_at, zone))}</div>
+            </div>
           </div>
-          <div className="wo-footer-meta">
-            <div>Printed {display(shopStamp(payload.generated_at, zone))}</div>
+          <div className="wo-credit" data-testid="division-credit">
+            <div className="wo-credit-logos">
+              <img className="wo-credit-ai" src="/brand/accent-imaging-logo-print.png" alt="Accent Imaging" />
+              <img className="wo-credit-acg" src="/brand/acg-logo-print.png" alt="Accent Corporate Graphics" />
+            </div>
+            <div className="wo-credit-text">A service of Accent Imaging and Accent Corporate Graphics</div>
           </div>
         </footer>
       </div>

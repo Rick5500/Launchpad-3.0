@@ -15,6 +15,9 @@ const {
 } = require('./deliveryRules');
 const activityLog = require('./activityLog');
 const quotes = require('./quotes');
+const shopLocations = require('./shopLocations');
+const notifications = require('./notifications');
+const pickupNotify = require('./pickupNotify');
 const { parsePostalAddress } = require('./fields');
 const {
   PAYMENT_METHODS,
@@ -657,13 +660,19 @@ async function loadOrderRecord(orderId, user) {
   }
   const order = await getOn(
     db,
-    `SELECT o.*, u.username AS customer_username, u.display_name AS customer_display_name
+    `SELECT o.*, u.username AS customer_username, u.display_name AS customer_display_name,
+            loc.name AS location_name, loc.address AS location_address, loc.phone AS location_phone
      FROM orders o
      LEFT JOIN users u ON u.id = o.customer_id
+     LEFT JOIN locations loc ON loc.id = o.location_id
      WHERE o.id = ?${customerClause}`,
     params
   );
   if (!order) return null;
+  if (user && user.role && user.role !== 'customer') {
+    const access = await shopLocations.loadAccess(Number(user.userId || user.id));
+    if (!shopLocations.matches(access, order.location_id)) return null;
+  }
 
   const lineItems = await allOn(
     db,
@@ -726,6 +735,10 @@ async function loadOrderRecord(orderId, user) {
     city: order.city || null,
     state: order.state || null,
     zip: order.zip || null,
+    location_id: order.location_id == null ? null : order.location_id,
+    location_name: order.location_name || null,
+    location_address: order.location_address || null,
+    location_phone: order.location_phone || null,
     delivery_method: order.delivery_method,
     ups_account_number: order.ups_account_number || null,
     delivery_hours: deliveryHoursFor(order.delivery_method, delivery && delivery.will_call),
@@ -738,6 +751,11 @@ async function loadOrderRecord(orderId, user) {
     bill_to: billToPresent(order),
     due_date: order.due_date,
     due_time: order.due_time,
+    status: order.status && String(order.status).trim() ? order.status : 'In Production',
+    pickup_email_sent_at: order.pickup_email_sent_at || null,
+    pickup_sms_sent_at: order.pickup_sms_sent_at || null,
+    pickup_email_status: order.pickup_email_status || null,
+    pickup_sms_status: order.pickup_sms_status || null,
     created_by: order.created_by,
     created_at: order.created_at,
     updated_at: order.updated_at,
@@ -905,6 +923,7 @@ async function createOrder(user, body, now = new Date()) {
       }
     }
 
+    const location = await shopLocations.resolveOrderLocation(tx, user, payload.location_id, customerId);
     const orderNumber = await allocateOrderNumber(tx, now);
     const inserted = await tx.run(
       `INSERT INTO orders (
@@ -914,8 +933,8 @@ async function createOrder(user, body, now = new Date()) {
         ship_to, attention, payment_method, return_to,
         bill_to_name, bill_to_phone, bill_to_email, bill_to_company,
         bill_to_address_line1, bill_to_address_line2, bill_to_city, bill_to_state, bill_to_zip,
-        due_date, due_time, created_by, updated_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
+        due_date, due_time, created_by, location_id, updated_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
       [
         orderNumber,
         customerId,
@@ -951,6 +970,7 @@ async function createOrder(user, body, now = new Date()) {
         due.value.dueDate,
         due.value.dueTime,
         Number(user.userId || user.id),
+        location.value,
       ]
     );
     const newOrderId = inserted.lastID;
@@ -1007,8 +1027,8 @@ async function createOrder(user, body, now = new Date()) {
           external_id, customer_id, description, quantity, status, department,
           priority, assigned_department_id, specifications, due_date, notes,
           routing_instructions, order_id, service_id, next_department,
-          requires_approval, approval_status, updated_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
+          requires_approval, approval_status, location_id, updated_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
         [
           externalId,
           customerId,
@@ -1027,6 +1047,7 @@ async function createOrder(user, body, now = new Date()) {
           nextDepartment,
           requiresApproval,
           requiresApproval ? 'pending' : null,
+          location.value,
         ]
       );
 
@@ -1095,6 +1116,18 @@ async function createOrder(user, body, now = new Date()) {
   });
 
   const record = await loadOrderRecord(orderId, user);
+  try {
+    await new Promise((resolve, reject) => {
+      notifications.notifyOrderCreated({
+        orderId,
+        orderNumber: record && record.order_number,
+        locationId: record && record.location_id,
+        company: record && record.company,
+      }, (err) => (err ? reject(err) : resolve()));
+    });
+  } catch (err) {
+    console.error('ORDER NOTIFICATION ERROR:', err);
+  }
   return presentOrder(record);
 }
 
@@ -1102,19 +1135,37 @@ async function listOrders(user, query) {
   const limit = parseListLimit(query.limit);
   const offset = parseListOffset(query.offset);
   const params = [];
-  let where = '';
+  const clauses = [];
   if (user.role === 'customer') {
-    where = 'WHERE o.customer_id = ?';
+    clauses.push('o.customer_id = ?');
     params.push(Number(user.userId || user.id));
+  } else {
+    const access = await shopLocations.loadAccess(Number(user.userId || user.id));
+    const locked = shopLocations.predicate('o.location_id', access);
+    if (locked.sql) {
+      clauses.push(locked.sql);
+      params.push(...locked.params);
+    } else if (query.location_id != null && String(query.location_id).trim() !== '' && String(query.location_id).trim().toLowerCase() !== 'all') {
+      const chosen = await shopLocations.resolveLocationId({ get: (sql, p) => getOn(db, sql, p) }, query.location_id, {
+        required: true,
+        activeOnly: false,
+      });
+      if (chosen.error) throw new OrderError(chosen.error, 400);
+      clauses.push('o.location_id = ?');
+      params.push(chosen.value);
+    }
   }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const totalRow = await getOn(db, `SELECT COUNT(*) AS count FROM orders o ${where}`, params);
   const orders = await allOn(
     db,
     `SELECT o.id, o.order_number, o.customer_id, o.company, o.contact_name, o.phone, o.email,
             o.po_number, o.project_number, o.project_name, o.delivery_method, o.ups_account_number,
-            o.due_date, o.due_time, o.created_at, u.display_name AS customer_display_name
+            o.due_date, o.due_time, o.created_at, o.status, o.location_id, loc.name AS location_name,
+            u.display_name AS customer_display_name
      FROM orders o
      LEFT JOIN users u ON u.id = o.customer_id
+     LEFT JOIN locations loc ON loc.id = o.location_id
      ${where}
      ORDER BY o.created_at DESC, o.id DESC
      LIMIT ? OFFSET ?`,
@@ -1232,6 +1283,7 @@ async function orderOptions() {
     },
     finishing_options: FINISHING_OPTIONS.slice(),
     originals_sources: ORIGINALS_SOURCES.slice(),
+    locations: await shopLocations.listLocations({ includeInactive: false }),
   };
 }
 
@@ -1445,6 +1497,16 @@ async function listBillTos(user, query) {
     );
     if (!customer) throw new OrderError('customer_id must be an existing customer', 404);
   }
+  const params = [customerId];
+  let locationSql = '';
+  if (user.role !== 'customer') {
+    const access = await shopLocations.loadAccess(Number(user.userId || user.id));
+    const pred = shopLocations.predicate('location_id', access);
+    if (pred.sql) {
+      locationSql = ` AND ${pred.sql}`;
+      params.push(...pred.params);
+    }
+  }
   const rows = await allOn(
     db,
     `SELECT bill_to_name, bill_to_phone, bill_to_email, bill_to_company,
@@ -1458,16 +1520,182 @@ async function listBillTos(user, query) {
          OR IFNULL(trim(bill_to_email), '') != ''
          OR IFNULL(trim(bill_to_company), '') != ''
          OR IFNULL(trim(bill_to_address_line1), '') != ''
-       )
+       )${locationSql}
      GROUP BY bill_to_name, bill_to_phone, bill_to_email, bill_to_company,
               bill_to_address_line1, bill_to_address_line2, bill_to_city, bill_to_state, bill_to_zip
      ORDER BY id DESC
      LIMIT 20`,
-    [customerId]
+    params
   );
   return {
     bill_tos: rows.map((row) => ({ id: row.id, ...billToPresent(row) })),
   };
+}
+
+async function transferOrder(user, rawId, body) {
+  if (!user || (user.role !== 'admin' && user.role !== 'manager')) {
+    throw new OrderError('Forbidden', 403);
+  }
+  const orderId = parsePositive(rawId);
+  if (!orderId) throw new OrderError('id must be a positive integer');
+  const existing = await loadOrderRecord(orderId, user);
+  if (!existing) throw new OrderError('Order not found', 404);
+  const source = body || {};
+  const target = await shopLocations.resolveLocationId(
+    { get: (sql, params) => getOn(db, sql, params) },
+    source.location_id,
+    { required: true, activeOnly: true }
+  );
+  if (target.error) throw new OrderError(target.error, 400);
+  if (Number(existing.location_id) === Number(target.value)) {
+    throw new OrderError('That order is already at this location', 409);
+  }
+  await withTransaction(async (tx) => {
+    await tx.run(
+      `UPDATE orders SET location_id = ?, updated_at = datetime('now') WHERE id = ?`,
+      [target.value, existing.id]
+    );
+    await tx.run(
+      `UPDATE work_orders SET location_id = ?, updated_at = datetime('now') WHERE order_id = ?`,
+      [target.value, existing.id]
+    );
+    await tx.run(
+      `UPDATE notifications SET location_id = ?
+       WHERE order_id = ?
+          OR work_order_id IN (SELECT id FROM work_orders WHERE order_id = ?)`,
+      [target.value, existing.id, existing.id]
+    );
+    await tx.run(
+      `UPDATE inbound_emails SET location_id = ?, updated_at = datetime('now') WHERE order_id = ?`,
+      [target.value, existing.id]
+    );
+    await tx.run(
+      `UPDATE quote_requests SET location_id = ?, updated_at = datetime('now') WHERE converted_order_id = ?`,
+      [target.value, existing.id]
+    );
+    await activityLog.recordOn(tx, Number(user.userId || user.id), 'order.transferred', 'order', existing.id, {
+      order_number: existing.order_number,
+      from_location_id: existing.location_id || null,
+      to_location_id: target.value,
+      from_location: existing.location_name || null,
+      to_location: target.name,
+      message: `Transferred order ${existing.order_number} to ${target.name}`,
+    });
+  });
+  const access = await shopLocations.loadAccess(Number(user.userId || user.id));
+  if (!shopLocations.matches(access, target.value)) {
+    return {
+      transferred: true,
+      order_id: existing.id,
+      order_number: existing.order_number,
+      location_id: target.value,
+      location_name: target.name,
+    };
+  }
+  const record = await loadOrderRecord(orderId, user);
+  return presentOrder(record);
+}
+
+const ORDER_STATUS_READY = 'Ready for Pickup';
+const ORDER_STATUS_OPEN = 'In Production';
+
+function canonicalOrderStatus(value) {
+  if (value == null || String(value).trim() === '') return { error: 'status is required' };
+  const text = String(value).trim().toLowerCase();
+  if (text === 'in production') return { value: ORDER_STATUS_OPEN };
+  if (text === 'ready for pickup') return { value: ORDER_STATUS_READY };
+  return { error: 'status must be In Production or Ready for Pickup' };
+}
+
+function storedOrderStatus(value) {
+  return String(value || '').trim().toLowerCase() === 'ready for pickup'
+    ? ORDER_STATUS_READY
+    : ORDER_STATUS_OPEN;
+}
+
+async function setOrderStatus(user, id, body) {
+  if (!user || !['admin', 'manager', 'operator'].includes(user.role)) {
+    throw new OrderError('Only staff can change an order status', 403);
+  }
+  const parsed = canonicalOrderStatus(body && body.status);
+  if (parsed.error) throw new OrderError(parsed.error);
+  const orderId = parsePositive(id);
+  if (!orderId) throw new OrderError('id must be a positive integer');
+  const visible = await loadOrderRecord(orderId, user);
+  if (!visible) throw new OrderError('Order not found', 404);
+
+  const outcome = await withTransaction(async (tx) => {
+      const existing = await tx.get(
+        `SELECT id, status, order_number, pickup_ready_generation FROM orders WHERE id = ?`,
+        [orderId]
+      );
+      if (!existing) throw new OrderError('Order not found', 404);
+      const current = storedOrderStatus(existing.status);
+      if (current === parsed.value) {
+        return { changed: false, entering: false, generation: existing.pickup_ready_generation || 0 };
+      }
+      const entering = parsed.value === ORDER_STATUS_READY;
+      if (entering) {
+        await tx.run(
+          `UPDATE orders
+           SET status = ?,
+               pickup_ready_generation = COALESCE(pickup_ready_generation, 0) + 1,
+               pickup_notified_generation = COALESCE(pickup_ready_generation, 0) + 1,
+               pickup_email_sent_at = NULL,
+               pickup_sms_sent_at = NULL,
+               pickup_email_status = NULL,
+               pickup_sms_status = NULL,
+               updated_at = datetime('now')
+           WHERE id = ?`,
+          [ORDER_STATUS_READY, orderId]
+        );
+      } else {
+        await tx.run(
+          `UPDATE orders SET status = ?, updated_at = datetime('now') WHERE id = ?`,
+          [ORDER_STATUS_OPEN, orderId]
+        );
+      }
+      await activityLog.recordOn(
+        tx,
+        Number(user.userId || user.id),
+        entering ? 'order.ready_for_pickup' : 'order.status_updated',
+        'order',
+        orderId,
+        {
+          order_number: existing.order_number,
+          status: parsed.value,
+          message: entering
+            ? `Marked order ${existing.order_number} ready for pickup`
+            : `Updated order ${existing.order_number} to ${parsed.value}`,
+        }
+      );
+      const row = await tx.get(`SELECT pickup_ready_generation FROM orders WHERE id = ?`, [orderId]);
+      return {
+        changed: true,
+        entering,
+        generation: row ? row.pickup_ready_generation : 0,
+      };
+    });
+
+  let notice = null;
+  if (outcome.entering) {
+    try {
+      notice = await pickupNotify.deliver(orderId, outcome.generation);
+    } catch (err) {
+      console.error('PICKUP NOTIFY ERROR:', err && err.message ? err.message : 'failed');
+      notice = {
+        email: { status: 'failed', sent_at: null },
+        sms: { status: 'failed', sent_at: null },
+      };
+    }
+  } else if (!outcome.changed && parsed.value === ORDER_STATUS_READY) {
+    notice = { skipped: true, reason: 'already_notified' };
+  }
+
+  const record = await loadOrderRecord(orderId, user);
+  const presented = presentOrder(record);
+  presented.pickup_notice = notice;
+  return presented;
 }
 
 module.exports = {
@@ -1479,6 +1707,8 @@ module.exports = {
   originalsLabel,
   withTransaction,
   createOrder,
+  transferOrder,
+  setOrderStatus,
   listOrders,
   listBillTos,
   getOrder,

@@ -2,6 +2,7 @@ const express = require('express');
 const auth = require('../auth');
 const adminBoard = require('../adminBoard');
 const users = require('../userAdmin');
+const shopLocations = require('../shopLocations');
 
 const router = express.Router();
 
@@ -42,7 +43,11 @@ router.get('/activity', async (req, res) => {
   try {
     const access = await users.loadAccess(req.user.userId);
     const scope = adminBoard.resolveBoardScope(access, req.query);
-    sendBoard(res, await adminBoard.listActivity(req.query, false, scope.restricted ? scope.department : null));
+    const shop = await shopLocations.boardFilter(access, req.query);
+    sendBoard(res, await adminBoard.listActivity(req.query, false, scope.restricted ? scope.department : null, {
+      includeQuotes: adminBoard.canSeeQuoteRequests(access),
+      shop,
+    }));
   } catch (err) {
     sendError(res, err, 'ADMIN BOARD ACTIVITY ERROR:', 'Failed to load activity');
   }
@@ -52,7 +57,8 @@ router.get('/approvals', async (req, res) => {
   try {
     const access = await users.loadAccess(req.user.userId);
     const scope = adminBoard.resolveBoardScope(access, req.query);
-    sendBoard(res, await adminBoard.listApprovals(req.query, false, scope.restricted ? scope.department : null));
+    const shop = await shopLocations.boardFilter(access, req.query);
+    sendBoard(res, await adminBoard.listApprovals(req.query, false, scope.restricted ? scope.department : null, shop));
   } catch (err) {
     sendError(res, err, 'ADMIN BOARD APPROVALS ERROR:', 'Failed to load approvals');
   }

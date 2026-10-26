@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Box, InputBase, Snackbar } from '@mui/material';
+import { Alert, Box, Button, InputBase, Snackbar } from '@mui/material';
 import { authFetch } from '../api';
 import { requestBoardRefresh } from '../boardEvents';
 import { advanceNotice, noticeDelay, reduceNotice } from './headerScanNotice.mjs';
@@ -35,11 +35,16 @@ function BarcodeMark() {
 
 function noticeFor(body) {
   const label = body.external_id || 'Work order';
+  const order = {
+    orderId: body.order_id || null,
+    orderNumber: body.order_number || '',
+    orderStatus: body.order_status || '',
+  };
   if (body.department_moved && body.to_department) {
-    return { severity: 'success', message: `${label} moved to ${body.to_department}` };
+    return { severity: 'success', message: `${label} moved to ${body.to_department}`, ...order };
   }
   const where = body.to_department || body.from_department || 'the same department';
-  return { severity: 'warning', message: `${label} stayed in ${where}` };
+  return { severity: 'warning', message: `${label} stayed in ${where}`, ...order };
 }
 
 export default function HeaderScan({ user, autoFocus }) {
@@ -84,6 +89,9 @@ export default function HeaderScan({ user, autoFocus }) {
       id: noticeSeq.current,
       severity: next.severity || 'info',
       message: next.message,
+      orderId: next.orderId || null,
+      orderNumber: next.orderNumber || '',
+      orderStatus: next.orderStatus || '',
     };
     setNotice((current) => reduceNotice(current, item));
   }
@@ -175,6 +183,25 @@ export default function HeaderScan({ user, autoFocus }) {
     void drain();
   }
 
+  async function markReady(item) {
+    if (!item || !item.orderId) return;
+    try {
+      const response = await authFetch(`/api/orders/${item.orderId}/status`, {
+        method: 'PUT',
+        body: JSON.stringify({ status: 'Ready for Pickup' }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Unable to update the order status');
+      const nextStatus = (body.order && body.order.status) || 'Ready for Pickup';
+      setNotice((current) => (current && current.id === item.id
+        ? { ...current, orderStatus: nextStatus, message: `${current.message}. Order status is ${nextStatus}` }
+        : current));
+      requestBoardRefresh();
+    } catch (err) {
+      showNotice({ severity: 'error', message: err.message || 'Unable to update the order status' });
+    }
+  }
+
   function submit(event) {
     event.preventDefault();
     const scanned = draftRef.current || (inputRef.current && inputRef.current.value) || '';
@@ -260,7 +287,24 @@ export default function HeaderScan({ user, autoFocus }) {
             onClose={() => closeNotice(notice.id)}
             sx={{ width: '100%' }}
           >
-            {notice.message}
+            <Box>
+              {notice.message}
+              {notice.orderStatus ? (
+                <Box data-testid="header-scan-order-status" sx={{ mt: 0.5, fontWeight: 800 }}>
+                  Order {notice.orderNumber ? `#${notice.orderNumber}` : ''} status: {notice.orderStatus}
+                </Box>
+              ) : null}
+              {notice.orderId && notice.orderStatus !== 'Ready for Pickup' ? (
+                <Button
+                  size="small"
+                  data-testid="header-scan-ready"
+                  onClick={() => markReady(notice)}
+                  sx={{ mt: 0.75, bgcolor: '#fff', color: '#111', fontWeight: 800 }}
+                >
+                  Mark Ready for Pickup
+                </Button>
+              ) : null}
+            </Box>
           </Alert>
         </Snackbar>
       ) : null}

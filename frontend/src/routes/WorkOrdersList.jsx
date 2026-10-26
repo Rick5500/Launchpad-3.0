@@ -11,6 +11,8 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TextField,
+  MenuItem,
   Typography,
   IconButton,
   Tooltip,
@@ -29,11 +31,21 @@ export default function WorkOrdersList() {
   const [workOrders, setWorkOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [locations, setLocations] = useState([]);
+  const [locationId, setLocationId] = useState('');
   const navigate = useNavigate();
+  const canPickLocation = user?.role === 'admin' || user?.all_locations;
 
   useEffect(() => {
     setLoading(true);
-    authFetch('/api/workorders')
+    if (canPickLocation) {
+      authFetch('/api/locations')
+        .then((res) => (res.ok ? res.json() : { locations: [] }))
+        .then((body) => setLocations(body.locations || []))
+        .catch(() => setLocations([]));
+    }
+    const query = locationId ? `?location_id=${encodeURIComponent(locationId)}` : '';
+    authFetch(`/api/workorders${query}`)
       .then((res) => {
         if (!res.ok) throw new Error('Unable to load work orders.');
         return res.json();
@@ -41,10 +53,9 @@ export default function WorkOrdersList() {
       .then((data) => setWorkOrders(data))
       .catch(() => setError('Unable to load work orders.'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [locationId, canPickLocation]);
 
-  if (loading) return <LoadingState />;
-  if (error) return <ErrorState message={error} />;
+  if (error && !workOrders.length) return <ErrorState message={error} />;
 
   return (
     <Box>
@@ -65,6 +76,20 @@ export default function WorkOrdersList() {
           </Button>
         )}
       </Box>
+      {canPickLocation ? (
+        <TextField
+          select
+          label="Location"
+          value={locationId}
+          onChange={(event) => setLocationId(event.target.value)}
+          data-testid="work-order-location-filter"
+          sx={{ minWidth: 240, mb: 2, bgcolor: '#fff' }}
+        >
+          <MenuItem value="">All locations</MenuItem>
+          {locations.map((location) => <MenuItem key={location.id} value={String(location.id)}>{location.name}</MenuItem>)}
+        </TextField>
+      ) : null}
+      {loading ? <LoadingState /> : null}
       <Card sx={{ bgcolor: '#ffffff' }}>
         <CardContent>
           <TableContainer>
@@ -74,6 +99,7 @@ export default function WorkOrdersList() {
                   <TableCell>WO #</TableCell>
                   <TableCell>Description</TableCell>
                   <TableCell>Customer</TableCell>
+                  <TableCell>Location</TableCell>
                   <TableCell>Department</TableCell>
                   <TableCell>Status</TableCell>
                   <TableCell>Due</TableCell>
@@ -83,7 +109,7 @@ export default function WorkOrdersList() {
               <TableBody>
                 {workOrders.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
+                    <TableCell colSpan={8} sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
                       No work orders found.
                     </TableCell>
                   </TableRow>
@@ -98,6 +124,7 @@ export default function WorkOrdersList() {
                       <TableCell>{order.external_id || `WO-${order.id}`}</TableCell>
                       <TableCell>{order.description}</TableCell>
                       <TableCell>{order.customer_name}</TableCell>
+                      <TableCell>{order.location_name || '—'}</TableCell>
                       <TableCell>{order.department}</TableCell>
                       <TableCell>{canonicalWorkOrderStatus(order.status) || '-'}</TableCell>
                       <TableCell>{order.due_date || '-'}</TableCell>

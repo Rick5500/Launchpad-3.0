@@ -1,6 +1,7 @@
 const express = require('express');
 const auth = require('../auth');
 const reports = require('../reports');
+const shopLocations = require('../shopLocations');
 
 const router = express.Router();
 const staffRoles = auth.requireRole('admin', 'manager', 'operator');
@@ -15,9 +16,18 @@ function sendReport(res, report, format, filename, columns) {
 }
 
 function handle(loader, filename, columns, options) {
-  return function reportHandler(req, res) {
+  return async function reportHandler(req, res) {
     const parsed = reports.parseReportQuery(req.query, options);
     if (parsed.error) return res.status(400).json({ error: parsed.error });
+    try {
+      const access = await shopLocations.loadAccess(req.user.userId);
+      const filter = await shopLocations.boardFilter(access, req.query);
+      parsed.value.shopLocationId = filter.locationId;
+      parsed.value.shopLocationNull = filter.includeNull;
+    } catch (err) {
+      console.error('REPORT ERROR:', err);
+      return res.status(err.status || 500).json({ error: err.publicMessage || err.message || 'Failed to build report' });
+    }
     loader(parsed.value, (err, report) => {
       if (err) {
         console.error('REPORT ERROR:', err);

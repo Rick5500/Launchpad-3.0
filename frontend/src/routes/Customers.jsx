@@ -5,10 +5,12 @@ import {
   Button,
   Card,
   CardContent,
+  Checkbox,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   Table,
   TableBody,
   TableCell,
@@ -21,6 +23,8 @@ import {
 import LoadingState from '../components/LoadingState';
 import ErrorState from '../components/ErrorState';
 import { authFetch } from '../api';
+import { useAuth } from '../context/AuthContext';
+import { SMS_CONSENT } from '../smsConsent';
 
 function formatCreated(value) {
   if (!value) return '-';
@@ -30,6 +34,8 @@ function formatCreated(value) {
 }
 
 export default function Customers() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -50,6 +56,11 @@ export default function Customers() {
   const [addressError, setAddressError] = useState('');
   const [addressSaving, setAddressSaving] = useState(false);
   const [addressNotice, setAddressNotice] = useState('');
+  const [textCustomer, setTextCustomer] = useState(null);
+  const [textForm, setTextForm] = useState({ mobile_phone: '', sms_opt_in: false });
+  const [textError, setTextError] = useState('');
+  const [textNotice, setTextNotice] = useState('');
+  const [textSaving, setTextSaving] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -142,6 +153,43 @@ export default function Customers() {
     }
   };
 
+  const openTexting = (customer) => {
+    setTextCustomer(customer);
+    setTextForm({
+      mobile_phone: customer.mobile_phone || '',
+      sms_opt_in: Boolean(customer.sms_opt_in),
+    });
+    setTextError('');
+    setTextNotice('');
+  };
+
+  const saveTexting = async (event) => {
+    event.preventDefault();
+    if (!textCustomer) return;
+    setTextSaving(true);
+    setTextError('');
+    setTextNotice('');
+    try {
+      const response = await authFetch(`/api/customers/${textCustomer.id}/texting`, {
+        method: 'PUT',
+        body: JSON.stringify(textForm),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Failed to update texting preferences');
+      setCustomers((rows) => rows.map((row) => (row.id === payload.id ? { ...row, ...payload } : row)));
+      setTextCustomer((current) => (current ? { ...current, ...payload } : current));
+      setTextForm({
+        mobile_phone: payload.mobile_phone || '',
+        sms_opt_in: Boolean(payload.sms_opt_in),
+      });
+      setTextNotice('Texting preferences saved.');
+    } catch (err) {
+      setTextError(err.message || 'Failed to update texting preferences');
+    } finally {
+      setTextSaving(false);
+    }
+  };
+
   const copyPassword = async () => {
     try {
       await navigator.clipboard.writeText(issuedPassword);
@@ -161,7 +209,7 @@ export default function Customers() {
         Customers
       </Typography>
       <Typography color="text.secondary" gutterBottom>
-        Reset a customer password so an existing account can sign in. The new password is shown once.
+        Customer records. Mobile number and text consent are off until the customer or a manager turns them on.
       </Typography>
       <Card sx={{ bgcolor: '#ffffff', mt: 2 }}>
         <CardContent>
@@ -172,6 +220,8 @@ export default function Customers() {
                   <TableCell>Name</TableCell>
                   <TableCell>Username</TableCell>
                   <TableCell>Created</TableCell>
+                  <TableCell>Mobile</TableCell>
+                  <TableCell>Texts</TableCell>
                   <TableCell>Address</TableCell>
                   <TableCell align="right">Actions</TableCell>
                 </TableRow>
@@ -179,7 +229,7 @@ export default function Customers() {
               <TableBody>
                 {customers.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
+                    <TableCell colSpan={7} sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
                       No customers found.
                     </TableCell>
                   </TableRow>
@@ -189,16 +239,25 @@ export default function Customers() {
                       <TableCell>{customer.display_name || '-'}</TableCell>
                       <TableCell>{customer.username}</TableCell>
                       <TableCell>{formatCreated(customer.created_at)}</TableCell>
+                      <TableCell>{customer.mobile_phone || '—'}</TableCell>
+                      <TableCell>{customer.sms_opt_in ? 'Opted in' : 'Off'}</TableCell>
                       <TableCell>
                         {[customer.address_line1, customer.city, customer.state, customer.zip].filter(Boolean).join(', ') || '—'}
                       </TableCell>
                       <TableCell align="right">
-                        <Button variant="outlined" size="small" onClick={() => openAddress(customer)} sx={{ mr: 1 }}>
-                          Edit address
+                        <Button variant="outlined" size="small" onClick={() => openTexting(customer)} sx={{ mr: 1 }}>
+                          Text updates
                         </Button>
-                        <Button variant="outlined" size="small" onClick={() => openReset(customer)}>
-                          Reset password
-                        </Button>
+                        {isAdmin ? (
+                          <Button variant="outlined" size="small" onClick={() => openAddress(customer)} sx={{ mr: 1 }}>
+                            Edit address
+                          </Button>
+                        ) : null}
+                        {isAdmin ? (
+                          <Button variant="outlined" size="small" onClick={() => openReset(customer)}>
+                            Reset password
+                          </Button>
+                        ) : null}
                       </TableCell>
                     </TableRow>
                   ))
@@ -208,6 +267,51 @@ export default function Customers() {
           </TableContainer>
         </CardContent>
       </Card>
+
+      <Dialog open={Boolean(textCustomer)} onClose={() => setTextCustomer(null)} fullWidth maxWidth="sm">
+        <Box component="form" onSubmit={saveTexting}>
+          <DialogTitle>Text updates for {textCustomer?.display_name || textCustomer?.username}</DialogTitle>
+          <DialogContent sx={{ display: 'grid', gap: 2 }}>
+            <Typography sx={{ fontSize: '1.05rem' }}>
+              Texts go out only when this box is checked and the mobile number is valid. The default is off.
+            </Typography>
+            {textError && <Alert severity="error">{textError}</Alert>}
+            {textNotice && <Alert severity="success">{textNotice}</Alert>}
+            <TextField
+              label="Mobile phone"
+              value={textForm.mobile_phone}
+              onChange={(event) => setTextForm({ ...textForm, mobile_phone: event.target.value })}
+              fullWidth
+              placeholder="919-555-0100"
+              inputProps={{ 'data-testid': 'customer-mobile-phone' }}
+              sx={{ '& .MuiInputBase-input': { fontSize: '1.2rem' } }}
+            />
+            <FormControlLabel
+              sx={{ alignItems: 'flex-start', m: 0, '& .MuiFormControlLabel-label': { fontSize: '1.15rem', lineHeight: 1.45 } }}
+              control={(
+                <Checkbox
+                  checked={textForm.sms_opt_in}
+                  disabled={!textCustomer?.sms_opt_in}
+                  onChange={(event) => setTextForm({ ...textForm, sms_opt_in: event.target.checked })}
+                  inputProps={{ 'data-testid': 'customer-sms-opt-in' }}
+                />
+              )}
+              label={SMS_CONSENT}
+            />
+            <Typography data-testid="staff-number-change-note" sx={{ fontSize: '1.05rem', color: 'text.secondary' }}>
+              Changing the mobile number turns texting off until the customer opts in again. Saving the same number keeps their choice.
+              {' '}
+              {textCustomer?.sms_opt_in
+                ? 'You can turn texts off. Only the customer can turn them back on.'
+                : 'Only the customer can turn texts on.'}
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setTextCustomer(null)} disabled={textSaving}>Close</Button>
+            <Button type="submit" variant="contained" disabled={textSaving}>{textSaving ? 'Saving...' : 'Save texting'}</Button>
+          </DialogActions>
+        </Box>
+      </Dialog>
 
       <Dialog open={Boolean(addressCustomer)} onClose={() => setAddressCustomer(null)} fullWidth maxWidth="sm">
         <Box component="form" onSubmit={saveAddress}>
