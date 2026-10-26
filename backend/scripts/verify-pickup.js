@@ -308,13 +308,34 @@ async function main() {
     });
     assert(operator.status === 201, operator.text);
 
-    const opted = await request({
+    const phoneOnly = await request({
+      method: 'PUT',
+      path: `/api/customers/${created.json.id}/texting`,
+      token: admin.token,
+      json: { mobile_phone: '(919) 555-0100', sms_opt_in: false },
+    });
+    assert(phoneOnly.status === 200 && phoneOnly.json.mobile_phone === '+19195550100' && phoneOnly.json.sms_opt_in === false, phoneOnly.text);
+    const staffOn = await request({
       method: 'PUT',
       path: `/api/customers/${created.json.id}/texting`,
       token: admin.token,
       json: { mobile_phone: '(919) 555-0100', sms_opt_in: true },
     });
-    assert(opted.status === 200 && opted.json.mobile_phone === '+19195550100' && opted.json.sms_opt_in === true, opted.text);
+    assert(staffOn.status === 403, `staff must not opt a customer in: ${staffOn.status} ${staffOn.text}`);
+    const createOptIn = await request({
+      method: 'POST',
+      path: '/api/users',
+      token: admin.token,
+      json: {
+        username: 'pickupstaffopt',
+        display_name: 'Staff Opt',
+        role: 'customer',
+        password: customerPassword,
+        mobile_phone: '919-555-0166',
+        sms_opt_in: true,
+      },
+    });
+    assert(createOptIn.status === 403, `creating a customer must not opt them in: ${createOptIn.text}`);
     const mgrLogin = await login('pickupmgr', 'ManagerPass123');
     const managerList = await request({ method: 'GET', path: '/api/customers', token: mgrLogin.token });
     assert(managerList.status === 200 && Array.isArray(managerList.json), managerList.text);
@@ -325,6 +346,13 @@ async function main() {
       json: { mobile_phone: '919-555-0177', sms_opt_in: false },
     });
     assert(managerEdit.status === 200 && managerEdit.json.sms_opt_in === false && managerEdit.json.mobile_phone === '+19195550177', managerEdit.text);
+    const managerOn = await request({
+      method: 'PUT',
+      path: `/api/customers/${quiet.json.id}/texting`,
+      token: mgrLogin.token,
+      json: { sms_opt_in: true },
+    });
+    assert(managerOn.status === 403, `a manager must not opt a customer in: ${managerOn.text}`);
     const opLogin = await login('pickupop', 'OperatorPass123');
     const operatorEdit = await request({
       method: 'PUT',
@@ -342,7 +370,16 @@ async function main() {
     assert(missingConsent.status === 400, 'opt-in without a mobile number should be rejected');
 
     const casey = await login('pickupcasey', customerPassword);
-    assert(casey.user.sms_opt_in === true && casey.user.mobile_phone === '+19195550100', 'login should return the texting profile');
+    assert(casey.user.sms_opt_in === false && casey.user.mobile_phone === '+19195550100', 'login should return the texting profile still opted out');
+    const badLocation = await request({
+      method: 'PUT',
+      path: '/api/auth/profile',
+      token: casey.token,
+      json: { location_id: 999999, mobile_phone: '919-555-0100', sms_opt_in: true },
+    });
+    assert(badLocation.status === 400, `a bad location should be rejected before texting is saved: ${badLocation.text}`);
+    const stillOut = await login('pickupcasey', customerPassword);
+    assert(stillOut.user.sms_opt_in === false, 'an invalid location must not save the opt-in');
     const selfOff = await request({
       method: 'PUT',
       path: '/api/auth/profile',
@@ -392,6 +429,39 @@ async function main() {
     assert(marked.json.pickup_notice.email.status === 'sent', `email should send, got ${JSON.stringify(marked.json.pickup_notice)}`);
     assert(marked.json.pickup_notice.sms.status === 'dry_run', `sms should dry-run, got ${JSON.stringify(marked.json.pickup_notice.sms)}`);
     assert(marked.json.pickup_notice.email.sent_at && marked.json.pickup_notice.sms.sent_at, 'both channels should record a sent time');
+    const hickory = (options.json.locations || []).find((location) => location.name === 'Hickory');
+    assert(hickory, 'Hickory should be seeded');
+    const farOperator = await request({
+      method: 'POST',
+      path: '/api/users',
+      token: admin.token,
+      json: {
+        username: 'pickupfar',
+        display_name: 'Far Operator',
+        role: 'operator',
+        password: 'OperatorPass123',
+        location_id: hickory.id,
+      },
+    });
+    assert(farOperator.status === 201, farOperator.text);
+    const farLogin = await login('pickupfar', 'OperatorPass123');
+    const farStatus = await request({
+      method: 'PUT',
+      path: `/api/orders/${orderId}/status`,
+      token: farLogin.token,
+      json: { status: 'Ready for Pickup' },
+    });
+    assert(farStatus.status === 404, `an operator at another shop should not see the order: ${farStatus.status} ${farStatus.text}`);
+    const found = await request({
+      method: 'GET',
+      path: `/api/search/orders?status=${encodeURIComponent('ready for pickup')}`,
+      token: admin.token,
+    });
+    assert(found.status === 200 && (found.json.orders || []).some((row) => row.id === orderId && row.status === 'Ready for Pickup'), found.text);
+    const dash = await request({ method: 'GET', path: '/api/dashboard', token: admin.token });
+    const farDash = await request({ method: 'GET', path: '/api/dashboard', token: farLogin.token });
+    assert(dash.status === 200 && Number(dash.json.readyForPickup) >= 1, dash.text);
+    assert(farDash.status === 200 && Number(farDash.json.readyForPickup) === 0, 'a Hickory operator should not count a Raleigh ready order');
     const preview = marked.json.pickup_notice.email.preview;
     assert(preview && preview.html && preview.text, 'the test transport should capture the email');
     assert(preview.html.includes(readyOrder.json.order_number), 'the email should include the order number');
@@ -485,6 +555,30 @@ async function main() {
     assert(reentered.status === 200 && reentered.json.pickup_notice.sms.status === 'dry_run', reentered.text);
     assert(dryRuns(server.logs()) === invalidBefore + 1, 'leaving and returning to ready should send once more');
     console.log('PASS a new transition sends again');
+
+    const quietLogin = await login('pickupquiet', customerPassword);
+    const quietOn = await request({
+      method: 'PUT',
+      path: '/api/auth/profile',
+      token: quietLogin.token,
+      json: { mobile_phone: '919-555-0177', sms_opt_in: true },
+    });
+    assert(quietOn.status === 200 && quietOn.json.sms_opt_in === true, quietOn.text);
+    const staffOff = await request({
+      method: 'PUT',
+      path: `/api/customers/${quiet.json.id}/texting`,
+      token: admin.token,
+      json: { sms_opt_in: false },
+    });
+    assert(staffOff.status === 200 && staffOff.json.sms_opt_in === false, 'staff can turn texts off');
+    const staffBack = await request({
+      method: 'PUT',
+      path: `/api/customers/${quiet.json.id}/texting`,
+      token: mgrLogin.token,
+      json: { mobile_phone: '919-555-0177', sms_opt_in: true },
+    });
+    assert(staffBack.status === 403, `staff must not turn texts back on: ${staffBack.text}`);
+    console.log('PASS staff can turn texts off and cannot opt a customer in');
   } catch (err) {
     console.error(server.logs());
     throw err;

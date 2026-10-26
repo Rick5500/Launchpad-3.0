@@ -60,6 +60,7 @@ export default function UsersPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [issuedPassword, setIssuedPassword] = useState('');
+  const [customerWasOptedIn, setCustomerWasOptedIn] = useState(false);
   const [departments, setDepartments] = useState([]);
   const [locations, setLocations] = useState([]);
   const limit = 20;
@@ -142,6 +143,7 @@ export default function UsersPage() {
       password: '',
       is_active: Boolean(row.is_active),
     });
+    setCustomerWasOptedIn(row.role === 'customer' && Boolean(row.sms_opt_in));
     setIssuedPassword('');
     setNotice('');
     setError('');
@@ -184,6 +186,7 @@ export default function UsersPage() {
       setNotice(editingId ? 'User updated.' : 'User created.');
       setForm(emptyForm);
       setEditingId(null);
+      setCustomerWasOptedIn(false);
       load(offset, applied);
     } catch (err) {
       setError(err.message || 'Unable to save user');
@@ -279,9 +282,20 @@ export default function UsersPage() {
               />
               <FormControlLabel
                 sx={{ alignItems: 'flex-start', gridColumn: '1 / -1', '& .MuiFormControlLabel-label': { fontSize: '1.1rem', lineHeight: 1.45 } }}
-                control={<Checkbox checked={form.sms_opt_in} onChange={(event) => update('sms_opt_in', event.target.checked)} />}
+                control={(
+                  <Checkbox
+                    checked={form.sms_opt_in}
+                    disabled={!customerWasOptedIn}
+                    onChange={(event) => update('sms_opt_in', event.target.checked)}
+                  />
+                )}
                 label={SMS_CONSENT}
               />
+              <Typography sx={{ gridColumn: '1 / -1', fontSize: '1rem', color: 'text.secondary' }}>
+                {customerWasOptedIn
+                  ? 'You can turn texts off. Only the customer can turn them back on.'
+                  : 'Only the customer can turn texts on. You can still save a mobile number.'}
+              </Typography>
             </>
           ) : null}
           <TextField label="Addr 1" value={form.address_line1} onChange={(event) => update('address_line1', event.target.value)} />
@@ -295,7 +309,7 @@ export default function UsersPage() {
           <FormControlLabel control={<Switch checked={form.is_active} onChange={(event) => update('is_active', event.target.checked)} />} label="Active" />
           <Box sx={{ display: 'flex', gap: 1, gridColumn: '1 / -1' }}>
             <Button type="submit" variant="contained" disabled={saving}>{saving ? 'Saving...' : editingId ? 'Save changes' : 'Create user'}</Button>
-            {editingId ? <Button onClick={() => { setEditingId(null); setForm(emptyForm); }}>Cancel</Button> : null}
+            {editingId ? <Button onClick={() => { setEditingId(null); setCustomerWasOptedIn(false); setForm(emptyForm); }}>Cancel</Button> : null}
           </Box>
         </Box>
       </SectionCard>

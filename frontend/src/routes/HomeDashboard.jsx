@@ -19,15 +19,26 @@ import {
 } from '@mui/material';
 import { authFetch } from '../api';
 import { useAuth } from '../context/AuthContext';
+import { ReadyForPickupChip } from '../components/boardUrgency';
 import { canonicalWorkOrderStatus, isActiveWorkOrderStatus, isFinishedWorkOrderStatus } from '../workOrderStatus';
 
 const metricCards = [
   { key: 'totalWorkOrders', label: 'Total Work Orders' },
   { key: 'activeWorkOrders', label: 'Active Work Orders' },
+  { key: 'readyForPickup', label: 'Ready for Pickup' },
   { key: 'productionBoardItems', label: 'Production Board Items' },
   { key: 'customers', label: 'Customers' },
   { key: 'pendingDeliveries', label: 'Pending Deliveries' },
 ];
+
+function readyOrderCount(list) {
+  const ids = new Set();
+  (list || []).forEach((order) => {
+    if (String(order.order_status || '').trim().toLowerCase() !== 'ready for pickup') return;
+    ids.add(order.order_id || order.id);
+  });
+  return ids.size;
+}
 
 const formatter = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
@@ -64,6 +75,7 @@ export default function HomeDashboard() {
           setSummary({
             totalWorkOrders: list.length,
             activeWorkOrders: active,
+            readyForPickup: readyOrderCount(list),
             departmentSummary: Array.from(counts, ([department, count]) => ({ department, count })),
           });
           setWorkOrders(list);
@@ -157,9 +169,9 @@ export default function HomeDashboard() {
       </Typography>
 
       <Grid container spacing={3}>
-        {(isCustomer ? metricCards.filter((card) => card.key === 'totalWorkOrders' || card.key === 'activeWorkOrders') : metricCards).map((card) => (
+        {(isCustomer ? metricCards.filter((card) => card.key === 'totalWorkOrders' || card.key === 'activeWorkOrders' || card.key === 'readyForPickup') : metricCards).map((card) => (
           <Grid key={card.key} xs={12} sm={6} md={4}>
-            <Card sx={{ minHeight: 130, bgcolor: '#ffffff' }}>
+            <Card sx={{ minHeight: 130, bgcolor: '#ffffff' }} data-testid={card.key === 'readyForPickup' ? 'dashboard-ready-for-pickup' : undefined}>
               <CardContent>
                 <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                   {card.label}
@@ -255,7 +267,12 @@ export default function HomeDashboard() {
                           <TableCell>{order.external_id || `WO-${order.id}`}</TableCell>
                           <TableCell>{order.customer_name || 'Unknown'}</TableCell>
                           <TableCell>{order.department || 'General'}</TableCell>
-                          <TableCell>{canonicalWorkOrderStatus(order.status) || '-'}</TableCell>
+                          <TableCell>
+                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, alignItems: 'center' }}>
+                              <span>{canonicalWorkOrderStatus(order.status) || '-'}</span>
+                              <ReadyForPickupChip status={order.order_status} />
+                            </Box>
+                          </TableCell>
                           <TableCell>{order.due_date ? formatter.format(new Date(order.due_date)) : '-'}</TableCell>
                           <TableCell>{order.quantity}</TableCell>
                         </TableRow>

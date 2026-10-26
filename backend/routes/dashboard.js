@@ -34,7 +34,11 @@ router.get('/', async (req, res) => {
     const where = shop.sql ? `WHERE ${shop.sql}` : '';
     const andShop = shop.sql ? `AND ${shop.sql}` : '';
     const activeList = sqlStringList(ACTIVE_WORK_ORDER_STATUSES);
-    const [total, active, board, customers, deliveries, departments] = await Promise.all([
+    const orderShop = shopLocations.predicate('o.location_id', access);
+    const readyWhere = orderShop.sql
+      ? `WHERE lower(trim(coalesce(o.status, ''))) = 'ready for pickup' AND ${orderShop.sql}`
+      : `WHERE lower(trim(coalesce(o.status, ''))) = 'ready for pickup'`;
+    const [total, active, board, customers, deliveries, ready, departments] = await Promise.all([
       get(`SELECT COUNT(*) AS count ${WORK_FROM} ${where}`, shop.params),
       get(
         `SELECT COUNT(*) AS count ${WORK_FROM} WHERE wo.status IN (${activeList}) ${andShop}`,
@@ -46,6 +50,7 @@ router.get('/', async (req, res) => {
         `SELECT COUNT(*) AS count ${DELIVERY_FROM} WHERE lower(d.status) != 'complete' ${andShop}`,
         shop.params
       ),
+      get(`SELECT COUNT(*) AS count FROM orders o ${readyWhere}`, orderShop.params),
       all(
         `SELECT wo.department AS department, COUNT(*) AS count
          ${WORK_FROM}
@@ -61,6 +66,7 @@ router.get('/', async (req, res) => {
       productionBoardItems: board.count,
       customers: customers.count,
       pendingDeliveries: deliveries.count,
+      readyForPickup: ready.count,
       departmentSummary: departments,
     });
   } catch (err) {

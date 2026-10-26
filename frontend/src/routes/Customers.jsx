@@ -291,12 +291,18 @@ export default function Customers() {
               control={(
                 <Checkbox
                   checked={textForm.sms_opt_in}
+                  disabled={!textCustomer?.sms_opt_in}
                   onChange={(event) => setTextForm({ ...textForm, sms_opt_in: event.target.checked })}
                   inputProps={{ 'data-testid': 'customer-sms-opt-in' }}
                 />
               )}
               label={SMS_CONSENT}
             />
+            <Typography sx={{ fontSize: '1rem', color: 'text.secondary' }}>
+              {textCustomer?.sms_opt_in
+                ? 'You can turn texts off. Only the customer can turn them back on.'
+                : 'Only the customer can turn texts on. You can still save a mobile number.'}
+            </Typography>
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setTextCustomer(null)} disabled={textSaving}>Close</Button>

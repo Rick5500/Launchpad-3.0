@@ -88,6 +88,18 @@ function parseUsername(value, required) {
   return parsed;
 }
 
+const STAFF_OPT_IN_ERROR = 'Only the customer can opt in to order status texts';
+
+// Staff may store a mobile number and turn texts off. Turning texts on is the
+// customer's choice, so a staff save that would change opt-in from off to on
+// is rejected.
+function staffOptInError(existing, next, allowOptIn) {
+  if (allowOptIn) return null;
+  const wasOn = existing && Number(existing.sms_opt_in) === 1;
+  if (next && next.smsOptIn === 1 && !wasOn) return STAFF_OPT_IN_ERROR;
+  return null;
+}
+
 // Omitted fields keep the stored values. Opt-in stays off unless it is set,
 // and it requires a number that normalizes to E.164.
 function parseTexting(body, existing, options = {}) {
@@ -378,6 +390,8 @@ async function createUser(actorId, body) {
       ? parseTexting(source, { mobile_phone: null, sms_opt_in: 0 })
       : { value: { mobilePhone: null, smsOptIn: 0 } };
     if (texting.error) throw httpError(400, texting.error);
+    const optInError = staffOptInError({ sms_opt_in: 0 }, texting.value, false);
+    if (optInError) throw httpError(403, optInError);
     const inserted = await insertUserRow(tx, {
       username: username.value,
       passwordHash: hash,
@@ -478,6 +492,8 @@ async function updateUser(actorId, id, body) {
       ? parseTexting(source, existing)
       : { value: { mobilePhone: null, smsOptIn: 0 } };
     if (texting.error) throw httpError(400, texting.error);
+    const optInError = staffOptInError(existing, texting.value, false);
+    if (optInError) throw httpError(403, optInError);
     const previousDepartment = existing.department || null;
     const departmentChanged = previousDepartment !== department.value;
 
@@ -729,7 +745,7 @@ async function registerCustomer(body) {
   return session;
 }
 
-async function updateCustomerTexting(actorId, id, body) {
+async function updateCustomerTexting(actorId, id, body, options = {}) {
   const parsedId = parseInteger(id, 'id', { min: 1, max: Number.MAX_SAFE_INTEGER, required: true });
   if (parsedId.error || !parsedId.value) throw httpError(400, 'id must be a positive integer');
   await withTransaction(async (tx) => {
@@ -740,6 +756,8 @@ async function updateCustomerTexting(actorId, id, body) {
     if (!existing || existing.role !== 'customer') throw httpError(404, 'Customer not found');
     const texting = parseTexting(body || {}, existing, { requireProvided: true });
     if (texting.error) throw httpError(400, texting.error);
+    const optInError = staffOptInError(existing, texting.value, options.allowOptIn === true);
+    if (optInError) throw httpError(403, optInError);
     await tx.run(
       `UPDATE users
        SET mobile_phone = ?, sms_opt_in = ?, updated_at = datetime('now')

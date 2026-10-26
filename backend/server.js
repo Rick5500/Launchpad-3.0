@@ -209,21 +209,25 @@ app.put('/api/auth/profile', auth.requireAuth, async (req, res) => {
     if (!hasLocation && !hasTexting) {
       return res.status(400).json({ error: 'location_id is required' });
     }
-    const userAdmin = require('./userAdmin');
-    let texting = null;
-    if (hasTexting) {
-      texting = await userAdmin.updateCustomerTexting(req.user.userId, req.user.userId, source);
-    }
+    let resolvedLocation = null;
     if (hasLocation) {
       const resolved = await shopLocations.resolveLocationId({ get: require('./dbAsync').get }, source.location_id, {
         required: true,
         activeOnly: true,
       });
       if (resolved.error) return res.status(400).json({ error: resolved.error });
+      resolvedLocation = resolved;
+    }
+    const userAdmin = require('./userAdmin');
+    let texting = null;
+    if (hasTexting) {
+      texting = await userAdmin.updateCustomerTexting(req.user.userId, req.user.userId, source, { allowOptIn: true });
+    }
+    if (resolvedLocation) {
       await new Promise((resolve, reject) => {
         db.run(
           `UPDATE users SET location_id = ?, updated_at = datetime('now') WHERE id = ? AND role = 'customer'`,
-          [resolved.value, req.user.userId],
+          [resolvedLocation.value, req.user.userId],
           (err) => (err ? reject(err) : resolve())
         );
       });

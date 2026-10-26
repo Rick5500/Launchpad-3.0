@@ -1624,9 +1624,7 @@ async function setOrderStatus(user, id, body) {
   const visible = await loadOrderRecord(orderId, user);
   if (!visible) throw new OrderError('Order not found', 404);
 
-  let outcome;
-  try {
-    outcome = await withTransaction(async (tx) => {
+  const outcome = await withTransaction(async (tx) => {
       const existing = await tx.get(
         `SELECT id, status, order_number, pickup_ready_generation FROM orders WHERE id = ?`,
         [orderId]
@@ -1678,10 +1676,6 @@ async function setOrderStatus(user, id, body) {
         generation: row ? row.pickup_ready_generation : 0,
       };
     });
-  } catch (err) {
-    if (err instanceof OrderError || (err && err.status)) throw err;
-    throw err;
-  }
 
   let notice = null;
   if (outcome.entering) {

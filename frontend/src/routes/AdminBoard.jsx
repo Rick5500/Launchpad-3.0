@@ -40,7 +40,7 @@ import { authFetch } from '../api';
 import { BOARD_REFRESH_EVENT, requestBoardRefresh } from '../boardEvents';
 import MoveWorkOrderDialog from '../components/MoveWorkOrderDialog';
 import BoardDetailPane from '../components/BoardDetailPane';
-import { UrgencyChips, UrgencyLegend, rowSurface, splitInstant, splitWall } from '../components/boardUrgency';
+import { ReadyForPickupChip, UrgencyChips, UrgencyLegend, rowSurface, splitInstant, splitWall } from '../components/boardUrgency';
 import { useAuth } from '../context/AuthContext';
 import { brand } from '../brand';
 import LoadingState from '../components/LoadingState';
@@ -461,6 +461,14 @@ export default function AdminBoard() {
         caption: 'Category',
         color: '#1565C0',
         Icon: DescriptionOutlinedIcon,
+      },
+      {
+        key: 'ready-for-pickup',
+        value: summary.stats.ready_for_pickup || 0,
+        label: 'Ready for Pickup',
+        caption: 'Orders',
+        color: brand.orange,
+        Icon: AssignmentOutlinedIcon,
       },
     ];
     for (const departmentStat of summary.stats.departments || []) {
@@ -904,6 +912,7 @@ export default function AdminBoard() {
                       <TableCell><StackedStamp date={due.date} time={due.time} /></TableCell>
                       <TableCell data-testid="board-process">
                         <Box sx={{ whiteSpace: 'nowrap' }}>{row.status_label || 'LiveOrder'}</Box>
+                        <Box sx={{ mt: 0.4 }}><ReadyForPickupChip status={row.order_status} /></Box>
                         <Box sx={{ fontSize: 12, whiteSpace: 'nowrap' }}>{row.files_label || '0 / 0'}</Box>
                       </TableCell>
                     </TableRow>

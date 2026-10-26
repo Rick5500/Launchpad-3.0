@@ -211,7 +211,7 @@ router.post('/', auth.requireAuth, auth.requireRole('admin'), async (req, res) =
   }
 });
 
-// Mobile number and order-status text consent. Admins and managers can edit a customer record.
+// Mobile number and order-status text consent. Admins and managers can edit the number and turn texts off. Only the customer can opt in.
 router.put('/:id/texting', auth.requireAuth, auth.requireRole('admin', 'manager'), async (req, res) => {
   try {
     const updated = await updateCustomerTexting(req.user.userId, req.params.id, req.body || {});

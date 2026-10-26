@@ -18,6 +18,7 @@ import {
 } from '@mui/material';
 import { authFetch } from '../api';
 import { requestBoardRefresh } from '../boardEvents';
+import PickupStatusControl from '../components/PickupStatusControl';
 import { useAuth } from '../context/AuthContext';
 
 const LOCATION_STORAGE_KEY = 'lp_scan_location';
@@ -94,6 +95,7 @@ export default function BarcodeScan() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
+  const [scannedOrder, setScannedOrder] = useState(null);
 
   function focusScan() {
     scanRef.current?.focus();
@@ -178,6 +180,11 @@ export default function BarcodeScan() {
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || 'Scan failed');
       setResult(scanResult(body));
+      setScannedOrder(body.order_id ? {
+        orderId: body.order_id,
+        orderNumber: body.order_number || '',
+        orderStatus: body.order_status || 'In Production',
+      } : null);
       setScannedValue('');
       requestBoardRefresh();
       await loadEvents();
@@ -250,6 +257,21 @@ export default function BarcodeScan() {
           </Box>
           {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
           {result && <Alert severity={result.severity} sx={{ mt: 2 }}>{result.text}</Alert>}
+          {scannedOrder ? (
+            <Box sx={{ mt: 2 }} data-testid="scan-order-status">
+              <Typography sx={{ fontWeight: 800, fontSize: '1.2rem', mb: 1 }}>
+                Order {scannedOrder.orderNumber ? `#${scannedOrder.orderNumber}` : ''} is {scannedOrder.orderStatus}.
+              </Typography>
+              <PickupStatusControl
+                orderId={scannedOrder.orderId}
+                status={scannedOrder.orderStatus}
+                onUpdated={(order) => {
+                  if (!order) return;
+                  setScannedOrder((current) => (current ? { ...current, orderStatus: order.status || current.orderStatus } : current));
+                }}
+              />
+            </Box>
+          ) : null}
         </CardContent>
       </Card>
 
