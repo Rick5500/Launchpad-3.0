@@ -298,10 +298,12 @@ export default function Customers() {
               )}
               label={SMS_CONSENT}
             />
-            <Typography sx={{ fontSize: '1rem', color: 'text.secondary' }}>
+            <Typography data-testid="staff-number-change-note" sx={{ fontSize: '1.05rem', color: 'text.secondary' }}>
+              Changing the mobile number turns texting off until the customer opts in again. Saving the same number keeps their choice.
+              {' '}
               {textCustomer?.sms_opt_in
                 ? 'You can turn texts off. Only the customer can turn them back on.'
-                : 'Only the customer can turn texts on. You can still save a mobile number.'}
+                : 'Only the customer can turn texts on.'}
             </Typography>
           </DialogContent>
           <DialogActions>

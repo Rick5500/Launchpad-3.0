@@ -92,12 +92,23 @@ const STAFF_OPT_IN_ERROR = 'Only the customer can opt in to order status texts';
 
 // Staff may store a mobile number and turn texts off. Turning texts on is the
 // customer's choice, so a staff save that would change opt-in from off to on
-// is rejected.
+// is rejected. A different normalized number drops an existing opt-in. The
+// same number, after E.164 normalization, keeps it.
 function staffOptInError(existing, next, allowOptIn) {
   if (allowOptIn) return null;
   const wasOn = existing && Number(existing.sms_opt_in) === 1;
   if (next && next.smsOptIn === 1 && !wasOn) return STAFF_OPT_IN_ERROR;
   return null;
+}
+
+function applyStaffNumberChange(existing, next) {
+  if (!next) return next;
+  const value = { mobilePhone: next.mobilePhone, smsOptIn: next.smsOptIn };
+  const previous = normalizeE164(existing && existing.mobile_phone);
+  const upcoming = value.mobilePhone ? normalizeE164(value.mobilePhone) : null;
+  const wasOn = existing && Number(existing.sms_opt_in) === 1;
+  if (wasOn && (previous || null) !== (upcoming || null)) value.smsOptIn = 0;
+  return value;
 }
 
 // Omitted fields keep the stored values. Opt-in stays off unless it is set,
@@ -131,8 +142,14 @@ function parseTexting(body, existing, options = {}) {
     if (parsed.error) return parsed;
     opt = parsed.value;
   }
-  if (opt === 1 && !mobile) return { error: 'Enter a mobile number to receive order status texts' };
-  return { value: { mobilePhone: mobile, smsOptIn: opt } };
+  let value = { mobilePhone: mobile, smsOptIn: opt };
+  if (options.staff) value = applyStaffNumberChange(existing, value);
+  if (value.smsOptIn === 1 && !value.mobilePhone) return { error: 'Enter a mobile number to receive order status texts' };
+  if (options.staff) {
+    const blocked = staffOptInError(existing, value, false);
+    if (blocked) return { error: blocked, status: 403 };
+  }
+  return { value };
 }
 
 function parseProfile(body) {
@@ -489,11 +506,9 @@ async function updateUser(actorId, id, body) {
     const location = await shopLocations.locationForRole(tx, source, role.value, existing.location_id || null);
     if (location.error) throw httpError(400, location.error);
     const texting = role.value === 'customer'
-      ? parseTexting(source, existing)
+      ? parseTexting(source, existing, { staff: true })
       : { value: { mobilePhone: null, smsOptIn: 0 } };
-    if (texting.error) throw httpError(400, texting.error);
-    const optInError = staffOptInError(existing, texting.value, false);
-    if (optInError) throw httpError(403, optInError);
+    if (texting.error) throw httpError(texting.status || 400, texting.error);
     const previousDepartment = existing.department || null;
     const departmentChanged = previousDepartment !== department.value;
 
@@ -754,10 +769,11 @@ async function updateCustomerTexting(actorId, id, body, options = {}) {
       [parsedId.value]
     );
     if (!existing || existing.role !== 'customer') throw httpError(404, 'Customer not found');
-    const texting = parseTexting(body || {}, existing, { requireProvided: true });
-    if (texting.error) throw httpError(400, texting.error);
-    const optInError = staffOptInError(existing, texting.value, options.allowOptIn === true);
-    if (optInError) throw httpError(403, optInError);
+    const texting = parseTexting(body || {}, existing, {
+      requireProvided: true,
+      staff: options.allowOptIn !== true,
+    });
+    if (texting.error) throw httpError(texting.status || 400, texting.error);
     await tx.run(
       `UPDATE users
        SET mobile_phone = ?, sms_opt_in = ?, updated_at = datetime('now')

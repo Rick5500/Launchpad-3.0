@@ -564,6 +564,64 @@ async function main() {
       json: { mobile_phone: '919-555-0177', sms_opt_in: true },
     });
     assert(quietOn.status === 200 && quietOn.json.sms_opt_in === true, quietOn.text);
+    const sameNumber = await request({
+      method: 'PUT',
+      path: `/api/customers/${quiet.json.id}/texting`,
+      token: admin.token,
+      json: { mobile_phone: '(919) 555-0177', sms_opt_in: true },
+    });
+    assert(
+      sameNumber.status === 200 && sameNumber.json.mobile_phone === '+19195550177' && sameNumber.json.sms_opt_in === true,
+      `the same number should keep opt-in: ${sameNumber.text}`
+    );
+    const changedNumber = await request({
+      method: 'PUT',
+      path: `/api/customers/${quiet.json.id}/texting`,
+      token: mgrLogin.token,
+      json: { mobile_phone: '919-555-0144', sms_opt_in: true },
+    });
+    assert(
+      changedNumber.status === 200 && changedNumber.json.mobile_phone === '+19195550144' && changedNumber.json.sms_opt_in === false,
+      `a different number should turn texts off: ${changedNumber.text}`
+    );
+    const optedAgain = await request({
+      method: 'PUT',
+      path: '/api/auth/profile',
+      token: quietLogin.token,
+      json: { mobile_phone: '919-555-0144', sms_opt_in: true },
+    });
+    assert(optedAgain.status === 200 && optedAgain.json.sms_opt_in === true, optedAgain.text);
+    const userSame = await request({
+      method: 'PUT',
+      path: `/api/users/${quiet.json.id}`,
+      token: admin.token,
+      json: {
+        display_name: 'Quiet Pickup',
+        role: 'customer',
+        mobile_phone: '9195550144',
+        sms_opt_in: true,
+      },
+    });
+    assert(
+      userSame.status === 200 && userSame.json.mobile_phone === '+19195550144' && userSame.json.sms_opt_in === true,
+      `a user update with the same number should keep opt-in: ${userSame.text}`
+    );
+    const userChanged = await request({
+      method: 'PUT',
+      path: `/api/users/${quiet.json.id}`,
+      token: admin.token,
+      json: {
+        display_name: 'Quiet Pickup',
+        role: 'customer',
+        mobile_phone: '919-555-0188',
+        sms_opt_in: true,
+      },
+    });
+    assert(
+      userChanged.status === 200 && userChanged.json.mobile_phone === '+19195550188' && userChanged.json.sms_opt_in === false,
+      `a user update with a different number should turn texts off: ${userChanged.text}`
+    );
+    console.log('PASS a changed number drops opt-in and the same number keeps it');
     const staffOff = await request({
       method: 'PUT',
       path: `/api/customers/${quiet.json.id}/texting`,
@@ -575,7 +633,7 @@ async function main() {
       method: 'PUT',
       path: `/api/customers/${quiet.json.id}/texting`,
       token: mgrLogin.token,
-      json: { mobile_phone: '919-555-0177', sms_opt_in: true },
+      json: { mobile_phone: '919-555-0188', sms_opt_in: true },
     });
     assert(staffBack.status === 403, `staff must not turn texts back on: ${staffBack.text}`);
     console.log('PASS staff can turn texts off and cannot opt a customer in');

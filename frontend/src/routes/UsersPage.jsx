@@ -277,7 +277,7 @@ export default function UsersPage() {
                 value={form.mobile_phone}
                 onChange={(event) => update('mobile_phone', event.target.value)}
                 placeholder="919-555-0100"
-                helperText="Used for order-status texts. Stored as E.164."
+                helperText="Stored as E.164. Changing the number turns texting off until the customer opts in again."
                 sx={{ '& .MuiInputBase-input': { fontSize: '1.15rem' } }}
               />
               <FormControlLabel
@@ -291,10 +291,12 @@ export default function UsersPage() {
                 )}
                 label={SMS_CONSENT}
               />
-              <Typography sx={{ gridColumn: '1 / -1', fontSize: '1rem', color: 'text.secondary' }}>
+              <Typography data-testid="staff-number-change-note" sx={{ gridColumn: '1 / -1', fontSize: '1.05rem', color: 'text.secondary' }}>
+                Changing the mobile number turns texting off until the customer opts in again. Saving the same number keeps their choice.
+                {' '}
                 {customerWasOptedIn
                   ? 'You can turn texts off. Only the customer can turn them back on.'
-                  : 'Only the customer can turn texts on. You can still save a mobile number.'}
+                  : 'Only the customer can turn texts on.'}
               </Typography>
             </>
           ) : null}
