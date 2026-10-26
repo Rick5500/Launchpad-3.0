@@ -2000,7 +2000,7 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
         </DialogActions>
       </Dialog>
 
-      <Box className="no-print" sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderLeft: `4px solid ${brand.orange}`, borderRadius: 2, overflow: 'hidden', mb: { xs: 18, sm: 14 } }}>
+      <Box className="no-print" sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderLeft: `4px solid ${brand.orange}`, borderRadius: 2, overflow: 'hidden', mb: { xs: 22, sm: 16 } }}>
         <Box sx={{ bgcolor: brand.navy, px: 2, py: 1 }}>
           <Typography sx={{ color: '#fff', fontWeight: 800 }}>Important Information</Typography>
         </Box>
