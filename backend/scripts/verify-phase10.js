@@ -837,6 +837,86 @@ async function main() {
     });
     assert(adminMove.status === 200 && adminMove.json.department === 'Planroom', 'an admin with a department can move any work order');
 
+    const shops = await db.all(`SELECT id, name FROM locations ORDER BY sort_order, id`);
+    const shopId = (name) => {
+      const row = shops.find((item) => item.name === name);
+      assert(row, `${name} should be a seeded shop`);
+      return row.id;
+    };
+    const raleighId = shopId('Raleigh');
+    const hickoryId = shopId('Hickory');
+    const charlotteId = shopId('Charlotte');
+    await insertOrder('P10-LOC', customer.json.id, 'Large Format');
+    await db.run(`UPDATE work_orders SET location_id = ? WHERE external_id = 'P10-LOC'`, [raleighId]);
+    const locOrder = await workOrderState(db, 'P10-LOC');
+    const operatorShopMove = await request({
+      method: 'POST',
+      path: `/api/workorders/${locOrder.id}/move`,
+      token: operatorLogin.token,
+      json: { department: 'Dispatch', location_id: hickoryId },
+    });
+    assert(operatorShopMove.status === 403, `operator location change should be 403, got ${operatorShopMove.status} ${operatorShopMove.text}`);
+    const locRejected = await db.get(`SELECT location_id, department FROM work_orders WHERE external_id = 'P10-LOC'`);
+    assert(Number(locRejected.location_id) === Number(raleighId) && locRejected.department === 'Large Format', 'a rejected location change should leave the work order');
+    const badShop = await request({
+      method: 'POST',
+      path: `/api/workorders/${locOrder.id}/move`,
+      token: admin.token,
+      json: { department: 'Dispatch', location_id: 999999 },
+    });
+    assert(badShop.status === 400 && /active location/.test(badShop.text), badShop.text);
+    const movedShop = await request({
+      method: 'POST',
+      path: `/api/workorders/${locOrder.id}/move`,
+      token: admin.token,
+      json: { department: 'Quality', location_id: hickoryId, note: 'send to hickory' },
+    });
+    assert(movedShop.status === 200 && movedShop.json.department === 'Quality' && movedShop.json.location_name === 'Hickory' && movedShop.json.location_changed === true, movedShop.text);
+    const locStored = await db.get(`SELECT location_id, department FROM work_orders WHERE external_id = 'P10-LOC'`);
+    assert(Number(locStored.location_id) === Number(hickoryId) && locStored.department === 'Quality', JSON.stringify(locStored));
+    const locHistory = await db.get(
+      `SELECT notes FROM production_history WHERE work_order_id = ? ORDER BY id DESC LIMIT 1`,
+      [locOrder.id]
+    );
+    assert(locHistory.notes.startsWith('Manual move') && /Raleigh/.test(locHistory.notes) && /Hickory/.test(locHistory.notes) && /send to hickory/.test(locHistory.notes), locHistory.notes);
+    const locActivity = await db.get(
+      `SELECT detail FROM activity_log WHERE action = 'work_order.moved' AND entity_id = ? ORDER BY id DESC LIMIT 1`,
+      [locOrder.id]
+    );
+    const locDetail = JSON.parse(locActivity.detail);
+    assert(locDetail.from_location === 'Raleigh' && locDetail.to_location === 'Hickory' && locDetail.manual === true, JSON.stringify(locDetail));
+    const sameDeptShop = await request({
+      method: 'POST',
+      path: `/api/workorders/${locOrder.id}/move`,
+      token: manager.token,
+      json: { department: 'Quality', location_id: charlotteId },
+    });
+    assert(sameDeptShop.status === 200 && sameDeptShop.json.department === 'Quality' && sameDeptShop.json.location_name === 'Charlotte', sameDeptShop.text);
+    const charlotteStored = await db.get(`SELECT location_id, department FROM work_orders WHERE external_id = 'P10-LOC'`);
+    assert(Number(charlotteStored.location_id) === Number(charlotteId) && charlotteStored.department === 'Quality', JSON.stringify(charlotteStored));
+    const charlotteHistory = await db.get(
+      `SELECT notes FROM production_history WHERE work_order_id = ? ORDER BY id DESC LIMIT 1`,
+      [locOrder.id]
+    );
+    assert(/Manual move/.test(charlotteHistory.notes) && /Hickory/.test(charlotteHistory.notes) && /Charlotte/.test(charlotteHistory.notes), charlotteHistory.notes);
+    await insertOrder('P10-STAY', customer.json.id, 'Large Format');
+    await db.run(`UPDATE work_orders SET location_id = ? WHERE external_id = 'P10-STAY'`, [raleighId]);
+    const stay = await workOrderState(db, 'P10-STAY');
+    const stayMove = await request({
+      method: 'POST',
+      path: `/api/workorders/${stay.id}/move`,
+      token: admin.token,
+      json: { department: 'Dispatch' },
+    });
+    assert(stayMove.status === 200 && stayMove.json.location_changed === false, stayMove.text);
+    const stayStored = await db.get(`SELECT location_id, department FROM work_orders WHERE external_id = 'P10-STAY'`);
+    assert(Number(stayStored.location_id) === Number(raleighId) && stayStored.department === 'Dispatch', JSON.stringify(stayStored));
+    const stayHistory = await db.get(
+      `SELECT notes FROM production_history WHERE work_order_id = ? ORDER BY id DESC LIMIT 1`,
+      [stay.id]
+    );
+    assert(stayHistory.notes.startsWith('Manual move') && !/Raleigh|Hickory|Charlotte/.test(stayHistory.notes), stayHistory.notes);
+
     const staffDetail = await request({ method: 'GET', path: `/api/workorders/${qual.id}`, token: manager.token });
     assert(staffDetail.status === 200, staffDetail.text);
     const staffHistory = (staffDetail.json.production_history || []).find((row) => row.manual);
