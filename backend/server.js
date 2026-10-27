@@ -103,6 +103,7 @@ const { sendError } = require('./httpError');
 const { mountProductionFrontend } = require('./productionStatic');
 const backup = require('./backup');
 const shopLocations = require('./shopLocations');
+const { mountFrontend } = require('./frontendHosting');
 
 
 // Health check
@@ -318,6 +319,7 @@ app.get('/api/admin', auth.requireAuth, auth.requireRole('admin'), (req, res) =>
 // Customer placeholder
 app.get('/api/customer', auth.requireAuth, (req, res) => res.json({ message: 'customer endpoint (placeholder)', user: req.user }));
 
+const frontendHosting = mountFrontend(app);
 const frontend = mountProductionFrontend(app);
 
 systemSettings.loadRuntimeCache()
@@ -331,6 +333,7 @@ systemSettings.loadRuntimeCache()
     app.listen(port, () => {
       console.log(`Launchpad backend listening on port ${port}`);
       if (frontend.enabled) console.log(`Serving frontend from ${frontend.dist}`);
+      if (frontendHosting.mode === 'public-pages') console.log('Serving public terms, privacy, and SMS opt-in pages');
       notificationScheduler.start();
       startOrphanSweep();
       inboundEmailPoller.start();

@@ -61,6 +61,8 @@ NODE_ENV=production npm start
 
 `npm run build` installs the frontend and writes `frontend/dist`. `npm start` runs `node backend/server.js`.
 
+`/terms`, `/privacy`, and `/sms-opt-in` are public on that same process. A browser can open them with no login. They are the pages a carrier review uses for the Ready for Pickup text program.
+
 `Dockerfile` builds that image and runs it as the `node` user (uid 1000). `render.yaml` is a Render blueprint: one web service, health check `/health`, and a 10 GB disk mounted at `/var/data`. The disk must be writable by uid 1000. On a VM, `sudo chown -R 1000:1000 /var/data` before the first start.
 
 ### Render

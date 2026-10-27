@@ -576,6 +576,23 @@ async function checkServers() {
     assert(fs.existsSync(prodUploads), 'production startup should create UPLOADS_DIR');
     const home = await request(prodPort, { path: '/' });
     assert(home.status === 200 && home.text.includes(marker), 'production / should serve the frontend');
+    const sms = require('../sms');
+    for (const pagePath of ['/terms', '/privacy', '/sms-opt-in']) {
+      const page = await request(prodPort, { path: pagePath });
+      const type = String(page.headers['content-type'] || '');
+      assert(page.status === 200 && /text\/html/i.test(type), `${pagePath} should return HTML 200 without a login, got ${page.status} ${type}`);
+      assert(page.text.includes('Terms of Service') && page.text.includes('Privacy Policy'), `${pagePath} should be the public page`);
+      assert(!page.text.includes(marker), `${pagePath} should be the public page, not the signed-in app shell`);
+      if (pagePath === '/terms' || pagePath === '/sms-opt-in') {
+        assert(page.text.includes(sms.SMS_CONSENT) && page.text.includes(sms.SMS_DISCLOSURE), `${pagePath} should include the opt-in wording`);
+      }
+      if (pagePath === '/privacy') {
+        assert(page.text.includes(sms.PRIVACY_SHARING) && page.text.includes(sms.COMPANY_CONTACT), 'privacy should include the sharing sentence and the company address');
+      }
+      if (pagePath === '/sms-opt-in') {
+        assert(page.text.includes(sms.SMS_PREVIEW_LABEL) && page.text.includes(sms.SMS_SAVE_LABEL), 'the opt-in page should show the preview and the sign-up button');
+      }
+    }
     const spa = await request(prodPort, { path: '/orders/5' });
     assert(spa.status === 200 && spa.text.includes(marker), 'production client routes should fall back to index.html');
     const asset = await request(prodPort, { path: '/assets/app.js' });
@@ -721,6 +738,11 @@ async function checkServers() {
     await waitFor(devPort, dev);
     const home = await request(devPort, { path: '/' });
     assert(home.status === 404 && !home.text.includes(marker), 'development should not serve the frontend');
+    for (const pagePath of ['/terms', '/privacy', '/sms-opt-in']) {
+      const page = await request(devPort, { path: pagePath });
+      assert(page.status === 200 && /text\/html/i.test(String(page.headers['content-type'] || '')), `${pagePath} should stay public when the frontend build is not served, got ${page.status}`);
+      assert(!page.text.includes(marker), `${pagePath} in development should not be the production app shell`);
+    }
     const health = await request(devPort, { path: '/api/health' });
     assert(health.status === 200 && health.json.status === 'ok', 'development API should still answer');
     const probe = new sqlite3.Database(devDb);
