@@ -24,6 +24,7 @@ import ProductionBoard from './routes/ProductionBoard';
 import BarcodeScan from './routes/BarcodeScan';
 import Deliveries from './routes/Deliveries';
 import CustomerOrderForm from './routes/CustomerOrderForm';
+import { PrivacyPage, SmsOptInPage, TermsPage } from './routes/PublicPages';
 import OrderDetail from './routes/OrderDetail';
 import WorkOrderPrint from './routes/WorkOrderPrint';
 import Reports from './routes/Reports';
@@ -763,10 +764,18 @@ function HomeOrOrder() {
   return <AdminBoard />;
 }
 
+const PUBLIC_PAGES = new Set(['/terms', '/privacy', '/sms-opt-in']);
+
 function AppRoutes() {
   const { user, logout, isLoading } = useAuth();
+  const location = useLocation();
+  const publicPath = location.pathname.length > 1 ? location.pathname.replace(/\/+$/, '') : location.pathname;
+  const isPublicPage = PUBLIC_PAGES.has(publicPath);
+  if (isPublicPage && location.pathname !== publicPath) {
+    return <Navigate to={`${publicPath}${location.search}${location.hash}`} replace />;
+  }
 
-  if (isLoading && !user) {
+  if (isLoading && !user && !isPublicPage) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
         <CircularProgress />
@@ -776,6 +785,9 @@ function AppRoutes() {
 
   return (
     <Routes>
+      <Route path="/terms" element={<TermsPage />} />
+      <Route path="/privacy" element={<PrivacyPage />} />
+      <Route path="/sms-opt-in" element={<SmsOptInPage />} />
       <Route path="/login" element={<LoginGate />} />
       <Route path="/order" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><CustomerOrderForm /></ProtectedRoute>} />
       <Route path="/orders/:id" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><OrderDetail /></ProtectedRoute>} />
