@@ -487,10 +487,10 @@ function LoginScreen() {
           flexDirection: 'column',
           alignItems: 'center',
           px: { xs: 2, sm: 3 },
-          pt: { xs: 6, sm: 5 },
+          pt: { xs: 6, sm: 3.5 },
           pb: 4,
-          // About 10% smaller on laptop screens so the credit fits at 100% zoom
-          // on a ~800px-tall viewport. Phones keep the full size.
+          // About 10% smaller on laptop screens, matching a 90% browser zoom.
+          // Phones keep the full size.
           '@media (min-width: 600px)': {
             zoom: 0.9,
           },
@@ -500,10 +500,10 @@ function LoginScreen() {
         data-testid="login-intro"
         sx={{
           width: 'min(100%, 640px, calc(40vh * 16 / 9))',
-          // The card, type, and spacing are already 10% smaller. On a short
-          // laptop that still leaves the credit short, so the hero takes only
-          // the height that remains under the sign-in card.
-          '@media (min-width: 600px)': {
+          // A 10% scale matches the credit on a ~900px-tall laptop window.
+          // Below that the hero gives up the leftover height so the credit
+          // still lands on screen around 800px.
+          '@media (min-width: 600px) and (max-height: 900px)': {
             width: 'min(100%, 640px, calc(40vh * 16 / 9), max(160px, calc((100vh - 580px) * 16 / 9)))',
             '@supports (height: 100dvh)': {
               width: 'min(100%, 640px, calc(40dvh * 16 / 9), max(160px, calc((100dvh - 580px) * 16 / 9)))',
