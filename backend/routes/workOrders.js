@@ -603,6 +603,8 @@ router.post('/:id/move', auth.requireAuth, auth.requireRole('admin', 'manager'),
       department: parsed.department,
       note: parsed.note,
       actorId: req.user.userId,
+      actorRole: access.role,
+      locationId: parsed.locationId,
     });
     res.json(result);
   } catch (err) {

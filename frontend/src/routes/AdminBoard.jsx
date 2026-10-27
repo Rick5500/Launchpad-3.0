@@ -604,7 +604,7 @@ export default function AdminBoard() {
   return (
     <Box sx={{ display: 'grid', gap: 2 }}>
       {summary?.viewer?.can_pick_location ? (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', mt: { xs: 8, sm: 7, md: 2 } }}>
           <TextField
             select
             label="Location"

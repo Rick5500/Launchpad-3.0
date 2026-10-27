@@ -38,7 +38,17 @@ function createdEntry({ actorId, workOrderId, externalId, department, orderNumbe
   };
 }
 
-function transitionEntries({ actorId, previous, next, manual = false, note = null }) {
+function transitionEntries({
+  actorId,
+  previous,
+  next,
+  manual = false,
+  note = null,
+  fromLocation = null,
+  toLocation = null,
+  fromLocationId = null,
+  toLocationId = null,
+}) {
   const entries = [];
   const from = String(previous?.department || '').trim();
   const to = String(next?.department || '').trim();
@@ -46,9 +56,16 @@ function transitionEntries({ actorId, previous, next, manual = false, note = nul
   const id = next?.id || previous?.id;
   if (!id) return entries;
 
-  if (from !== to) {
+  const locationChanged = Boolean(fromLocation && toLocation && fromLocation !== toLocation);
+  if (from !== to || locationChanged) {
     const destination = to || 'another department';
-    let message = manual ? `Manual move to ${destination}` : `Moved to ${destination}`;
+    let message;
+    if (from !== to) {
+      message = manual ? `Manual move to ${destination}` : `Moved to ${destination}`;
+      if (locationChanged) message = `${message}. Location ${fromLocation} to ${toLocation}`;
+    } else {
+      message = `Location ${fromLocation} to ${toLocation}`;
+    }
     if (manual && note) message = `${message}. ${note}`;
     const detail = {
       external_id: externalId,
@@ -56,6 +73,12 @@ function transitionEntries({ actorId, previous, next, manual = false, note = nul
       to_department: to || null,
       message,
     };
+    if (locationChanged) {
+      detail.from_location = fromLocation;
+      detail.to_location = toLocation;
+      detail.from_location_id = fromLocationId;
+      detail.to_location_id = toLocationId;
+    }
     if (manual) {
       detail.manual = true;
       detail.note = note || null;
