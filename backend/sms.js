@@ -3,7 +3,14 @@
 // roll back the order status that triggered the text.
 
 const READY_LABEL = 'Ready for Pickup';
-const SMS_CONSENT = 'I agree to receive order status texts from Accent Corporate Graphics. Msg & data rates may apply. Reply STOP to opt out.';
+const SMS_CONSENT = 'Yes, I would like to receive order status text messages from Accent Corporate Graphics (a division of Accent Imaging, Inc.), such as when my order is ready for pickup.';
+const SMS_DISCLOSURE = 'Message frequency: about 1 message per order. Message and data rates may apply. Reply HELP for help or STOP to cancel at any time. Consent is not required to make a purchase.';
+const SMS_SAVE_LABEL = 'Yes, sign me up for texts';
+const SMS_PREVIEW_LABEL = 'This is how customers opt in inside their Launchpad account.';
+const PRIVACY_SHARING = 'Mobile numbers and SMS consent are never shared or sold to third parties for marketing.';
+const PRIVACY_TRANSACTIONAL = 'These texts are transactional order notifications.';
+const COMPANY_CONTACT = 'Accent Imaging, Inc., 8121 Brownleigh Drive, Raleigh, NC 27617';
+const SMS_STOP_LINE = 'Reply STOP to opt out.';
 
 function twilioAccount() {
   const sid = String(process.env.TWILIO_ACCOUNT_SID || '').trim();
@@ -61,7 +68,9 @@ function pickupSmsBody({ orderNumber, locationName, locationAddress, locationPho
   const where = address ? `${place}, ${address}` : place;
   const phone = String(locationPhone || '').replace(/[\r\n]+/g, ' ').trim();
   const questions = phone ? ` Questions? ${phone}` : '';
-  return `Accent Corporate Graphics: Order #${number} is ready for pickup at ${where}.${questions}`.replace(/[ \t]{2,}/g, ' ').trim();
+  const message = `Accent Corporate Graphics: Order #${number} is ready for pickup at ${where}.${questions}`.replace(/[ \t]{2,}/g, ' ').trim();
+  if (message.endsWith(SMS_STOP_LINE)) return message;
+  return `${message} ${SMS_STOP_LINE}`;
 }
 
 async function sendSms({ to, body }) {
@@ -104,6 +113,13 @@ async function sendSms({ to, body }) {
 module.exports = {
   READY_LABEL,
   SMS_CONSENT,
+  SMS_DISCLOSURE,
+  SMS_SAVE_LABEL,
+  SMS_PREVIEW_LABEL,
+  PRIVACY_SHARING,
+  PRIVACY_TRANSACTIONAL,
+  COMPANY_CONTACT,
+  SMS_STOP_LINE,
   normalizeE164,
   flattenAddress,
   pickupSmsBody,

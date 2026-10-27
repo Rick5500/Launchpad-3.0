@@ -62,6 +62,7 @@ const userAdmin = require('./userAdmin');
 const registerLimit = require('./registerLimit');
 const { sendError } = require('./httpError');
 const shopLocations = require('./shopLocations');
+const { mountFrontend } = require('./frontendHosting');
 
 
 // Health check
@@ -277,6 +278,8 @@ app.get('/api/admin', auth.requireAuth, auth.requireRole('admin'), (req, res) =>
 // Customer placeholder
 app.get('/api/customer', auth.requireAuth, (req, res) => res.json({ message: 'customer endpoint (placeholder)', user: req.user }));
 
+const frontendHosting = mountFrontend(app);
+
 systemSettings.loadRuntimeCache()
   .catch((err) => {
     console.error('SETTINGS CACHE ERROR:', err);
@@ -287,6 +290,7 @@ systemSettings.loadRuntimeCache()
     mailer.warnTestJsonTransport();
     app.listen(port, () => {
       console.log(`Launchpad backend listening on port ${port}`);
+      if (frontendHosting.mode === 'spa') console.log('Serving the frontend build');
       notificationScheduler.start();
       startOrphanSweep();
       inboundEmailPoller.start();

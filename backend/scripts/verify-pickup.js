@@ -18,7 +18,15 @@ const dbFile = path.join(tmp, 'pickup.db');
 const port = 3144;
 const adminPassword = 'AdminPass123';
 const customerPassword = 'CustomerPass123';
-const CONSENT = 'I agree to receive order status texts from Accent Corporate Graphics. Msg & data rates may apply. Reply STOP to opt out.';
+const CONSENT = 'Yes, I would like to receive order status text messages from Accent Corporate Graphics (a division of Accent Imaging, Inc.), such as when my order is ready for pickup.';
+const DISCLOSURE = 'Message frequency: about 1 message per order. Message and data rates may apply. Reply HELP for help or STOP to cancel at any time. Consent is not required to make a purchase.';
+const SAVE_LABEL = 'Yes, sign me up for texts';
+const PREVIEW_LABEL = 'This is how customers opt in inside their Launchpad account.';
+const PRIVACY_SHARING = 'Mobile numbers and SMS consent are never shared or sold to third parties for marketing.';
+const PRIVACY_TRANSACTIONAL = 'These texts are transactional order notifications.';
+const COMPANY_CONTACT = 'Accent Imaging, Inc., 8121 Brownleigh Drive, Raleigh, NC 27617';
+const STOP_LINE = 'Reply STOP to opt out.';
+const PUBLIC_PAGES = ['/terms', '/privacy', '/sms-opt-in'];
 
 function assert(condition, message) {
   if (!condition) {
@@ -104,7 +112,7 @@ function request({ method, path: requestPath, token, json }) {
         const text = Buffer.concat(chunks).toString('utf8');
         let parsed = null;
         try { parsed = text ? JSON.parse(text) : null; } catch (err) { parsed = null; }
-        resolve({ status: res.statusCode, text, json: parsed });
+        resolve({ status: res.statusCode, text, json: parsed, type: res.headers['content-type'] || '' });
       });
     });
     req.on('error', reject);
@@ -214,8 +222,45 @@ async function login(username, password) {
   return response.json;
 }
 
+function assertCopy(source, needle, message) {
+  assert(source.includes(needle), message);
+}
+
 async function main() {
   assert(sms.SMS_CONSENT === CONSENT, 'consent wording should match the profile checkbox');
+  assert(sms.SMS_DISCLOSURE === DISCLOSURE, 'disclosure wording should match the profile form');
+  assert(sms.SMS_SAVE_LABEL === SAVE_LABEL, 'the save button label should match');
+  assert(sms.SMS_STOP_LINE === STOP_LINE, 'the opt-out line should match');
+  assert(sms.PRIVACY_SHARING === PRIVACY_SHARING, 'the privacy sharing sentence should match');
+  assert(sms.PRIVACY_TRANSACTIONAL === PRIVACY_TRANSACTIONAL, 'the privacy transactional sentence should match');
+  assert(sms.COMPANY_CONTACT === COMPANY_CONTACT, 'the company contact should match');
+  const consentSource = fs.readFileSync(path.join(backendDir, '../frontend/src/smsConsent.js'), 'utf8');
+  const formSource = fs.readFileSync(path.join(backendDir, '../frontend/src/components/SmsOptInForm.jsx'), 'utf8');
+  const pagesSource = fs.readFileSync(path.join(backendDir, '../frontend/src/routes/PublicPages.jsx'), 'utf8');
+  const appSource = fs.readFileSync(path.join(backendDir, '../frontend/src/App.jsx'), 'utf8');
+  const orderSource = fs.readFileSync(path.join(backendDir, '../frontend/src/routes/CustomerOrderForm.jsx'), 'utf8');
+  for (const needle of [CONSENT, DISCLOSURE, SAVE_LABEL, PREVIEW_LABEL, PRIVACY_SHARING, PRIVACY_TRANSACTIONAL, COMPANY_CONTACT]) {
+    assertCopy(consentSource, needle, `smsConsent.js should include: ${needle}`);
+  }
+  assertCopy(formSource, 'SMS_CONSENT', 'the opt-in form should use the consent wording');
+  assertCopy(formSource, 'SMS_DISCLOSURE', 'the opt-in form should show the disclosure');
+  assertCopy(formSource, 'SMS_SAVE_LABEL', 'the opt-in form should use the sign-up button');
+  assertCopy(formSource, 'to="/terms"', 'the opt-in form should link to the terms');
+  assertCopy(formSource, 'to="/privacy"', 'the opt-in form should link to the privacy policy');
+  assertCopy(formSource, 'Terms of Service', 'the terms link should name Terms of Service');
+  assertCopy(formSource, 'Privacy Policy', 'the privacy link should name Privacy Policy');
+  assertCopy(formSource, 'preview ? false', 'the public preview checkbox should stay unchecked');
+  assertCopy(pagesSource, 'SMS_PREVIEW_LABEL', 'the public opt-in page should label the customer preview');
+  assertCopy(pagesSource, 'PRIVACY_SHARING', 'the privacy page should say numbers are not sold');
+  assertCopy(pagesSource, 'PRIVACY_TRANSACTIONAL', 'the privacy page should describe transactional texts');
+  assertCopy(pagesSource, 'COMPANY_CONTACT', 'the privacy page should name the Accent Imaging address');
+  assertCopy(pagesSource, '<SmsOptInForm preview />', 'the public opt-in page should show the same form');
+  assertCopy(appSource, 'path="/terms"', 'the app should route /terms without a login');
+  assertCopy(appSource, 'path="/privacy"', 'the app should route /privacy without a login');
+  assertCopy(appSource, 'path="/sms-opt-in"', 'the app should route /sms-opt-in without a login');
+  assertCopy(appSource, 'PUBLIC_PAGES', 'public pages should render before a session check finishes');
+  assertCopy(orderSource, '<SmsOptInForm', 'Place an order should use the customer opt-in form');
+  assert(!/ProtectedRoute[^>]*TermsPage/.test(appSource), 'terms must not require a role');
   assert(sms.normalizeE164('(919) 555-0100') === '+19195550100', 'a 10-digit US number should become E.164');
   assert(sms.normalizeE164('19195550100') === '+19195550100', 'an 11-digit US number should keep the leading 1');
   assert(sms.normalizeE164('+447911123456') === '+447911123456', 'an international number with + should stay');
@@ -227,8 +272,14 @@ async function main() {
     locationPhone: '919-782-3332',
   });
   assert(
-    sample === 'Accent Corporate Graphics: Order #123 is ready for pickup at our Raleigh location, 8121 Brownleigh Drive, Raleigh, NC 27617. Questions? 919-782-3332',
+    sample === 'Accent Corporate Graphics: Order #123 is ready for pickup at our Raleigh location, 8121 Brownleigh Drive, Raleigh, NC 27617. Questions? 919-782-3332 Reply STOP to opt out.',
     `unexpected text body: ${sample}`
+  );
+  assert(sample.endsWith(STOP_LINE), 'the text should end with the opt-out line');
+  const bare = sms.pickupSmsBody({ orderNumber: '9' });
+  assert(
+    bare === 'Accent Corporate Graphics: Order #9 is ready for pickup at our shop. Reply STOP to opt out.',
+    `unexpected short text body: ${bare}`
   );
 
   fs.mkdirSync(path.join(tmp, 'uploads'), { recursive: true });
@@ -251,6 +302,34 @@ async function main() {
   const server = startServer(baseEnv());
   await server.ready;
   try {
+    const locked = await request({ method: 'GET', path: '/api/auth/me' });
+    assert(locked.status === 401, `profile should stay behind login, got ${locked.status}`);
+    for (const pagePath of PUBLIC_PAGES) {
+      const response = await request({ method: 'GET', path: pagePath });
+      assert(response.status === 200, `${pagePath} should return 200 without auth, got ${response.status} ${response.text.slice(0, 180)}`);
+      assert(/text\/html/i.test(response.type), `${pagePath} should be HTML, got ${response.type}`);
+      const spaShell = response.text.includes('id="root"');
+      if (!spaShell) {
+        assert(response.text.includes('Terms of Service') && response.text.includes('Privacy Policy'), `${pagePath} should link the policies`);
+        assert(response.text.includes('A service of Accent Imaging and Accent Corporate Graphics'), `${pagePath} should include the Accent Imaging and ACG credit`);
+        if (pagePath === '/terms' || pagePath === '/sms-opt-in') {
+          assert(response.text.includes(CONSENT), `${pagePath} should include the consent wording`);
+          assert(response.text.includes(DISCLOSURE), `${pagePath} should include the disclosure`);
+        }
+        if (pagePath === '/privacy') {
+          assert(response.text.includes(PRIVACY_SHARING), 'privacy should say numbers are not sold');
+          assert(response.text.includes(PRIVACY_TRANSACTIONAL), 'privacy should describe transactional texts');
+          assert(response.text.includes(COMPANY_CONTACT), 'privacy should name the Accent Imaging address');
+        }
+        if (pagePath === '/sms-opt-in') {
+          assert(response.text.includes(PREVIEW_LABEL), 'the opt-in page should label the customer preview');
+          assert(response.text.includes(SAVE_LABEL), 'the opt-in page should show the sign-up button');
+          assert(/type="checkbox"/.test(response.text) && !/type="checkbox"[^>]*checked/.test(response.text), 'the preview checkbox should be unchecked');
+        }
+      }
+    }
+    console.log('PASS public terms, privacy, and opt-in pages');
+
     const admin = await login('admin', adminPassword);
     const created = await request({
       method: 'POST',
@@ -472,6 +551,7 @@ async function main() {
     assert(addressOf(preview.to) === 'casey@pickup.example', `email should go to the order contact, got ${JSON.stringify(preview.to)}`);
     const logged = server.logs().slice(server.logs().indexOf('SMS dry-run:'));
     assert(logged.includes(readyOrder.json.order_number) && logged.includes('8121 Brownleigh Drive') && logged.includes('+19195550100'), 'the dry-run log should include the text');
+    assert(logged.includes(STOP_LINE), 'the dry-run text should end with the opt-out line');
     assert(dryRuns(server.logs()) === before + 1, 'one dry-run text should be logged');
     fs.writeFileSync(path.join(tmp, 'pickup-email.html'), preview.html);
     console.log('PASS dry-run email and text');
