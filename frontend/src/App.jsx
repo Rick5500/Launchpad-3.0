@@ -453,9 +453,6 @@ function LoginScreen() {
         overflowX: 'hidden',
         overflowY: 'auto',
         scrollbarColor: '#2a4468 #000',
-        px: { xs: 2, sm: 3 },
-        pt: { xs: 6, sm: 5 },
-        pb: 4,
         position: 'relative',
       }}
     >
@@ -483,9 +480,35 @@ function LoginScreen() {
         </Button>
       ) : null}
       <Box
+        sx={{
+          width: '100%',
+          boxSizing: 'border-box',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          px: { xs: 2, sm: 3 },
+          pt: { xs: 6, sm: 3.5 },
+          pb: 4,
+          // About 10% smaller on laptop screens, matching a 90% browser zoom.
+          // Phones keep the full size.
+          '@media (min-width: 600px)': {
+            zoom: 0.9,
+          },
+        }}
+      >
+      <Box
         data-testid="login-intro"
         sx={{
           width: 'min(100%, 640px, calc(40vh * 16 / 9))',
+          // A 10% scale matches the credit on a ~900px-tall laptop window.
+          // Below that the hero gives up the leftover height so the credit
+          // still lands on screen around 800px.
+          '@media (min-width: 600px) and (max-height: 900px)': {
+            width: 'min(100%, 640px, calc(40vh * 16 / 9), max(160px, calc((100vh - 580px) * 16 / 9)))',
+            '@supports (height: 100dvh)': {
+              width: 'min(100%, 640px, calc(40dvh * 16 / 9), max(160px, calc((100dvh - 580px) * 16 / 9)))',
+            },
+          },
           maxWidth: '100%',
           aspectRatio: '16 / 9',
           position: 'relative',
@@ -745,6 +768,7 @@ function LoginScreen() {
         />
         </>
       ) : null}
+      </Box>
     </Box>
   );
 }

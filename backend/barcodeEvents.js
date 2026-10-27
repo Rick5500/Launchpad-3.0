@@ -1,5 +1,6 @@
 const db = require('./db');
 const activityLog = require('./activityLog');
+const shopLocations = require('./shopLocations');
 const { withTransaction } = require('./dbAsync');
 const { DEFAULT_LOCATION_STAGES, isLegacyInactiveAlias } = require('./barcodeLocationDefaults');
 
@@ -325,10 +326,23 @@ function eventParams({ scannedValue, workOrder, operatorId, location, storedTime
   ];
 }
 
-function historyNote({ fromDepartment, toName, manual, note }) {
-  if (!manual) return `Moved from ${fromDepartment || 'unassigned'} to ${toName}`;
+function historyNote({ fromDepartment, toName, manual, note, fromLocation, toLocation }) {
+  const locationChanged = Boolean(fromLocation && toLocation && fromLocation !== toLocation);
+  const locationText = locationChanged ? `Location ${fromLocation} to ${toLocation}` : '';
+  const samePlace = sameDepartmentName(fromDepartment, toName);
+  if (manual && samePlace && locationChanged) {
+    const base = `Manual move. ${locationText}.`;
+    return note ? `${base} ${note}` : base;
+  }
+  if (!manual) {
+    const base = `Moved from ${fromDepartment || 'unassigned'} to ${toName}`;
+    return locationText ? `${base}. ${locationText}` : base;
+  }
   const base = `Manual move from ${fromDepartment || 'unassigned'} to ${toName}`;
-  return note ? `${base}. ${note}` : base;
+  if (note && locationText) return `${base}. ${locationText}. ${note}`;
+  if (note) return `${base}. ${note}`;
+  if (locationText) return `${base}. ${locationText}`;
+  return base;
 }
 
 // Department, history, and activity commit together. A scan also writes the barcode event.
@@ -344,6 +358,10 @@ async function applyDepartmentChange(tx, move) {
     manual,
     note,
     stage,
+    fromLocation,
+    toLocation,
+    fromLocationId,
+    toLocationId,
   } = move;
 
   await tx.run(
@@ -385,6 +403,8 @@ async function applyDepartmentChange(tx, move) {
         toName: matchedDepartment.name,
         manual: Boolean(manual),
         note: note || null,
+        fromLocation: fromLocation || null,
+        toLocation: toLocation || null,
       }),
     ]
   );
@@ -400,6 +420,10 @@ async function applyDepartmentChange(tx, move) {
     },
     manual: Boolean(manual),
     note: note || null,
+    fromLocation: fromLocation || null,
+    toLocation: toLocation || null,
+    fromLocationId: fromLocationId || null,
+    toLocationId: toLocationId || null,
   });
   for (const entry of entries) {
     await tx.run(activityLog.INSERT_SQL, activityLog.bindParams(entry));
@@ -524,11 +548,34 @@ function parseManualMove(body) {
     else if (note.length > MAX_MOVE_NOTE_LENGTH) return { error: 'note is too long' };
     else if (/[\u0000-\u001F]/.test(note)) return { error: 'note contains invalid characters' };
   }
-  return { department, note };
+
+  const location = parseMoveLocation(source);
+  if (location.error) return location;
+  return { department, note, locationId: location.present ? location.value : undefined };
+}
+
+function parseMoveLocation(source) {
+  if (!Object.prototype.hasOwnProperty.call(source, 'location_id')) return { present: false };
+  const value = source.location_id;
+  if (value == null) return { present: false };
+  if (typeof value === 'string') {
+    if (value.trim() === '') return { present: false };
+    return { present: true, value: value.trim() };
+  }
+  if (typeof value === 'number') {
+    if (!Number.isInteger(value) || value <= 0) return { error: 'location_id must be an active location' };
+    return { present: true, value };
+  }
+  return { error: 'location_id must be an active location' };
 }
 
 function sameDepartmentName(left, right) {
   return String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
+}
+
+function sameShopId(left, right) {
+  if (left == null || right == null) return left == null && right == null;
+  return Number(left) === Number(right);
 }
 
 // The stage follows the active barcode location for the target department, the same
@@ -562,15 +609,33 @@ async function stageNameForDepartment(tx, departmentName) {
   return stage || null;
 }
 
+async function shopForMove(tx, locationId) {
+  if (locationId == null) return { id: null, name: null };
+  const row = await tx.get(`SELECT id, name FROM locations WHERE id = ?`, [locationId]);
+  return row ? { id: row.id, name: row.name } : { id: locationId, name: null };
+}
+
+// NULL shop columns count as Raleigh, the same way the board reads a work order.
+async function effectiveShop(tx, workOrder) {
+  const stored = workOrder.location_id != null
+    ? Number(workOrder.location_id)
+    : (workOrder.order_location_id != null ? Number(workOrder.order_location_id) : null);
+  const id = stored == null ? await shopLocations.defaultLocationId(tx) : stored;
+  return shopForMove(tx, id);
+}
+
 // Manual move shares the scan's department update. It does not write a barcode event.
-// Admin and manager can move a work order from any department.
-async function moveWorkOrder({ workOrderId, department, note, actorId }) {
+// Admin and manager can move a work order from any department. A location change is
+// also admin and manager only; departments themselves are not tied to a shop.
+async function moveWorkOrder({ workOrderId, department, note, actorId, actorRole, locationId }) {
   const lookup = String(department || '').trim();
   return withTransaction(async (tx) => {
     const workOrder = await tx.get(
-      `SELECT id, external_id, description, department, status, stage_id
-       FROM work_orders
-       WHERE id = ?`,
+      `SELECT wo.id, wo.external_id, wo.description, wo.department, wo.status, wo.stage_id,
+              wo.location_id, o.location_id AS order_location_id
+       FROM work_orders wo
+       LEFT JOIN orders o ON o.id = wo.order_id
+       WHERE wo.id = ?`,
       [workOrderId]
     );
     if (!workOrder) throw httpError(404, 'Work order not found');
@@ -583,39 +648,108 @@ async function moveWorkOrder({ workOrderId, department, note, actorId }) {
       )
       : null;
     if (!matched) throw httpError(400, 'department must be an active department');
-    if (sameDepartmentName(workOrder.department, matched.name)) {
+
+    const currentShop = await effectiveShop(tx, workOrder);
+    let targetShop = currentShop;
+    if (locationId !== undefined) {
+      const resolved = await shopLocations.resolveLocationId(tx, locationId, { required: true, activeOnly: true });
+      if (resolved.error) throw httpError(400, resolved.error);
+      targetShop = { id: resolved.value, name: resolved.name };
+    }
+    const locationChanged = !sameShopId(targetShop.id, currentShop.id);
+    if (locationChanged && actorRole !== 'admin' && actorRole !== 'manager') {
+      throw httpError(403, 'Only an admin or manager can change the location');
+    }
+    const departmentChanged = !sameDepartmentName(workOrder.department, matched.name);
+    if (!departmentChanged && !locationChanged) {
       throw httpError(409, `Work order is already in ${matched.name}`);
     }
 
     const operator = actorId
       ? await tx.get('SELECT id, display_name, username FROM users WHERE id = ?', [actorId])
       : null;
-    const stageName = await stageNameForDepartment(tx, matched.name);
-    const stage = stageName
-      ? await tx.get(
-        'SELECT id, name FROM production_stages WHERE lower(name) = lower(?)',
-        [stageName]
-      )
-      : null;
+    const fromLocation = locationChanged ? (currentShop.name || 'unassigned') : null;
+    const toLocation = locationChanged ? (targetShop.name || 'unassigned') : null;
+    let stage = null;
     let status = workOrder.status || 'open';
-    if (isCompleteDepartment(matched.name) && !activityLog.isFinishedStatus(status)) {
-      status = 'completed';
+
+    if (departmentChanged) {
+      const stageName = await stageNameForDepartment(tx, matched.name);
+      stage = stageName
+        ? await tx.get(
+          'SELECT id, name FROM production_stages WHERE lower(name) = lower(?)',
+          [stageName]
+        )
+        : null;
+      if (isCompleteDepartment(matched.name) && !activityLog.isFinishedStatus(status)) {
+        status = 'completed';
+      }
+      await applyDepartmentChange(tx, {
+        matchedDepartment: matched,
+        nextStatus: status,
+        workOrder,
+        operator,
+        operatorId: actorId || null,
+        fromDepartment: workOrder.department || null,
+        manual: true,
+        note: note || null,
+        stage,
+        fromLocation,
+        toLocation,
+        fromLocationId: locationChanged ? currentShop.id : null,
+        toLocationId: locationChanged ? targetShop.id : null,
+      });
+    } else {
+      const scannedBy = operator?.display_name || operator?.username || 'Staff';
+      await tx.run(
+        `INSERT INTO production_history (work_order_id, department, status, scanned_by, user_id, notes)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          workOrder.id,
+          matched.name,
+          status,
+          scannedBy,
+          actorId || null,
+          historyNote({
+            fromDepartment: workOrder.department || null,
+            toName: matched.name,
+            manual: true,
+            note: note || null,
+            fromLocation,
+            toLocation,
+          }),
+        ]
+      );
+      const entries = activityLog.transitionEntries({
+        actorId: actorId || null,
+        previous: workOrder,
+        next: {
+          id: workOrder.id,
+          external_id: workOrder.external_id,
+          department: workOrder.department,
+          status,
+        },
+        manual: true,
+        note: note || null,
+        fromLocation,
+        toLocation,
+        fromLocationId: currentShop.id,
+        toLocationId: targetShop.id,
+      });
+      for (const entry of entries) {
+        await tx.run(activityLog.INSERT_SQL, activityLog.bindParams(entry));
+      }
     }
 
-    await applyDepartmentChange(tx, {
-      matchedDepartment: matched,
-      nextStatus: status,
-      workOrder,
-      operator,
-      operatorId: actorId || null,
-      fromDepartment: workOrder.department || null,
-      manual: true,
-      note: note || null,
-      stage,
-    });
+    if (locationChanged) {
+      await tx.run(
+        `UPDATE work_orders SET location_id = ?, updated_at = datetime('now') WHERE id = ?`,
+        [targetShop.id, workOrder.id]
+      );
+    }
 
     const updated = await tx.get(
-      `SELECT id, external_id, department, next_department, status, stage_id
+      `SELECT id, external_id, department, next_department, status, stage_id, location_id
        FROM work_orders
        WHERE id = ?`,
       [workOrder.id]
@@ -632,6 +766,10 @@ async function moveWorkOrder({ workOrderId, department, note, actorId }) {
       stage_advanced: Boolean(stage),
       manual: true,
       note: note || null,
+      location_id: updated.location_id == null ? currentShop.id : updated.location_id,
+      location_name: targetShop.name || currentShop.name || null,
+      from_location: locationChanged ? (currentShop.name || null) : null,
+      location_changed: locationChanged,
     };
   });
 }
