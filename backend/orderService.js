@@ -19,6 +19,7 @@ const shopLocations = require('./shopLocations');
 const notifications = require('./notifications');
 const pickupNotify = require('./pickupNotify');
 const orderConfirm = require('./orderConfirm');
+const { afterResponse, holdSideEffects } = require('./afterResponse');
 const pickupRequests = require('./pickupRequests');
 const { parsePostalAddress } = require('./fields');
 const {
@@ -585,6 +586,14 @@ async function allocateOrderNumber(tx, now) {
 }
 
 function confirmationPayload(record) {
+  const remembered = record && orderConfirm.outcomeFor(record.id);
+  if (remembered) return orderConfirm.publicConfirmation(remembered);
+  if (record && orderConfirm.isPending(record.id)) {
+    return {
+      email_sent: false,
+      email_status: 'pending',
+    };
+  }
   const status = record && record.confirmation_email_status
     ? String(record.confirmation_email_status)
     : '';
@@ -809,6 +818,15 @@ function presentOrder(record) {
 }
 
 async function createOrder(user, body, now = new Date()) {
+  const releaseSideEffects = holdSideEffects();
+  try {
+    return await createOrderNow(user, body, now);
+  } finally {
+    releaseSideEffects();
+  }
+}
+
+async function createOrderNow(user, body, now = new Date()) {
   const payload = body || {};
   assertCustomerFields(user, payload);
   const customerId = customerIdFor(user, payload);
@@ -1145,15 +1163,9 @@ async function createOrder(user, body, now = new Date()) {
   } catch (err) {
     console.error('PICKUP REQUEST ERROR:', err && err.message ? err.message : 'failed');
   }
-  let confirmation = { status: 'failed' };
-  try {
-    confirmation = await orderConfirm.deliver(orderId);
-  } catch (err) {
-    console.error('ORDER CONFIRM ERROR:', err && err.message ? err.message : 'failed');
-    confirmation = { status: 'failed' };
-  }
+  orderConfirm.noteScheduled(orderId);
+  afterResponse('ORDER CONFIRM', () => orderConfirm.deliver(orderId));
   const presented = presentOrder(record);
-  presented.confirmation = orderConfirm.publicConfirmation(confirmation);
   if (pickupRequest && pickupRequest.pickup_request) {
     presented.pickup_request = {
       id: pickupRequest.pickup_request.id,

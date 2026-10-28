@@ -232,6 +232,23 @@ function request({ method, path: requestPath, token, json, raw, contentType }) {
   });
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForConfirmation(token, orderId) {
+  let last = null;
+  const started = Date.now();
+  while (Date.now() - started < 8000) {
+    const body = await request({ method: 'GET', path: `/api/orders/${orderId}`, token });
+    last = body;
+    const status = body.json && body.json.confirmation && body.json.confirmation.email_status;
+    if (status && status !== 'pending') return body;
+    await delay(25);
+  }
+  throw new Error(`order confirmation did not finish: ${last && last.text}`);
+}
+
 function multipartBody(files) {
   const boundary = `----Launchpad${Date.now()}`;
   const parts = [];
@@ -948,8 +965,11 @@ async function runApiChecks() {
     const todayKey = dateKey(utcDate(0));
     assert(created.json.order_number === `${todayKey}-041`, `expected ${todayKey}-041, got ${created.json.order_number}`);
     assert(created.json.confirmation.email_sent === false, 'email must not be sent when mail is not configured');
-    assert(created.json.confirmation.email_status === 'not_configured', 'email status should be not configured');
+    assert(created.json.confirmation.email_status === 'pending', 'order create should return before the confirmation mail finishes');
     assert(!/confirmation email has been sent/i.test(created.text), 'response must not claim an email was sent');
+    const settledMail = await waitForConfirmation(customerToken, created.json.order.id);
+    assert(settledMail.json.confirmation.email_sent === false, 'email must still be unsent after the async confirmation');
+    assert(settledMail.json.confirmation.email_status === 'not_configured', 'email status should be not configured');
     const suffixes = created.json.work_orders.map((row) => row.external_id);
     assert(suffixes.join(',') === `${todayKey}-041-A,${todayKey}-041-B,${todayKey}-041-C`, `work order suffixes were ${suffixes.join(',')}`);
     const bySuffix = Object.fromEntries(created.json.work_orders.map((row) => [row.external_id.slice(-1), row]));

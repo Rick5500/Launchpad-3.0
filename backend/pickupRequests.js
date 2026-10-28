@@ -10,6 +10,7 @@ const mailer = require('./mailer');
 const notifications = require('./notifications');
 const shopLocations = require('./shopLocations');
 const { loadLetterhead, letterheadFromMap } = require('./shopProfile');
+const { afterResponse } = require('./afterResponse');
 
 const ORIGINALS_VEHICLE = 'Send a vehicle to pick up originals';
 const STATUSES = Object.freeze(['new', 'scheduled', 'picked_up', 'cancelled']);
@@ -150,6 +151,27 @@ function publicEmail(result) {
   return notice;
 }
 
+const mailOutcomes = new Map();
+
+function noteMail(requestId, email) {
+  const id = Number(requestId);
+  if (!Number.isInteger(id)) return;
+  mailOutcomes.set(id, email);
+}
+
+function mailFor(requestId) {
+  return mailOutcomes.get(Number(requestId)) || null;
+}
+
+function withMail(row) {
+  const body = present(row);
+  const mail = mailFor(row && row.id);
+  if (!mail) return body;
+  const decorated = { ...body, email_status: mail.status };
+  if (mail.preview) decorated.preview = mail.preview;
+  return decorated;
+}
+
 async function sendConfirmation(row) {
   const to = customerEmail(row);
   if (!to) {
@@ -210,7 +232,7 @@ function notifyStaff(row) {
   });
 }
 
-async function insertRequest(fields) {
+async function insertRequest(fields, options = {}) {
   const inserted = await withTransaction(async (tx) => {
     const result = await tx.run(
       `INSERT INTO pickup_requests (
@@ -247,6 +269,23 @@ async function insertRequest(fields) {
     return result.lastID;
   });
   const row = await loadRow(inserted);
+  try {
+    await notifyStaff(row);
+  } catch (err) {
+    console.error('PICKUP REQUEST NOTIFY ERROR:', err && err.message ? err.message : 'failed');
+  }
+  if (options.deferMail) {
+    afterResponse('PICKUP REQUEST EMAIL', async () => {
+      let email = { status: 'failed' };
+      try {
+        email = await sendConfirmation(row);
+      } catch (err) {
+        console.error('PICKUP REQUEST EMAIL ERROR:', err && err.message ? err.message : 'failed');
+      }
+      noteMail(row.id, publicEmail(email));
+    });
+    return { pickup_request: present(row), email: { status: 'pending' } };
+  }
   let email = { status: 'failed' };
   try {
     email = await sendConfirmation(row);
@@ -254,12 +293,9 @@ async function insertRequest(fields) {
     console.error('PICKUP REQUEST EMAIL ERROR:', err && err.message ? err.message : 'failed');
     email = { status: 'failed' };
   }
-  try {
-    await notifyStaff(row);
-  } catch (err) {
-    console.error('PICKUP REQUEST NOTIFY ERROR:', err && err.message ? err.message : 'failed');
-  }
-  return { pickup_request: present(await loadRow(inserted)), email: publicEmail(email) };
+  const notice = publicEmail(email);
+  noteMail(row.id, notice);
+  return { pickup_request: present(await loadRow(inserted)), email: notice };
 }
 
 async function createFromOrder(orderId) {
@@ -303,7 +339,7 @@ async function createFromOrder(orderId) {
       source: 'order',
       actorId: order.customer_id,
       orderNumber: order.order_number,
-    });
+    }, { deferMail: true });
   } catch (err) {
     console.error('PICKUP REQUEST ERROR:', err && err.message ? err.message : 'failed');
     return { email: { status: 'failed' }, failed: true };
@@ -395,7 +431,7 @@ async function visibleRow(user, id) {
 async function getOne(user, id) {
   const row = await visibleRow(user, id);
   if (!row) throw httpError(404, 'Pickup request not found');
-  return present(row);
+  return withMail(row);
 }
 
 async function list(user, query) {

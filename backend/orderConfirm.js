@@ -29,7 +29,43 @@ function publicConfirmation(result) {
   return payload;
 }
 
+const pendingIds = new Set();
+const outcomes = new Map();
+
+function noteScheduled(orderId) {
+  const id = Number(orderId);
+  if (!Number.isInteger(id)) return;
+  pendingIds.add(id);
+}
+
+function noteFinished(orderId, result) {
+  const id = Number(orderId);
+  if (!Number.isInteger(id)) return;
+  outcomes.set(id, result);
+  pendingIds.delete(id);
+}
+
+function outcomeFor(orderId) {
+  return outcomes.get(Number(orderId)) || null;
+}
+
+function isPending(orderId) {
+  return pendingIds.has(Number(orderId));
+}
+
 async function deliver(orderId) {
+  let result;
+  try {
+    result = await deliverOnce(orderId);
+  } catch (err) {
+    console.error('ORDER CONFIRM ERROR:', err && err.message ? err.message : 'failed');
+    result = { status: 'failed', email_sent: false };
+  }
+  noteFinished(orderId, result);
+  return result;
+}
+
+async function deliverOnce(orderId) {
   try {
     const enabled = await systemSettings.emailOrderConfirmation();
     if (!enabled) return { status: 'disabled', email_sent: false };
@@ -129,4 +165,7 @@ async function deliver(orderId) {
 module.exports = {
   deliver,
   publicConfirmation,
+  noteScheduled,
+  outcomeFor,
+  isPending,
 };
