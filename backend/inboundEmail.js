@@ -250,7 +250,10 @@ function messageBody(message) {
 }
 
 function headerRetryDelay() {
-  const override = Number(process.env.INBOUND_ATTACHMENT_BACKOFF_MS);
+  const env = String(process.env.NODE_ENV || '').trim();
+  const override = (env === 'development' || env === 'test')
+    ? Number(process.env.INBOUND_ATTACHMENT_BACKOFF_MS)
+    : NaN;
   const millis = Number.isFinite(override) && override >= 0 ? override : 60000;
   const seconds = Math.max(1, Math.round(millis / 1000));
   return `+${seconds} seconds`;

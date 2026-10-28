@@ -772,6 +772,10 @@ async function main() {
       }, 80);
       return;
     }
+    if (url.pathname.includes('/messages/') && url.searchParams.get('$select') === 'internetMessageHeaders') {
+      send(200, { internetMessageHeaders: [] });
+      return;
+    }
     send(404, {});
   });
   await new Promise((resolve) => duplicateServer.listen(0, '127.0.0.1', resolve));
@@ -798,6 +802,15 @@ async function main() {
      WHERE graph_attachment_id = 'att-dup' AND stored_name IS NOT NULL`
   );
   assert(storedCopies.count === 1, `the attachment should be stored once, saw ${storedCopies.count}`);
+  const staleEmail = (await db.run(
+    `INSERT INTO inbound_emails (
+       graph_message_id, from_address, subject, status, headers_status, headers_next_fetch_at, body_text
+     ) VALUES ('stale-headers', 'pat@security.example', 'Stale headers', 'new', 'reading', datetime('now', '-3 minutes'), 'Please print these.')`
+  )).lastID;
+  const staleRetry = await inboundAttachments.retryDueAttachments();
+  assert(staleRetry.headers >= 1, `a stale reading claim should be retried, saw ${JSON.stringify(staleRetry)}`);
+  const staleRow = await db.get(`SELECT headers_status, status FROM inbound_emails WHERE id = ?`, [staleEmail]);
+  assert(staleRow.headers_status === 'read' && staleRow.status === 'new', `stale headers should be read: ${JSON.stringify(staleRow)}`);
   await new Promise((resolve) => duplicateServer.close(() => resolve()));
   delete process.env.M365_LOGIN_BASE_URL;
   delete process.env.M365_GRAPH_BASE_URL;
@@ -821,6 +834,38 @@ async function main() {
   );
   const moved = await db.get(`SELECT location_id, location_confirmed FROM inbound_emails WHERE id = ?`, [moveEmail]);
   assert(Number(moved.location_id) === Number(hickory.id) && Number(moved.location_confirmed) === 1, `confirming the customer sets the shop: ${JSON.stringify(moved)}`);
+  const service = await db.get(`SELECT id FROM services WHERE name = 'Large Format'`);
+  await inboundEmail.confirmFields(
+    { id: adminUser.id, userId: adminUser.id, role: 'admin' },
+    staleEmail,
+    { customer_id: movedCustomer, recipient: 'pat@security.example' }
+  );
+  const converted = await inboundEmail.convertEmail(
+    { id: adminUser.id, userId: adminUser.id, role: 'admin' },
+    staleEmail,
+    orderBody({ 'Large Format': service }, movedCustomer, weekdayAhead())
+  );
+  assert(converted && converted.order && converted.order.id, 'a reclaimed header read leaves the email convertible');
+
+  const freshHold = (await db.run(
+    `INSERT INTO inbound_emails (graph_message_id, from_address, subject, status, headers_status)
+     VALUES ('prod-timing', 'pat@security.example', 'Prod timing', 'new', 'read')`
+  )).lastID;
+  await db.run(
+    `INSERT INTO inbound_email_attachments (
+       inbound_email_id, graph_attachment_id, original_name, fetch_state, created_at, next_fetch_at
+     ) VALUES (?, 'att-prod', 'hold.pdf', 'pending', datetime('now'), datetime('now', '+1 hour'))`,
+    [freshHold]
+  );
+  process.env.NODE_ENV = 'production';
+  process.env.INBOUND_ATTACHMENT_FETCH_MAX_MS = '1';
+  process.env.INBOUND_ATTACHMENT_BACKOFF_MS = '1';
+  await inboundAttachments.retryDueAttachments();
+  const held = await db.get(`SELECT fetch_state FROM inbound_email_attachments WHERE graph_attachment_id = 'att-prod'`);
+  assert(held.fetch_state === 'pending', `production ignores the millisecond max age, was ${held.fetch_state}`);
+  process.env.NODE_ENV = 'test';
+  delete process.env.INBOUND_ATTACHMENT_FETCH_MAX_MS;
+  delete process.env.INBOUND_ATTACHMENT_BACKOFF_MS;
 
   await db.close();
 

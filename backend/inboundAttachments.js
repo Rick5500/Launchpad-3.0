@@ -33,19 +33,28 @@ function exceptionEnabled() {
   return value === '1' || value === 'true' || value === 'yes' || value === 'on';
 }
 
+function allowsTimingOverrides() {
+  const env = String(process.env.NODE_ENV || '').trim();
+  return env === 'development' || env === 'test';
+}
+
 function fetchMaxAgeMs() {
-  const millis = Number(process.env.INBOUND_ATTACHMENT_FETCH_MAX_MS);
-  if (Number.isFinite(millis) && millis > 0) return millis;
+  if (allowsTimingOverrides()) {
+    const millis = Number(process.env.INBOUND_ATTACHMENT_FETCH_MAX_MS);
+    if (Number.isFinite(millis) && millis > 0) return millis;
+  }
   const hours = Number(process.env.INBOUND_ATTACHMENT_FETCH_MAX_HOURS);
   const chosen = Number.isFinite(hours) && hours > 0 ? hours : 72;
   return chosen * 60 * 60 * 1000;
 }
 
 function backoffMs(attempts) {
-  const override = Number(process.env.INBOUND_ATTACHMENT_BACKOFF_MS);
   const shift = Math.min(Math.max(0, Number(attempts) || 0), 8);
-  if (Number.isFinite(override) && override >= 0) {
-    return Math.min(override * (2 ** shift), FETCH_BACKOFF_MAX_MS);
+  if (allowsTimingOverrides()) {
+    const override = Number(process.env.INBOUND_ATTACHMENT_BACKOFF_MS);
+    if (Number.isFinite(override) && override >= 0) {
+      return Math.min(override * (2 ** shift), FETCH_BACKOFF_MAX_MS);
+    }
   }
   return Math.min(60 * 1000 * (2 ** shift), FETCH_BACKOFF_MAX_MS);
 }
@@ -474,7 +483,7 @@ async function claimDueHeaders() {
   const rows = await all(
     `SELECT id, graph_message_id, subject, from_address, headers_attempts
      FROM inbound_emails
-     WHERE headers_status = 'missing' AND status = 'new' AND graph_message_id IS NOT NULL
+     WHERE headers_status IN ('missing', 'reading') AND status = 'new' AND graph_message_id IS NOT NULL
        AND (headers_next_fetch_at IS NULL OR datetime(headers_next_fetch_at) <= datetime('now'))`
   );
   const claimed = [];
@@ -482,7 +491,7 @@ async function claimDueHeaders() {
     const updated = await run(
       `UPDATE inbound_emails
        SET headers_status = 'reading', headers_next_fetch_at = datetime('now', '+2 minutes'), updated_at = datetime('now')
-       WHERE id = ? AND headers_status = 'missing'
+       WHERE id = ? AND headers_status IN ('missing', 'reading')
          AND (headers_next_fetch_at IS NULL OR datetime(headers_next_fetch_at) <= datetime('now'))`,
       [row.id]
     );
