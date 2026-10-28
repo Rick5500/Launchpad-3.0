@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS departments (
   is_active INTEGER DEFAULT 1,
   show_on_board INTEGER NOT NULL DEFAULT 1, -- 0 keeps an empty department off the board tabs
   next_department TEXT, -- production route target; null at the end of the route
+  dept_key TEXT, -- stable id such as quality; a rename does not change this
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME
 );
@@ -140,6 +141,14 @@ CREATE TABLE IF NOT EXISTS orders (
   pickup_sms_sent_at DATETIME,
   pickup_email_status TEXT,
   pickup_sms_status TEXT,
+  confirmation_email_sent_at DATETIME, -- set once, when the order confirmation email is sent
+  confirmation_email_status TEXT,
+  delivery_ready_generation INTEGER NOT NULL DEFAULT 0, -- increments the one time an Accent Truck order is ready for delivery
+  delivery_notified_generation INTEGER, -- claimed generation, so a later Quality scan does not send again
+  delivery_email_sent_at DATETIME,
+  delivery_sms_sent_at DATETIME,
+  delivery_email_status TEXT,
+  delivery_sms_status TEXT,
   created_by INTEGER,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME,
@@ -388,6 +397,52 @@ CREATE INDEX IF NOT EXISTS idx_barcode_locations_active ON barcode_locations(is_
 CREATE INDEX IF NOT EXISTS idx_deliveries_work_order ON deliveries(work_order_id);
 CREATE INDEX IF NOT EXISTS idx_deliveries_due_time ON deliveries(due_time);
 CREATE INDEX IF NOT EXISTS idx_deliveries_status ON deliveries(status);
+
+-- One-time set-password links. token_hash is SHA-256 of the emailed token.
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at DATETIME NOT NULL,
+  used_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id);
+
+-- Customer originals pickup. This is not a finished-work delivery.
+-- status: new, scheduled, picked_up, cancelled
+-- source: customer (the request page) or order (created with the order)
+CREATE TABLE IF NOT EXISTS pickup_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL,
+  location_id INTEGER,
+  order_id INTEGER,
+  contact_name TEXT NOT NULL,
+  contact_phone TEXT NOT NULL,
+  address_line1 TEXT NOT NULL,
+  address_line2 TEXT,
+  city TEXT NOT NULL,
+  state TEXT NOT NULL,
+  zip TEXT NOT NULL,
+  ready_date TEXT NOT NULL,
+  ready_time TEXT,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'new',
+  source TEXT NOT NULL DEFAULT 'customer',
+  confirmation_email_sent_at DATETIME,
+  confirmation_email_status TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME,
+  FOREIGN KEY(customer_id) REFERENCES users(id),
+  FOREIGN KEY(order_id) REFERENCES orders(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pickup_requests_customer ON pickup_requests(customer_id);
+CREATE INDEX IF NOT EXISTS idx_pickup_requests_location ON pickup_requests(location_id);
+CREATE INDEX IF NOT EXISTS idx_pickup_requests_status ON pickup_requests(status);
+CREATE INDEX IF NOT EXISTS idx_pickup_requests_order_source ON pickup_requests(order_id, source);
 
 -- A send of one or more files to a customer. order_id is null when staff send files
 -- with no order. Bytes live under the file's storage_root, or the original upload folder.

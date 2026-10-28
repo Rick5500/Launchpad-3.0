@@ -23,6 +23,8 @@ import Customers from './routes/Customers';
 import ProductionBoard from './routes/ProductionBoard';
 import BarcodeScan from './routes/BarcodeScan';
 import Deliveries from './routes/Deliveries';
+import RequestPickup from './routes/RequestPickup';
+import SetPasswordPage from './routes/SetPasswordPage';
 import CustomerOrderForm from './routes/CustomerOrderForm';
 import { PrivacyPage, SmsOptInPage, TermsPage } from './routes/PublicPages';
 import OrderDetail from './routes/OrderDetail';
@@ -813,6 +815,7 @@ function AppRoutes() {
       <Route path="/privacy" element={<PrivacyPage />} />
       <Route path="/sms-opt-in" element={<SmsOptInPage />} />
       <Route path="/login" element={<LoginGate />} />
+      <Route path="/set-password" element={<SetPasswordPage />} />
       <Route path="/order" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><CustomerOrderForm /></ProtectedRoute>} />
       <Route path="/orders/:id" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><OrderDetail /></ProtectedRoute>} />
       <Route path="/orders/:id/print" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><WorkOrderPrint /></ProtectedRoute>} />
@@ -827,6 +830,7 @@ function AppRoutes() {
         <Route path="scan" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><BarcodeScan /></ProtectedRoute>} />
         <Route path="customers" element={<ProtectedRoute roles={['admin', 'manager']}><Customers /></ProtectedRoute>} />
         <Route path="delivery" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><Deliveries /></ProtectedRoute>} />
+        <Route path="pickups" element={<ProtectedRoute roles={['customer']}><RequestPickup /></ProtectedRoute>} />
         <Route path="reports" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><Reports /></ProtectedRoute>} />
         <Route path="reports/:reportId" element={<ProtectedRoute roles={['admin', 'operator', 'manager']}><Reports /></ProtectedRoute>} />
         <Route path="notifications" element={<ProtectedRoute roles={['admin', 'operator', 'manager', 'customer']}><Notifications /></ProtectedRoute>} />

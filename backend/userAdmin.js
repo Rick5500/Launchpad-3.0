@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const auth = require('./auth');
+const accountMail = require('./accountMail');
 const activityLog = require('./activityLog');
 const notifyEmail = require('./notifyEmail');
 const { resetUserPassword, passwordPolicyError } = require('./passwordReset');
@@ -446,6 +447,14 @@ async function createUser(actorId, body) {
   const row = await get(`SELECT ${PUBLIC_COLUMNS} FROM users WHERE id = ?`, [id]);
   const payload = present(row);
   if (generated) payload.password = password;
+  let welcome = { status: 'failed' };
+  try {
+    welcome = await accountMail.sendStaffWelcome(row);
+  } catch (err) {
+    console.error('WELCOME EMAIL ERROR:', err && err.message ? err.message : 'failed');
+    welcome = { status: 'failed' };
+  }
+  payload.welcome_email = accountMail.publicNotice(welcome);
   return payload;
 }
 
@@ -755,8 +764,21 @@ async function registerCustomer(body) {
     }
   }
 
+  let welcome = { status: 'failed' };
+  try {
+    const row = await get(
+      `SELECT id, username, display_name, email, contact_name FROM users WHERE id = ?`,
+      [created.id]
+    );
+    welcome = await accountMail.sendSignupWelcome(row);
+  } catch (err) {
+    console.error('WELCOME EMAIL ERROR:', err && err.message ? err.message : 'failed');
+    welcome = { status: 'failed' };
+  }
+
   const session = await loginSession(username.value, password);
   if (!session || !session.token) throw httpError(500, 'Unable to create an account');
+  session.welcome_email = accountMail.publicNotice(welcome);
   return session;
 }
 

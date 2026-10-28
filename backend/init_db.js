@@ -390,6 +390,7 @@ async function seedNotificationSettings() {
     ['quote_requested', 1, 'in_app'],
     ['quote_declined', 1, 'in_app'],
     ['order_created', 1, 'in_app'],
+    ['pickup_requested', 1, 'in_app'],
   ];
 
   for (const event of events) {
@@ -1042,6 +1043,10 @@ async function seedSystemSettings() {
     ['email_customers_on_file_share', '1'],
     // Missing means staff email the customer when a proof is sent. An off switch is left alone.
     ['email_customers_on_proof', '1'],
+    // Missing means a new login gets a welcome email. An off switch is left alone.
+    ['email_welcome_on_account', '1'],
+    // Missing means a new order emails a confirmation. An off switch is left alone.
+    ['email_order_confirmation', '1'],
     // Missing means the orders mailbox is polled when Microsoft 365 is configured.
     ['inbound_email_polling_enabled', '1'],
   ];
@@ -1545,6 +1550,7 @@ async function main() {
   ]);
   await ensureColumns('departments', [
     { name: 'next_department', definition: 'TEXT' },
+    { name: 'dept_key', definition: 'TEXT' },
   ]);
   await ensureShowOnBoard();
   await ensureColumns('work_orders', [
@@ -1583,9 +1589,18 @@ async function main() {
     { name: 'pickup_sms_sent_at', definition: 'DATETIME' },
     { name: 'pickup_email_status', definition: 'TEXT' },
     { name: 'pickup_sms_status', definition: 'TEXT' },
+    { name: 'confirmation_email_sent_at', definition: 'DATETIME' },
+    { name: 'confirmation_email_status', definition: 'TEXT' },
+    { name: 'delivery_ready_generation', definition: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'delivery_notified_generation', definition: 'INTEGER' },
+    { name: 'delivery_email_sent_at', definition: 'DATETIME' },
+    { name: 'delivery_sms_sent_at', definition: 'DATETIME' },
+    { name: 'delivery_email_status', definition: 'TEXT' },
+    { name: 'delivery_sms_status', definition: 'TEXT' },
   ]);
   await run(`UPDATE orders SET status = 'In Production' WHERE status IS NULL OR trim(status) = ''`);
   await run('UPDATE orders SET pickup_ready_generation = 0 WHERE pickup_ready_generation IS NULL');
+  await run('UPDATE orders SET delivery_ready_generation = 0 WHERE delivery_ready_generation IS NULL');
   await ensureColumns('order_line_items', [
     { name: 'field_values', definition: 'TEXT' },
   ]);
@@ -1601,6 +1616,7 @@ async function main() {
   await seedAdmin();
   await seedCustomers();
   await seedDepartments();
+  await backfillDepartmentKeys();
   await applyDepartmentRoutes();
   await seedServices();
   await seedServiceFields(run, get);
@@ -1620,7 +1636,96 @@ async function main() {
   await ensureExternalIdUniqueIndex();
   await ensureUserIdentityIndexes();
   await ensureShopLocations();
+  await ensurePasswordResetTokens();
+  await ensurePickupRequests();
   console.log('Database initialization complete.');
+}
+
+const DEPARTMENT_KEYS = [
+  ['Large Format', 'large_format'],
+  ['Small Format', 'small_format'],
+  ['Signs & Graphics', 'signs_graphics'],
+  ['Scanning', 'scanning'],
+  ['Planroom', 'planroom'],
+  ['Archive File', 'archive_file'],
+  ['Quality', 'quality'],
+  ['Dispatch', 'dispatch'],
+  ['Delivery', 'delivery'],
+  ['Complete', 'complete'],
+  ['Reprographics', 'reprographics'],
+  ['Admin', 'admin'],
+];
+
+// Fill dept_key only where it is still empty and the current name is the seed
+// name. A renamed row keeps whatever key it already has.
+async function backfillDepartmentKeys() {
+  for (const [name, key] of DEPARTMENT_KEYS) {
+    const taken = await get(`SELECT id FROM departments WHERE dept_key = ?`, [key]);
+    if (taken) continue;
+    await run(
+      `UPDATE departments
+       SET dept_key = ?
+       WHERE (dept_key IS NULL OR trim(dept_key) = '')
+         AND lower(trim(name)) = lower(trim(?))`,
+      [key, name]
+    );
+  }
+  const duplicate = await get(
+    `SELECT dept_key FROM departments
+     WHERE dept_key IS NOT NULL AND trim(dept_key) != ''
+     GROUP BY dept_key
+     HAVING COUNT(*) > 1
+     LIMIT 1`
+  );
+  if (duplicate) {
+    console.warn(`Skipping unique index on departments.dept_key because duplicates exist (${duplicate.dept_key})`);
+    return;
+  }
+  await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_departments_dept_key ON departments(dept_key) WHERE dept_key IS NOT NULL`);
+}
+
+async function ensurePasswordResetTokens() {
+  await run(`CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at DATETIME NOT NULL,
+    used_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  )`);
+  await run('CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id)');
+}
+
+async function ensurePickupRequests() {
+  await run(`CREATE TABLE IF NOT EXISTS pickup_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER NOT NULL,
+    location_id INTEGER,
+    order_id INTEGER,
+    contact_name TEXT NOT NULL,
+    contact_phone TEXT NOT NULL,
+    address_line1 TEXT NOT NULL,
+    address_line2 TEXT,
+    city TEXT NOT NULL,
+    state TEXT NOT NULL,
+    zip TEXT NOT NULL,
+    ready_date TEXT NOT NULL,
+    ready_time TEXT,
+    notes TEXT,
+    status TEXT NOT NULL DEFAULT 'new',
+    source TEXT NOT NULL DEFAULT 'customer',
+    confirmation_email_sent_at DATETIME,
+    confirmation_email_status TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME,
+    FOREIGN KEY(customer_id) REFERENCES users(id),
+    FOREIGN KEY(order_id) REFERENCES orders(id)
+  )`);
+  await run('CREATE INDEX IF NOT EXISTS idx_pickup_requests_customer ON pickup_requests(customer_id)');
+  await run('CREATE INDEX IF NOT EXISTS idx_pickup_requests_location ON pickup_requests(location_id)');
+  await run('CREATE INDEX IF NOT EXISTS idx_pickup_requests_status ON pickup_requests(status)');
+  await run('CREATE INDEX IF NOT EXISTS idx_pickup_requests_order_source ON pickup_requests(order_id, source)');
 }
 
 // Shop locations are separate from barcode stations. Existing rows are assigned

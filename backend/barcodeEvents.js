@@ -1,5 +1,7 @@
 const db = require('./db');
 const activityLog = require('./activityLog');
+const deliveryNotify = require('./deliveryNotify');
+const { isReadyStageRow } = require('./departmentStage');
 const shopLocations = require('./shopLocations');
 const { withTransaction } = require('./dbAsync');
 const { DEFAULT_LOCATION_STAGES, isLegacyInactiveAlias } = require('./barcodeLocationDefaults');
@@ -449,7 +451,7 @@ async function applyScan({ scannedValue, location, eventTime, operatorId, workOr
   const { inserted, matchedDepartment, moved, nextStatus } = await withTransaction(async (tx) => {
     const matched = departmentLookup
       ? await tx.get(
-        `SELECT id, name, next_department FROM departments
+        `SELECT id, name, next_department, dept_key FROM departments
          WHERE is_active = 1 AND lower(name) = lower(?)`,
         [departmentLookup]
       )
@@ -520,6 +522,18 @@ async function applyScan({ scannedValue, location, eventTime, operatorId, workOr
       payload.stage_advanced = stageUpdate.changes > 0;
     } catch (stageErr) {
       console.error('BARCODE STAGE UPDATE ERROR:', stageErr);
+    }
+  }
+
+  if (moved && isReadyStageRow(matchedDepartment) && workOrder.order_id) {
+    try {
+      payload.delivery_notice = await deliveryNotify.afterReadyStageEntry({
+        orderId: workOrder.order_id,
+        departmentId: matchedDepartment.id,
+      });
+    } catch (err) {
+      console.error('DELIVERY NOTIFY ERROR:', err && err.message ? err.message : 'failed');
+      payload.delivery_notice = { skipped: true, reason: 'failed' };
     }
   }
 
@@ -629,10 +643,10 @@ async function effectiveShop(tx, workOrder) {
 // also admin and manager only; departments themselves are not tied to a shop.
 async function moveWorkOrder({ workOrderId, department, note, actorId, actorRole, locationId }) {
   const lookup = String(department || '').trim();
-  return withTransaction(async (tx) => {
+  const result = await withTransaction(async (tx) => {
     const workOrder = await tx.get(
       `SELECT wo.id, wo.external_id, wo.description, wo.department, wo.status, wo.stage_id,
-              wo.location_id, o.location_id AS order_location_id
+              wo.location_id, wo.order_id, o.location_id AS order_location_id
        FROM work_orders wo
        LEFT JOIN orders o ON o.id = wo.order_id
        WHERE wo.id = ?`,
@@ -642,7 +656,7 @@ async function moveWorkOrder({ workOrderId, department, note, actorId, actorRole
 
     const matched = lookup
       ? await tx.get(
-        `SELECT id, name, next_department FROM departments
+        `SELECT id, name, next_department, dept_key FROM departments
          WHERE is_active = 1 AND lower(name) = lower(?)`,
         [lookup]
       )
@@ -770,8 +784,23 @@ async function moveWorkOrder({ workOrderId, department, note, actorId, actorRole
       location_name: targetShop.name || currentShop.name || null,
       from_location: locationChanged ? (currentShop.name || null) : null,
       location_changed: locationChanged,
+      order_id: workOrder.order_id || null,
+      department_id: matched.id,
+      entered_ready_stage: Boolean(departmentChanged && isReadyStageRow(matched)),
     };
   });
+  if (result && result.entered_ready_stage && result.order_id) {
+    try {
+      result.delivery_notice = await deliveryNotify.afterReadyStageEntry({
+        orderId: result.order_id,
+        departmentId: result.department_id,
+      });
+    } catch (err) {
+      console.error('DELIVERY NOTIFY ERROR:', err && err.message ? err.message : 'failed');
+      result.delivery_notice = { skipped: true, reason: 'failed' };
+    }
+  }
+  return result;
 }
 
 function recordScan({ scannedValue, location, eventTime, operatorId }, cb) {

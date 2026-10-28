@@ -87,6 +87,9 @@ jobs:
       - name: Verify pickup
         working-directory: backend
         run: npm run verify:pickup
+      - name: Verify customer notifications
+        working-directory: backend
+        run: npm run verify:customer-notify
       - name: Build frontend
         working-directory: frontend
         run: |

@@ -8,6 +8,7 @@ const fs = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const sqlite3 = require('sqlite3').verbose();
 const { fillOrderLines, setServiceNames } = require('./orderLineDefaults');
 const sms = require('../sms');
@@ -260,6 +261,48 @@ async function main() {
   assertCopy(appSource, 'path="/sms-opt-in"', 'the app should route /sms-opt-in without a login');
   assertCopy(appSource, 'PUBLIC_PAGES', 'public pages should render before a session check finishes');
   assertCopy(orderSource, '<SmsOptInForm', 'Place an order should use the customer opt-in form');
+  assertCopy(orderSource, 'user?.sms_opt_in && !textingExpanded', 'an opted-in customer should see the summary instead of the full block');
+  assertCopy(orderSource, 'Text updates are on for', 'the summary should name the saved mobile number');
+  assertCopy(orderSource, 'data-testid="sms-opt-in-change"', 'Change should expand the full form');
+  assertCopy(orderSource, 'This will be saved with your order.', 'a ticked unsaved box should say it is saved with the order');
+  assertCopy(orderSource, 'await saveTexting()', 'submitting the order should save unsaved texting choices');
+  const saveAt = orderSource.indexOf('await saveTexting()');
+  const postAt = orderSource.indexOf("'/api/orders'", saveAt === -1 ? 0 : saveAt);
+  assert(saveAt !== -1 && postAt !== -1 && saveAt < postAt, 'texting preferences are saved before the order is posted');
+  assert(
+    /if \(!isStaff && textingTouched && textingNeedsSave\(user, mobilePhone, smsOptIn\)\) \{\s*await saveTexting\(\);\s*\}/.test(orderSource),
+    'a failed texting save must not stop the order'
+  );
+  assert(!orderSource.includes('if (!(await saveTexting())) return'), 'the order submit handler must continue after a texting error');
+  const customersSource = fs.readFileSync(path.join(backendDir, '../frontend/src/routes/Customers.jsx'), 'utf8');
+  assertCopy(customersSource, 'disabled={!textCustomer?.sms_opt_in}', 'staff still cannot tick a customer into texts');
+  const textingState = await import(pathToFileURL(path.join(backendDir, '../frontend/src/smsOptInState.mjs')).href);
+  assert(textingState.formatMobileDisplay('+19195550100') === '(919) 555-0100', 'a saved US number should read like (919) 555-0100');
+  assert(textingState.formatMobileDisplay('+447911123456') === '+447911123456', 'an international number should stay as stored');
+  assert(
+    textingState.textingNeedsSave({ sms_opt_in: false, mobile_phone: '' }, '919-555-0100', true),
+    'ticking consent before it is saved should be dirty'
+  );
+  assert(
+    !textingState.textingNeedsSave({ sms_opt_in: true, mobile_phone: '+19195550100' }, '+19195550100', true),
+    'a saved opt-in on the same number should not save again'
+  );
+  assert(
+    !textingState.textingNeedsSave({ sms_opt_in: true, mobile_phone: '+19195550100' }, '(919) 555-0100', true),
+    'the same number in display format is already saved'
+  );
+  assert(
+    textingState.textingNeedsSave({ sms_opt_in: true, mobile_phone: '+19195550100' }, '919-555-0177', true),
+    'a changed mobile number should be saved with the order'
+  );
+  assert(
+    textingState.textingNeedsSave({ sms_opt_in: true, mobile_phone: '+19195550100' }, '(919) 555-0100', false),
+    'turning texts off should be saved with the order'
+  );
+  assert(
+    textingState.textingNeedsSave({ sms_opt_in: false, mobile_phone: '' }, '', false) === false,
+    'an empty opted-out profile should not be saved again'
+  );
   assert(!/ProtectedRoute[^>]*TermsPage/.test(appSource), 'terms must not require a role');
   assert(sms.normalizeE164('(919) 555-0100') === '+19195550100', 'a 10-digit US number should become E.164');
   assert(sms.normalizeE164('19195550100') === '+19195550100', 'an 11-digit US number should keep the leading 1');
