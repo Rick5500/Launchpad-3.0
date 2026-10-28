@@ -36,6 +36,7 @@ export default function SmsOptInForm({
   saving = false,
   error = '',
   notice = '',
+  pendingHint = '',
   preview = false,
 }) {
   const checked = preview ? false : Boolean(smsOptIn);
@@ -104,6 +105,11 @@ export default function SmsOptInForm({
           )}
           label={SMS_CONSENT}
         />
+        {!preview && pendingHint ? (
+          <Typography data-testid="sms-opt-in-pending" sx={{ fontSize: '1.05rem', lineHeight: 1.45, color: brand.muted }}>
+            {pendingHint}
+          </Typography>
+        ) : null}
         <Typography sx={{ fontSize: '1.15rem', lineHeight: 1.5, color: brand.text, maxWidth: 720 }}>
           {SMS_DISCLOSURE}
         </Typography>
