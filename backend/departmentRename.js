@@ -10,7 +10,7 @@
 //
 // Follow the rename:
 //   users.department
-//   work_orders.department and work_orders.next_department (current queue and route)
+//   work_orders.department, work_orders.next_department, and work_orders.production_department
 //   services.department_name (the queue a new work order opens in)
 //   departments.next_department (the shop route)
 //   barcode_locations.department_name
@@ -59,8 +59,9 @@ async function cascadeDepartmentRename(tx, previousName, name) {
     tx,
     `SELECT COUNT(*) AS count FROM work_orders
      WHERE lower(trim(coalesce(department, ''))) = lower(trim(?))
-        OR lower(trim(coalesce(next_department, ''))) = lower(trim(?))`,
-    [previousName, previousName]
+        OR lower(trim(coalesce(next_department, ''))) = lower(trim(?))
+        OR lower(trim(coalesce(production_department, ''))) = lower(trim(?))`,
+    [previousName, previousName, previousName]
   );
   await tx.run(
     `UPDATE work_orders
@@ -72,6 +73,12 @@ async function cascadeDepartmentRename(tx, previousName, name) {
     `UPDATE work_orders
      SET next_department = ?, updated_at = datetime('now')
      WHERE lower(trim(coalesce(next_department, ''))) = lower(trim(?))`,
+    [name, previousName]
+  );
+  await tx.run(
+    `UPDATE work_orders
+     SET production_department = ?, updated_at = datetime('now')
+     WHERE lower(trim(coalesce(production_department, ''))) = lower(trim(?))`,
     [name, previousName]
   );
 

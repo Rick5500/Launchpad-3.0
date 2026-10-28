@@ -62,6 +62,7 @@ function transitionEntries({
     let message;
     if (from !== to) {
       message = manual ? `Manual move to ${destination}` : `Moved to ${destination}`;
+      if (!manual && note) message = note;
       if (locationChanged) message = `${message}. Location ${fromLocation} to ${toLocation}`;
     } else {
       message = `Location ${fromLocation} to ${toLocation}`;

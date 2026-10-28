@@ -282,9 +282,11 @@ async function main() {
   assert(delivery && delivery.dept_key === 'delivery' && complete && complete.dept_key === 'complete', 'later stages should keep stable keys');
   const confirmColumn = await seeded.get(`SELECT name FROM pragma_table_info('orders') WHERE name = 'confirmation_email_sent_at'`);
   const deliveryColumn = await seeded.get(`SELECT name FROM pragma_table_info('orders') WHERE name = 'delivery_notified_generation'`);
+  const awaitingColumn = await seeded.get(`SELECT name FROM pragma_table_info('work_orders') WHERE name = 'awaiting_originals'`);
+  const productionColumn = await seeded.get(`SELECT name FROM pragma_table_info('work_orders') WHERE name = 'production_department'`);
   const pickupTable = await seeded.get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'pickup_requests'`);
   const tokenTable = await seeded.get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'password_reset_tokens'`);
-  assert(confirmColumn && deliveryColumn && pickupTable && tokenTable, 'mail and pickup tables should be migrated');
+  assert(confirmColumn && deliveryColumn && awaitingColumn && productionColumn && pickupTable && tokenTable, 'mail, pickup, and originals-hold columns should be migrated');
   await seeded.close();
   console.log('PASS init settings, department keys, and columns');
 
@@ -726,6 +728,24 @@ async function main() {
     assert(autoRow.status === 'new' && autoRow.source === 'order', JSON.stringify(autoRow));
     assert(Number(autoRow.customer_id) === Number(customerRecord.json.id), 'the automatic pickup belongs to the customer');
     assert(Number(autoRow.location_id) === Number(raleigh.id), 'the automatic pickup uses the order shop');
+    const heldId = originals.json.work_orders[0].id;
+    const heldStart = await db.get(
+      `SELECT department, next_department, production_department, awaiting_originals, routing_instructions, assigned_department_id
+       FROM work_orders WHERE id = ?`,
+      [heldId]
+    );
+    const dispatchDept = await db.get(`SELECT id, name FROM departments WHERE dept_key = 'dispatch'`);
+    assert(heldStart.department === 'Dispatch' && Number(heldStart.assigned_department_id) === Number(dispatchDept.id), JSON.stringify(heldStart));
+    assert(heldStart.production_department === 'Large Format' && heldStart.next_department === 'Large Format', JSON.stringify(heldStart));
+    assert(Number(heldStart.awaiting_originals) === 1, JSON.stringify(heldStart));
+    assert(heldStart.routing_instructions === 'Awaiting originals pickup → Large Format', heldStart.routing_instructions);
+    const heldHistory = await db.get(`SELECT notes FROM production_history WHERE work_order_id = ? ORDER BY id DESC LIMIT 1`, [heldId]);
+    assert(heldHistory.notes === 'Waiting at Dispatch for originals pickup', heldHistory && heldHistory.notes);
+    const heldActivity = await db.get(
+      `SELECT detail FROM activity_log WHERE entity_type = 'work_order' AND entity_id = ? AND action = 'work_order.created'`,
+      [heldId]
+    );
+    assert(heldActivity && heldActivity.detail.includes('Waiting at Dispatch for originals pickup'), heldActivity && heldActivity.detail);
 
     const otherCustomer = await request({
       method: 'POST',
@@ -863,6 +883,8 @@ async function main() {
       json: { status: 'scheduled' },
     });
     assert(schedule.status === 200 && schedule.json.status === 'scheduled', schedule.text);
+    const stillHeld = await db.get(`SELECT department, awaiting_originals FROM work_orders WHERE id = ?`, [heldId]);
+    assert(stillHeld.department === 'Dispatch' && Number(stillHeld.awaiting_originals) === 1, 'scheduling a pickup should leave the job in Dispatch');
     const customerSchedule = await request({
       method: 'PUT',
       path: `/api/pickup-requests/${originals.json.pickup_request.id}`,
@@ -906,6 +928,12 @@ async function main() {
       json: { status: 'cancelled' },
     });
     assert(cancel.status === 200 && cancel.json.status === 'cancelled', cancel.text);
+    const untouched = await db.get(
+      `SELECT department, next_department, awaiting_originals, production_department FROM work_orders WHERE order_id = ?`,
+      [confirmed.json.order.id]
+    );
+    assert(untouched.department === 'Large Format' && untouched.next_department === 'Quality', JSON.stringify(untouched));
+    assert(Number(untouched.awaiting_originals) === 0 && !untouched.production_department, 'cancelling an unrelated pickup must not move a normal job');
     const picked = await request({
       method: 'PUT',
       path: `/api/pickup-requests/${originals.json.pickup_request.id}`,
@@ -913,6 +941,26 @@ async function main() {
       json: { status: 'picked_up' },
     });
     assert(picked.status === 200 && picked.json.status === 'picked_up', picked.text);
+    const released = await db.get(
+      `SELECT department, next_department, awaiting_originals, production_department, status
+       FROM work_orders WHERE id = ?`,
+      [heldId]
+    );
+    assert(released.department === 'Large Format' && released.next_department === 'Quality', JSON.stringify(released));
+    assert(Number(released.awaiting_originals) === 0 && released.production_department === 'Large Format', JSON.stringify(released));
+    assert(released.status === 'open', 'picking up originals should not complete the job');
+    const releaseNote = await db.get(
+      `SELECT notes FROM production_history WHERE work_order_id = ? AND notes LIKE 'Originals picked up%'`,
+      [heldId]
+    );
+    assert(releaseNote && releaseNote.notes === 'Originals picked up — moved from Dispatch to Large Format', releaseNote && releaseNote.notes);
+    const releaseActivity = await db.get(
+      `SELECT detail FROM activity_log
+       WHERE entity_type = 'work_order' AND entity_id = ? AND action = 'work_order.moved'
+       ORDER BY id DESC LIMIT 1`,
+      [heldId]
+    );
+    assert(releaseActivity && releaseActivity.detail.includes('Originals picked up — moved from Dispatch to Large Format'), releaseActivity && releaseActivity.detail);
     const lateCancel = await request({
       method: 'PUT',
       path: `/api/pickup-requests/${originals.json.pickup_request.id}`,
@@ -936,6 +984,201 @@ async function main() {
     });
     assert(staffCreate.status === 403, 'staff cannot file a customer pickup request');
     console.log('PASS originals pickups, ownership, and location scope');
+
+    async function placeOriginals(method, services) {
+      const response = await request({
+        method: 'POST',
+        path: '/api/orders',
+        token: opted.token,
+        json: orderBody({
+          originals_source: 'Send a vehicle to pick up originals',
+          delivery_method: method,
+          due_time: '11:00',
+          location_id: raleigh.id,
+          service_ids: services.map((service) => service.id),
+          line_items: services.map((service) => ({
+            description: `${service.name} originals`,
+            quantity: '1',
+            service_id: service.id,
+          })),
+        }),
+      });
+      assert(response.status === 201, `${method} originals order failed: ${response.text}`);
+      assert(response.json.pickup_request && response.json.pickup_request.id, response.text);
+      return response.json;
+    }
+    function byService(orderJson, name) {
+      return orderJson.work_orders.find((row) => row.service_name === name);
+    }
+
+    const scanHold = await placeOriginals('Will Call', [large, small]);
+    const scanLarge = byService(scanHold, 'Large Format');
+    const scanSmall = byService(scanHold, 'Small Format');
+    const scannedOut = await request({
+      method: 'POST',
+      path: '/api/barcode',
+      token: admin.token,
+      json: { scanned_value: scanLarge.external_id, location: 'Delivery' },
+    });
+    assert(scannedOut.status === 201 && scannedOut.json.department_moved === true, scannedOut.text);
+    assert(scannedOut.json.from_department === 'Dispatch' && scannedOut.json.to_department === 'Large Format', scannedOut.text);
+    assert(scannedOut.json.requested_department === 'Delivery', scannedOut.text);
+    const scanHistory = await db.get(
+      `SELECT notes FROM production_history WHERE work_order_id = ? ORDER BY id DESC LIMIT 1`,
+      [scanLarge.id]
+    );
+    assert(scanHistory && scanHistory.notes === 'Moved from Dispatch to Large Format instead of Delivery', scanHistory && scanHistory.notes);
+    assert(!scannedOut.json.delivery_notice, `leaving Dispatch for production should not notify: ${JSON.stringify(scannedOut.json.delivery_notice)}`);
+    const scanLargeRow = await db.get(
+      `SELECT department, next_department, awaiting_originals FROM work_orders WHERE id = ?`,
+      [scanLarge.id]
+    );
+    assert(scanLargeRow.department === 'Large Format' && scanLargeRow.next_department === 'Quality' && Number(scanLargeRow.awaiting_originals) === 0, JSON.stringify(scanLargeRow));
+    const scanSmallRow = await db.get(`SELECT department, awaiting_originals FROM work_orders WHERE id = ?`, [scanSmall.id]);
+    assert(scanSmallRow.department === 'Dispatch' && Number(scanSmallRow.awaiting_originals) === 1, JSON.stringify(scanSmallRow));
+    const scanPickup = await db.get(`SELECT status FROM pickup_requests WHERE id = ?`, [scanHold.pickup_request.id]);
+    assert(scanPickup.status === 'new', 'one job still waiting should leave the pickup open');
+    const scannedSibling = await request({
+      method: 'POST',
+      path: '/api/barcode',
+      token: admin.token,
+      json: { scanned_value: scanSmall.external_id, location: 'Delivery' },
+    });
+    assert(scannedSibling.status === 201 && scannedSibling.json.to_department === 'Small Format', scannedSibling.text);
+    const scanPickupDone = await db.get(`SELECT status FROM pickup_requests WHERE id = ?`, [scanHold.pickup_request.id]);
+    assert(scanPickupDone.status === 'picked_up', 'the pickup should be picked up once every job has left Dispatch');
+
+    const moveHold = await placeOriginals('Will Call', [large]);
+    const movedOut = await move(moveHold.work_orders[0].id, 'Delivery');
+    assert(movedOut.status === 200 && movedOut.json.department === 'Large Format' && movedOut.json.next_department === 'Quality', movedOut.text);
+    assert(movedOut.json.requested_department === 'Delivery', movedOut.text);
+    const moveHistory = await db.get(
+      `SELECT notes FROM production_history WHERE work_order_id = ? ORDER BY id DESC LIMIT 1`,
+      [moveHold.work_orders[0].id]
+    );
+    assert(moveHistory && /Large Format/.test(moveHistory.notes) && /instead of Delivery/.test(moveHistory.notes), moveHistory && moveHistory.notes);
+    assert(!movedOut.json.delivery_notice, `a manual move off Dispatch should not enter Delivery: ${movedOut.text}`);
+    const moveRow = await db.get(`SELECT department, awaiting_originals FROM work_orders WHERE id = ?`, [moveHold.work_orders[0].id]);
+    assert(moveRow.department === 'Large Format' && Number(moveRow.awaiting_originals) === 0, JSON.stringify(moveRow));
+    const movePickup = await db.get(`SELECT status FROM pickup_requests WHERE id = ?`, [moveHold.pickup_request.id]);
+    assert(movePickup.status === 'picked_up', 'moving the only waiting job should pick up the request');
+
+    const cancelHold = await placeOriginals('Will Call', [small]);
+    const cancelledHold = await request({
+      method: 'PUT',
+      path: `/api/pickup-requests/${cancelHold.pickup_request.id}`,
+      token: opted.token,
+      json: { status: 'cancelled' },
+    });
+    assert(cancelledHold.status === 200 && cancelledHold.json.status === 'cancelled', cancelledHold.text);
+    const cancelRow = await db.get(
+      `SELECT department, next_department, awaiting_originals FROM work_orders WHERE id = ?`,
+      [cancelHold.work_orders[0].id]
+    );
+    assert(cancelRow.department === 'Small Format' && cancelRow.next_department === 'Quality' && Number(cancelRow.awaiting_originals) === 0, JSON.stringify(cancelRow));
+    const cancelNote = await db.get(
+      `SELECT notes FROM production_history WHERE work_order_id = ? AND notes = 'pickup cancelled'`,
+      [cancelHold.work_orders[0].id]
+    );
+    assert(cancelNote, 'cancelling the pickup should log pickup cancelled');
+    const cancelPickup = await db.get(`SELECT status FROM pickup_requests WHERE id = ?`, [cancelHold.pickup_request.id]);
+    assert(cancelPickup.status === 'cancelled', 'a cancelled pickup should stay cancelled');
+
+    const ordinary = await place('Will Call', [large]);
+    const ordinaryRow = await db.get(
+      `SELECT department, next_department, awaiting_originals, production_department, routing_instructions
+       FROM work_orders WHERE id = ?`,
+      [ordinary.work_orders[0].id]
+    );
+    assert(ordinaryRow.department === 'Large Format' && ordinaryRow.next_department === 'Quality', JSON.stringify(ordinaryRow));
+    assert(Number(ordinaryRow.awaiting_originals) === 0 && !ordinaryRow.production_department, JSON.stringify(ordinaryRow));
+    assert(ordinaryRow.routing_instructions === 'Next department: Quality', ordinaryRow.routing_instructions);
+    const ordinaryScan = await request({
+      method: 'POST',
+      path: '/api/barcode',
+      token: admin.token,
+      json: { scanned_value: ordinary.work_orders[0].external_id, location: 'Delivery' },
+    });
+    assert(ordinaryScan.status === 201 && ordinaryScan.json.to_department === 'Delivery', ordinaryScan.text);
+
+    const parked = await placeOriginals('Accent Truck', [large, small]);
+    const parkedStamp = await db.get(`SELECT delivery_notified_generation FROM orders WHERE id = ?`, [parked.order.id]);
+    assert(parkedStamp.delivery_notified_generation == null, 'parking both jobs in Dispatch must not send Ready for Delivery');
+    const parkedLarge = byService(parked, 'Large Format');
+    const parkedSmall = byService(parked, 'Small Format');
+    const parkedScan = await request({
+      method: 'POST',
+      path: '/api/barcode',
+      token: admin.token,
+      json: { scanned_value: parkedLarge.external_id, location: 'Delivery' },
+    });
+    assert(parkedScan.status === 201 && parkedScan.json.to_department === 'Large Format', parkedScan.text);
+    assert(!parkedScan.json.delivery_notice, `leaving Dispatch for Large Format should not notify: ${JSON.stringify(parkedScan.json.delivery_notice)}`);
+    const parkedQuality = await move(parkedLarge.id, 'Quality');
+    assert(parkedQuality.status === 200 && parkedQuality.json.department === 'Quality', parkedQuality.text);
+    assert(parkedQuality.json.delivery_notice && parkedQuality.json.delivery_notice.reason === 'work_orders_not_ready', JSON.stringify(parkedQuality.json.delivery_notice));
+    const parkedStill = await db.get(
+      `SELECT delivery_notified_generation, delivery_email_sent_at FROM orders WHERE id = ?`,
+      [parked.order.id]
+    );
+    assert(parkedStill.delivery_notified_generation == null && !parkedStill.delivery_email_sent_at, 'a job waiting on originals in Dispatch must not count as ready');
+    const parkedRelease = await request({
+      method: 'POST',
+      path: '/api/barcode',
+      token: admin.token,
+      json: { scanned_value: parkedSmall.external_id, location: 'Delivery' },
+    });
+    assert(parkedRelease.status === 201 && parkedRelease.json.to_department === 'Small Format', parkedRelease.text);
+    const parkedReady = await move(parkedSmall.id, 'Quality');
+    assert(parkedReady.status === 200 && parkedReady.json.delivery_notice && parkedReady.json.delivery_notice.email && parkedReady.json.delivery_notice.email.status === 'sent', JSON.stringify(parkedReady.json.delivery_notice));
+
+    const editHold = await placeOriginals('Will Call', [large]);
+    const editDetail = await request({
+      method: 'GET',
+      path: `/api/workorders/${editHold.work_orders[0].id}`,
+      token: admin.token,
+    });
+    assert(editDetail.status === 200, editDetail.text);
+    const edited = await request({
+      method: 'PUT',
+      path: `/api/workorders/${editHold.work_orders[0].id}`,
+      token: admin.token,
+      json: {
+        customer_id: editDetail.json.customer_id,
+        description: editDetail.json.description,
+        quantity: editDetail.json.quantity,
+        status: editDetail.json.status,
+        department: 'Delivery',
+        priority: editDetail.json.priority || 'Normal',
+        external_id: editDetail.json.external_id,
+      },
+    });
+    assert(edited.status === 200 && edited.json.department === 'Large Format' && edited.json.next_department === 'Quality', edited.text);
+    const editRow = await db.get(`SELECT awaiting_originals FROM work_orders WHERE id = ?`, [editHold.work_orders[0].id]);
+    assert(Number(editRow.awaiting_originals) === 0, JSON.stringify(editRow));
+    const editPickup = await db.get(`SELECT status FROM pickup_requests WHERE id = ?`, [editHold.pickup_request.id]);
+    assert(editPickup.status === 'picked_up', 'editing the only waiting job out of Dispatch should pick up the request');
+    const editActivity = await db.get(
+      `SELECT detail FROM activity_log WHERE action = 'work_order.moved' AND entity_id = ? ORDER BY id DESC LIMIT 1`,
+      [editHold.work_orders[0].id]
+    );
+    assert(editActivity && editActivity.detail.includes('Moved from Dispatch to Large Format instead of Delivery'), editActivity && editActivity.detail);
+
+    await db.run(`UPDATE departments SET is_active = 0 WHERE dept_key = 'dispatch'`);
+    try {
+      const inactive = await placeOriginals('Will Call', [large]);
+      const inactiveRow = await db.get(
+        `SELECT department, next_department, awaiting_originals, production_department, routing_instructions
+         FROM work_orders WHERE id = ?`,
+        [inactive.work_orders[0].id]
+      );
+      assert(inactiveRow.department === 'Large Format' && inactiveRow.next_department === 'Quality', JSON.stringify(inactiveRow));
+      assert(Number(inactiveRow.awaiting_originals) === 0 && !inactiveRow.production_department, JSON.stringify(inactiveRow));
+      assert(inactiveRow.routing_instructions === 'Next department: Quality', inactiveRow.routing_instructions);
+    } finally {
+      await db.run(`UPDATE departments SET is_active = 1 WHERE dept_key = 'dispatch'`);
+    }
+    console.log('PASS originals hold releases on pickup, scan, and cancel');
   } finally {
     await db.close();
     await server.stop();

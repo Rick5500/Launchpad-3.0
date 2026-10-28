@@ -67,6 +67,9 @@ async function isReadyStageId(executor, departmentId) {
 
 function workOrderAtOrPastQuality(workOrder, stages) {
   if (!workOrder || !stages) return false;
+  // Parked in Dispatch until originals arrive. Dispatch is a ready stage, but
+  // this job has not been produced yet.
+  if (Number(workOrder.awaiting_originals) === 1) return false;
   if (workOrder.assigned_department_id != null && stages.readyIds.has(Number(workOrder.assigned_department_id))) {
     return true;
   }

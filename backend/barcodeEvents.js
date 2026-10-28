@@ -3,7 +3,8 @@ const activityLog = require('./activityLog');
 const deliveryNotify = require('./deliveryNotify');
 const { isReadyStageRow } = require('./departmentStage');
 const shopLocations = require('./shopLocations');
-const { withTransaction } = require('./dbAsync');
+const { withTransaction, get: dbGet } = require('./dbAsync');
+const originalsHold = require('./originalsHold');
 const { DEFAULT_LOCATION_STAGES, isLegacyInactiveAlias } = require('./barcodeLocationDefaults');
 
 const DEFAULT_LIMIT = 50;
@@ -182,6 +183,7 @@ function parseListQuery(query) {
 function resolveWorkOrder(scannedValue, cb) {
   const value = String(scannedValue || '').trim();
   const located = `SELECT wo.id, wo.external_id, wo.description, wo.department, wo.status, wo.order_id,
+            wo.awaiting_originals, wo.production_department,
             o.order_number, o.status AS order_status,
             COALESCE(wo.location_id, o.location_id) AS location_id
      FROM work_orders wo
@@ -337,7 +339,7 @@ function historyNote({ fromDepartment, toName, manual, note, fromLocation, toLoc
     return note ? `${base} ${note}` : base;
   }
   if (!manual) {
-    const base = `Moved from ${fromDepartment || 'unassigned'} to ${toName}`;
+    const base = note || `Moved from ${fromDepartment || 'unassigned'} to ${toName}`;
     return locationText ? `${base}. ${locationText}` : base;
   }
   const base = `Manual move from ${fromDepartment || 'unassigned'} to ${toName}`;
@@ -448,14 +450,31 @@ async function applyScan({ scannedValue, location, eventTime, operatorId, workOr
 
   // Lookups and the insert share the writer queue so a scan does not busy-wait
   // on the shared connection while another transaction holds the write lock.
-  const { inserted, matchedDepartment, moved, nextStatus } = await withTransaction(async (tx) => {
-    const matched = departmentLookup
+  const {
+    inserted, matchedDepartment, moved, nextStatus, holdRedirected, holdStage, requestedDepartment,
+  } = await withTransaction(async (tx) => {
+    let matched = departmentLookup
       ? await tx.get(
         `SELECT id, name, next_department, dept_key FROM departments
          WHERE is_active = 1 AND lower(name) = lower(?)`,
         [departmentLookup]
       )
       : null;
+    const requestedName = matched ? matched.name : null;
+    const override = matched
+      ? await originalsHold.destinationForHold(tx, workOrder, matched)
+      : null;
+    if (override) matched = override;
+    let stageForMove = stage;
+    if (override) {
+      const stageName = await stageNameForDepartment(tx, matched.name);
+      stageForMove = stageName
+        ? await tx.get(
+          'SELECT id, name FROM production_stages WHERE lower(name) = lower(?)',
+          [stageName]
+        )
+        : null;
+    }
     const scannedBy = operatorId
       ? await tx.get('SELECT id, display_name, username FROM users WHERE id = ?', [operatorId])
       : null;
@@ -471,21 +490,33 @@ async function applyScan({ scannedValue, location, eventTime, operatorId, workOr
       storedTime,
       operatorId,
       workOrder,
-      stage,
+      stage: stageForMove,
       matchedDepartment: matched,
       operator: scannedBy,
       fromDepartment,
       toDepartment,
       nextStatus: status,
+      note: originalsHold.redirectHistoryNote({
+        fromDepartment,
+        actualName: override ? override.name : null,
+        requestedName,
+        manual: false,
+      }),
     };
     const written = didMove
       ? await writeDepartmentMove(tx, move)
       : await tx.run(EVENT_INSERT_SQL, eventParams(move));
+    if (didMove && await originalsHold.releasingHold(tx, workOrder, matched)) {
+      await originalsHold.finishOriginalsDeparture(tx, workOrder, operatorId);
+    }
     return {
       inserted: written,
       matchedDepartment: matched,
       moved: didMove,
       nextStatus: status,
+      holdRedirected: Boolean(override),
+      holdStage: override ? stageForMove : null,
+      requestedDepartment: override ? requestedName : null,
     };
   });
   const toDepartment = matchedDepartment ? matchedDepartment.name : null;
@@ -499,9 +530,9 @@ async function applyScan({ scannedValue, location, eventTime, operatorId, workOr
     operator_id: operatorId,
     location: location || null,
     event_time: storedTime,
-    stage_id: stage ? stage.id : null,
-    stage_name: stage ? stage.name : null,
-    stage_advanced: false,
+    stage_id: holdRedirected ? (holdStage ? holdStage.id : null) : (stage ? stage.id : null),
+    stage_name: holdRedirected ? (holdStage ? holdStage.name : null) : (stage ? stage.name : null),
+    stage_advanced: Boolean(holdRedirected && holdStage),
     from_department: fromDepartment,
     to_department: toDepartment,
     department_moved: moved,
@@ -512,8 +543,9 @@ async function applyScan({ scannedValue, location, eventTime, operatorId, workOr
       : (workOrder.order_id ? 'In Production' : null),
   };
   if (moved) payload.status = nextStatus;
+  if (requestedDepartment) payload.requested_department = requestedDepartment;
 
-  if (stage) {
+  if (stage && !holdRedirected) {
     try {
       const stageUpdate = await withTransaction((tx) => tx.run(
         `UPDATE work_orders SET stage_id = ?, updated_at = datetime('now') WHERE id = ?`,
@@ -646,7 +678,8 @@ async function moveWorkOrder({ workOrderId, department, note, actorId, actorRole
   const result = await withTransaction(async (tx) => {
     const workOrder = await tx.get(
       `SELECT wo.id, wo.external_id, wo.description, wo.department, wo.status, wo.stage_id,
-              wo.location_id, wo.order_id, o.location_id AS order_location_id
+              wo.location_id, wo.order_id, wo.awaiting_originals, wo.production_department,
+              o.location_id AS order_location_id
        FROM work_orders wo
        LEFT JOIN orders o ON o.id = wo.order_id
        WHERE wo.id = ?`,
@@ -654,7 +687,7 @@ async function moveWorkOrder({ workOrderId, department, note, actorId, actorRole
     );
     if (!workOrder) throw httpError(404, 'Work order not found');
 
-    const matched = lookup
+    let matched = lookup
       ? await tx.get(
         `SELECT id, name, next_department, dept_key FROM departments
          WHERE is_active = 1 AND lower(name) = lower(?)`,
@@ -662,6 +695,16 @@ async function moveWorkOrder({ workOrderId, department, note, actorId, actorRole
       )
       : null;
     if (!matched) throw httpError(400, 'department must be an active department');
+    const requested = matched;
+    const override = await originalsHold.destinationForHold(tx, workOrder, matched);
+    if (override) matched = override;
+    const redirectNote = originalsHold.redirectHistoryNote({
+      fromDepartment: workOrder.department,
+      actualName: override ? override.name : null,
+      requestedName: requested.name,
+      manual: true,
+    });
+    const historyNoteText = [note, redirectNote].filter(Boolean).join('. ') || null;
 
     const currentShop = await effectiveShop(tx, workOrder);
     let targetShop = currentShop;
@@ -706,13 +749,16 @@ async function moveWorkOrder({ workOrderId, department, note, actorId, actorRole
         operatorId: actorId || null,
         fromDepartment: workOrder.department || null,
         manual: true,
-        note: note || null,
+        note: historyNoteText,
         stage,
         fromLocation,
         toLocation,
         fromLocationId: locationChanged ? currentShop.id : null,
         toLocationId: locationChanged ? targetShop.id : null,
       });
+      if (await originalsHold.releasingHold(tx, workOrder, matched)) {
+        await originalsHold.finishOriginalsDeparture(tx, workOrder, actorId);
+      }
     } else {
       const scannedBy = operator?.display_name || operator?.username || 'Staff';
       await tx.run(
@@ -768,7 +814,7 @@ async function moveWorkOrder({ workOrderId, department, note, actorId, actorRole
        WHERE id = ?`,
       [workOrder.id]
     );
-    return {
+    const result = {
       id: updated.id,
       external_id: updated.external_id,
       from_department: workOrder.department || null,
@@ -788,6 +834,8 @@ async function moveWorkOrder({ workOrderId, department, note, actorId, actorRole
       department_id: matched.id,
       entered_ready_stage: Boolean(departmentChanged && isReadyStageRow(matched)),
     };
+    if (override) result.requested_department = requested.name;
+    return result;
   });
   if (result && result.entered_ready_stage && result.order_id) {
     try {
@@ -845,13 +893,14 @@ function previewScan({ scannedValue, location }, cb) {
       resolveStageByName(policy.stageName, (stageErr, stage) => {
         if (stageErr) return cb(stageErr);
         const finish = (department) => {
+          const report = (destination, requestedName) => {
           const fromDepartment = workOrder ? (workOrder.department || null) : null;
-          const toName = department ? department.name : null;
-          const moved = Boolean(workOrder && department && String(fromDepartment || '').trim() !== department.name);
+          const toName = destination ? destination.name : null;
+          const moved = Boolean(workOrder && destination && String(fromDepartment || '').trim() !== destination.name);
           let resultingStatus = workOrder ? workOrder.status : null;
           const wouldComplete = Boolean(
             moved
-            && isCompleteDepartment(department.name)
+            && isCompleteDepartment(destination.name)
             && !activityLog.isFinishedStatus(workOrder.status)
           );
           if (wouldComplete) resultingStatus = 'completed';
@@ -881,8 +930,18 @@ function previewScan({ scannedValue, location }, cb) {
               would_complete: wouldComplete,
               resulting_department: moved ? toName : fromDepartment,
               resulting_status: resultingStatus,
+              requested_department: requestedName
+                && destination
+                && String(requestedName).trim().toLowerCase() !== String(destination.name).trim().toLowerCase()
+                ? requestedName
+                : undefined,
             },
           });
+          };
+          if (!workOrder || !department || Number(workOrder.awaiting_originals) !== 1) return report(department);
+          originalsHold.destinationForHold({ get: dbGet }, workOrder, department)
+            .then((override) => report(override || department, department.name))
+            .catch((err) => cb(err));
         };
         if (!policy.departmentName) return finish(null);
         db.get(
@@ -997,4 +1056,5 @@ module.exports = {
   listEvents,
   parseManualMove,
   moveWorkOrder,
+  applyDepartmentChange,
 };

@@ -192,6 +192,8 @@ CREATE TABLE IF NOT EXISTS work_orders (
   approval_by INTEGER, -- user who approved or rejected a pending request
   approval_at DATETIME,
   proof_status TEXT, -- null, awaiting, changes_requested, approved. Newest applicable proof.
+  awaiting_originals INTEGER DEFAULT 0, -- 1 while the job waits in Dispatch for an originals pickup
+  production_department TEXT, -- department the job enters once those originals are picked up
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME,
   FOREIGN KEY(customer_id) REFERENCES users(id),

@@ -1563,6 +1563,8 @@ async function main() {
     { name: 'approval_by', definition: 'INTEGER' },
     { name: 'approval_at', definition: 'DATETIME' },
     { name: 'proof_status', definition: 'TEXT' },
+    { name: 'awaiting_originals', definition: 'INTEGER DEFAULT 0' },
+    { name: 'production_department', definition: 'TEXT' },
   ]);
   await ensureColumns('orders', [
     { name: 'ups_account_number', definition: 'TEXT' },
