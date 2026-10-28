@@ -28,6 +28,8 @@ export default function SystemSettingsPage() {
     customer_self_signup_enabled: true,
     email_customers_on_file_share: true,
     email_customers_on_proof: true,
+    email_welcome_on_account: true,
+    email_order_confirmation: true,
     inbound_email_polling_enabled: true,
   });
   const [loading, setLoading] = useState(true);
@@ -54,6 +56,8 @@ export default function SystemSettingsPage() {
       customer_self_signup_enabled: body.customer_self_signup_enabled !== false,
       email_customers_on_file_share: body.email_customers_on_file_share !== false,
       email_customers_on_proof: body.email_customers_on_proof !== false,
+      email_welcome_on_account: body.email_welcome_on_account !== false,
+      email_order_confirmation: body.email_order_confirmation !== false,
       inbound_email_polling_enabled: body.inbound_email_polling_enabled !== false,
     });
     if (body.file_storage) setStoragePath(body.file_storage.path || '');
@@ -87,6 +91,8 @@ export default function SystemSettingsPage() {
           customer_self_signup_enabled: form.customer_self_signup_enabled,
           email_customers_on_file_share: form.email_customers_on_file_share,
           email_customers_on_proof: form.email_customers_on_proof,
+          email_welcome_on_account: form.email_welcome_on_account,
+          email_order_confirmation: form.email_order_confirmation,
           inbound_email_polling_enabled: form.inbound_email_polling_enabled,
         }),
       });
@@ -342,6 +348,30 @@ export default function SystemSettingsPage() {
           />
           <Typography variant="body2" color="text.secondary">
             This is the default on Send Proof. The message links to sign in. It does not include a public download.
+          </Typography>
+          <FormControlLabel
+            control={(
+              <Switch
+                checked={form.email_welcome_on_account}
+                onChange={(event) => setForm({ ...form, email_welcome_on_account: event.target.checked })}
+              />
+            )}
+            label="Email a welcome when a login is created"
+          />
+          <Typography variant="body1" color="text.secondary">
+            Staff-created accounts receive a link to set a password. The message never includes the password. People who sign up themselves receive a welcome with a sign-in link. Turning this off does not stop the account from being created.
+          </Typography>
+          <FormControlLabel
+            control={(
+              <Switch
+                checked={form.email_order_confirmation}
+                onChange={(event) => setForm({ ...form, email_order_confirmation: event.target.checked })}
+              />
+            )}
+            label="Email an order confirmation"
+          />
+          <Typography variant="body1" color="text.secondary">
+            Each new order is emailed once, to the address on the order or the account email. The message includes the order number, due date, delivery method, and ship-to address when there is one.
           </Typography>
           <FormControlLabel
             control={(
