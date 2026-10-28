@@ -51,16 +51,25 @@ function verifyPassword(password, passwordHash) {
 
 function createSession(user) {
   const token = crypto.randomBytes(24).toString('hex');
+  const csrfToken = crypto.randomBytes(24).toString('hex');
   const now = Date.now();
   sessions.set(token, {
     userId: user.id,
     username: user.username,
     role: user.role,
     display_name: user.display_name,
+    csrfToken,
     createdAt: now,
     expiresAt: now + sessionTtlMs(),
   });
   return token;
+}
+
+function csrfTokenFor(token) {
+  if (!token) return null;
+  const session = sessions.get(token);
+  if (!session || !session.expiresAt || session.expiresAt <= Date.now()) return null;
+  return session.csrfToken || null;
 }
 
 function publicUser(session) {
@@ -188,6 +197,7 @@ function login(username, password, cb) {
                 const token = createSession(row);
                 cb(null, {
                   token,
+                  csrf_token: csrfTokenFor(token),
                   user: {
                     id: row.id,
                     username: row.username,
@@ -252,6 +262,21 @@ function requireAuth(req, res, next) {
   }
 
   req.user = session;
+  req.csrfToken = csrfTokenFor(parts[1]);
+  next();
+}
+
+function requireCsrf(req, res, next) {
+  const provided = req.get('x-csrf-token');
+  const expected = req.csrfToken;
+  if (!provided || !expected) {
+    return res.status(403).json({ error: 'CSRF check failed' });
+  }
+  const left = Buffer.from(String(provided));
+  const right = Buffer.from(String(expected));
+  if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) {
+    return res.status(403).json({ error: 'CSRF check failed' });
+  }
   next();
 }
 
@@ -275,6 +300,8 @@ module.exports = {
   clearSession,
   clearSessionsForUser,
   requireAuth,
+  requireCsrf,
+  csrfTokenFor,
   requireRole,
   checkLoginRateLimit,
   recordLoginFailure,

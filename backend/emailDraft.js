@@ -111,36 +111,39 @@ function parseDraft(subject, body) {
   };
 }
 
-function emailDomain(value) {
-  const text = String(value || '').trim().toLowerCase();
-  const at = text.lastIndexOf('@');
-  if (at <= 0 || at === text.length - 1) return '';
-  return text.slice(at + 1);
-}
+const { emailDomain, isPublicEmailDomain } = require('./publicEmailDomains');
 
 function matchSender(customers, fromAddress) {
   const email = String(fromAddress || '').trim().toLowerCase();
-  if (!email || !email.includes('@')) {
-    return { customer: null, match: null, candidates: [] };
-  }
+  const none = { customer: null, match: null, match_status: 'unverified', candidates: [] };
+  if (!email || !email.includes('@')) return none;
   const exact = (customers || []).filter((row) => {
     const address = String(row.email || '').trim().toLowerCase();
     const username = String(row.username || '').trim().toLowerCase();
     return address === email || username === email;
   });
-  if (exact.length === 1) return { customer: exact[0], match: 'email', candidates: exact };
-  if (exact.length > 1) return { customer: null, match: null, candidates: exact };
-  const domain = emailDomain(email);
-  if (!domain) return { customer: null, match: null, candidates: [] };
-  const domainMatches = (customers || []).filter((row) => emailDomain(row.email) === domain);
-  if (domainMatches.length === 1) {
-    return { customer: domainMatches[0], match: 'domain', candidates: domainMatches };
+  // An exact address is only a suggestion. Staff still have to approve it.
+  if (exact.length === 1) {
+    return { customer: exact[0], match: 'email', match_status: 'unverified', candidates: exact };
   }
-  return { customer: null, match: null, candidates: domainMatches };
+  if (exact.length > 1) {
+    return { customer: null, match: null, match_status: 'unverified', candidates: exact };
+  }
+  const domain = emailDomain(email);
+  if (!domain || isPublicEmailDomain(domain)) return none;
+  const domainMatches = (customers || []).filter((row) => {
+    const customerDomain = emailDomain(row.email);
+    return customerDomain && !isPublicEmailDomain(customerDomain) && customerDomain === domain;
+  });
+  if (domainMatches.length === 1) {
+    return { customer: domainMatches[0], match: 'domain', match_status: 'unverified', candidates: domainMatches };
+  }
+  return { customer: null, match: null, match_status: 'unverified', candidates: domainMatches };
 }
 
 module.exports = {
   parseDraft,
   normalizeDate,
   matchSender,
+  emailDomain,
 };

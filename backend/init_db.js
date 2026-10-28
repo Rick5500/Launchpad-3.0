@@ -1002,6 +1002,105 @@ async function ensureInboundEmails() {
   await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_inbound_email_attachments_graph
     ON inbound_email_attachments(inbound_email_id, graph_attachment_id)
     WHERE graph_attachment_id IS NOT NULL`);
+  await ensureColumns('inbound_emails', [
+    { name: 'match_status', definition: "TEXT DEFAULT 'unverified'" },
+    { name: 'ignore_reason', definition: 'TEXT' },
+    { name: 'loop_check_note', definition: 'TEXT' },
+    { name: 'headers_status', definition: 'TEXT' },
+    { name: 'headers_attempts', definition: 'INTEGER DEFAULT 0' },
+    { name: 'headers_next_fetch_at', definition: 'DATETIME' },
+    { name: 'location_confirmed', definition: 'INTEGER DEFAULT 0' },
+  ]);
+  await run(`UPDATE inbound_emails SET match_status = 'unverified' WHERE match_status IS NULL OR trim(match_status) = ''`);
+  await run(`UPDATE inbound_emails SET location_confirmed = 0 WHERE location_confirmed IS NULL`);
+  await run(
+    `UPDATE inbound_emails
+     SET headers_status = 'missing'
+     WHERE headers_status IS NULL AND loop_check_note LIKE '%could not be read%'`
+  );
+  await run(`UPDATE inbound_emails SET headers_status = 'read' WHERE headers_status IS NULL`);
+  await run(
+    `UPDATE inbound_emails
+     SET location_confirmed = 1
+     WHERE location_confirmed = 0 AND (status = 'converted' OR match_status = 'approved')`
+  );
+  await ensureColumns('inbound_email_attachments', [
+    { name: 'fetch_state', definition: 'TEXT' },
+    { name: 'scan_status', definition: 'TEXT' },
+    { name: 'scan_detail', definition: 'TEXT' },
+    { name: 'scanned_at', definition: 'DATETIME' },
+    { name: 'fetch_attempts', definition: 'INTEGER DEFAULT 0' },
+    { name: 'next_fetch_at', definition: 'DATETIME' },
+    { name: 'content_encrypted', definition: 'INTEGER DEFAULT 0' },
+    { name: 'released_by', definition: 'INTEGER' },
+    { name: 'released_at', definition: 'DATETIME' },
+    { name: 'release_reason', definition: 'TEXT' },
+    { name: 'updated_at', definition: 'DATETIME' },
+  ]);
+  await run(
+    `UPDATE inbound_email_attachments
+     SET fetch_state = CASE
+       WHEN skipped_reason IS NOT NULL AND trim(skipped_reason) != '' THEN 'skipped'
+       WHEN stored_name IS NOT NULL AND trim(stored_name) != '' THEN 'fetched'
+       ELSE 'pending'
+     END
+     WHERE fetch_state IS NULL OR trim(fetch_state) = ''`
+  );
+  await run(
+    `UPDATE inbound_email_attachments
+     SET scan_status = 'quarantined'
+     WHERE fetch_state = 'fetched'
+       AND stored_name IS NOT NULL
+       AND (scan_status IS NULL OR trim(scan_status) = '')`
+  );
+  await run(`CREATE TABLE IF NOT EXISTS inbound_email_confirmations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    inbound_email_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    subject_key TEXT NOT NULL,
+    confirmed_by INTEGER NOT NULL,
+    confirmed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(inbound_email_id, kind, subject_key),
+    FOREIGN KEY(inbound_email_id) REFERENCES inbound_emails(id)
+  )`);
+  await run(`CREATE TABLE IF NOT EXISTS inbound_attachment_releases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash TEXT NOT NULL,
+    attachment_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    expires_at DATETIME NOT NULL,
+    used_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+  await run('CREATE INDEX IF NOT EXISTS idx_inbound_attachment_releases_token ON inbound_attachment_releases(token_hash)');
+  await run(`CREATE TABLE IF NOT EXISTS order_notify_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id INTEGER NOT NULL,
+    channel TEXT NOT NULL,
+    notice_type TEXT NOT NULL,
+    recipient TEXT,
+    result TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(order_id) REFERENCES orders(id)
+  )`);
+  await run('CREATE INDEX IF NOT EXISTS idx_order_notify_log_order ON order_notify_log(order_id)');
+  await run(`CREATE TABLE IF NOT EXISTS account_audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    channel TEXT NOT NULL,
+    notice_type TEXT NOT NULL,
+    recipient TEXT,
+    result TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+  await run('CREATE INDEX IF NOT EXISTS idx_account_audit_log_user ON account_audit_log(user_id, id)');
+  await run(`CREATE TABLE IF NOT EXISTS outbound_message_ids (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id TEXT NOT NULL UNIQUE,
+    notice_type TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
 }
 
 async function normalizeLegacyWorkOrderStatuses() {
@@ -1048,8 +1147,10 @@ async function seedSystemSettings() {
     ['email_welcome_on_account', '1'],
     // Missing means a new order emails a confirmation. An off switch is left alone.
     ['email_order_confirmation', '1'],
-    // Missing means the orders mailbox is polled when Microsoft 365 is configured.
-    ['inbound_email_polling_enabled', '1'],
+    // A new database leaves mailbox polling off. A saved on or off switch is left alone.
+    ['inbound_email_polling_enabled', '0'],
+    // Non-converted inbound mail is deleted after this many days. Converted files stay with the order.
+    ['inbound_email_retention_days', '90'],
   ];
   for (const [key, value] of defaults) {
     const existing = await get('SELECT key FROM system_settings WHERE key = ?', [key]);
@@ -1600,7 +1701,11 @@ async function main() {
     { name: 'delivery_sms_sent_at', definition: 'DATETIME' },
     { name: 'delivery_email_status', definition: 'TEXT' },
     { name: 'delivery_sms_status', definition: 'TEXT' },
+    { name: 'source_inbound_email_id', definition: 'INTEGER' },
   ]);
+  await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_source_inbound_email
+    ON orders(source_inbound_email_id)
+    WHERE source_inbound_email_id IS NOT NULL`);
   await run(`UPDATE orders SET status = 'In Production' WHERE status IS NULL OR trim(status) = ''`);
   await run('UPDATE orders SET pickup_ready_generation = 0 WHERE pickup_ready_generation IS NULL');
   await run('UPDATE orders SET delivery_ready_generation = 0 WHERE delivery_ready_generation IS NULL');

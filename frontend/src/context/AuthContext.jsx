@@ -54,6 +54,7 @@ export function AuthProvider({ children }) {
       }
 
       const data = await response.json();
+      if (data?.csrf_token) sessionStorage.setItem('lp_csrf', data.csrf_token);
       if (data?.user) {
         setUser(data.user);
         setIsAuthenticated(true);
@@ -106,6 +107,7 @@ export function AuthProvider({ children }) {
         }
 
         localStorage.setItem('lp_token', payload.token);
+        if (payload.csrf_token) sessionStorage.setItem('lp_csrf', payload.csrf_token);
         setUser(payload.user);
         setIsAuthenticated(true);
         setLoginError('');
@@ -146,6 +148,7 @@ export function AuthProvider({ children }) {
         }
 
         localStorage.setItem('lp_token', body.token);
+        if (body.csrf_token) sessionStorage.setItem('lp_csrf', body.csrf_token);
         setUser(body.user);
         setIsAuthenticated(true);
         setLoginError('');

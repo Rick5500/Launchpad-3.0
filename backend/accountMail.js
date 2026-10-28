@@ -6,6 +6,8 @@ const { loadLetterhead, letterheadFromMap } = require('./shopProfile');
 const mailer = require('./mailer');
 const passwordSet = require('./passwordSet');
 const systemSettings = require('./systemSettings');
+const customerNotices = require('./customerNotices');
+const { get } = require('./dbAsync');
 
 async function letterhead() {
   try {
@@ -56,8 +58,17 @@ async function sendStaffWelcome(user) {
       subject: rendered.subject,
       text: rendered.text,
       html: rendered.html,
+      noticeType: 'password_set',
     });
-    return withPreview({ status: sent && sent.status ? sent.status : 'failed', to }, sent);
+    const result = withPreview({ status: sent && sent.status ? sent.status : 'failed', to }, sent);
+    await customerNotices.recordAccountNotice({
+      userId: user.id,
+      channel: 'email',
+      noticeType: 'password_set',
+      recipient: to,
+      result: result.status,
+    });
+    return result;
   } catch (err) {
     console.error('WELCOME EMAIL ERROR:', err && err.message ? err.message : 'failed');
     return { status: 'failed' };
@@ -81,10 +92,65 @@ async function sendSignupWelcome(user) {
       subject: rendered.subject,
       text: rendered.text,
       html: rendered.html,
+      noticeType: 'welcome',
     });
-    return withPreview({ status: sent && sent.status ? sent.status : 'failed', to }, sent);
+    const result = withPreview({ status: sent && sent.status ? sent.status : 'failed', to }, sent);
+    await customerNotices.recordAccountNotice({
+      userId: user && user.id,
+      channel: 'email',
+      noticeType: 'welcome',
+      recipient: to,
+      result: result.status,
+    });
+    return result;
   } catch (err) {
     console.error('WELCOME EMAIL ERROR:', err && err.message ? err.message : 'failed');
+    return { status: 'failed' };
+  }
+}
+
+async function sendPasswordResetNotice(user) {
+  try {
+    const row = user && user.email
+      ? user
+      : await get(`SELECT id, username, email, display_name FROM users WHERE id = ?`, [user && user.id]);
+    const to = addressOf(row);
+    if (!to || !row) {
+      await customerNotices.recordAccountNotice({
+        userId: user && user.id,
+        channel: 'email',
+        noticeType: 'password_reset',
+        recipient: null,
+        result: 'skipped',
+      });
+      return { status: 'skipped' };
+    }
+    const link = mailer.signInLink();
+    const sent = await mailer.deliver({
+      to,
+      subject: 'Your Launchpad password was reset',
+      text: `The password for your Launchpad account was reset. Sign in at ${link}. This message does not include the new password.`,
+      html: `<p>The password for your Launchpad account was reset.</p><p><a href="${mailer.escapeHtml(link)}">Sign in</a></p>`,
+      noticeType: 'password_reset',
+    });
+    const status = sent && sent.status ? sent.status : 'failed';
+    await customerNotices.recordAccountNotice({
+      userId: row.id,
+      channel: 'email',
+      noticeType: 'password_reset',
+      recipient: to,
+      result: status,
+    });
+    return { status, to };
+  } catch (err) {
+    console.error('PASSWORD RESET EMAIL ERROR:', err && err.message ? err.message : 'failed');
+    await customerNotices.recordAccountNotice({
+      userId: user && user.id,
+      channel: 'email',
+      noticeType: 'password_reset',
+      recipient: null,
+      result: 'failed',
+    });
     return { status: 'failed' };
   }
 }
@@ -92,5 +158,6 @@ async function sendSignupWelcome(user) {
 module.exports = {
   sendStaffWelcome,
   sendSignupWelcome,
+  sendPasswordResetNotice,
   publicNotice,
 };

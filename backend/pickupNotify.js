@@ -4,6 +4,7 @@
 const { get, run } = require('./dbAsync');
 const mailer = require('./mailer');
 const sms = require('./sms');
+const customerNotices = require('./customerNotices');
 const { loadLetterhead, letterheadFromMap } = require('./shopProfile');
 
 function customerEmail(row) {
@@ -77,6 +78,7 @@ async function deliver(orderId, generation) {
           subject: rendered.subject,
           text: rendered.text,
           html: rendered.html,
+          noticeType: 'ready_for_pickup',
         });
         const status = sent && sent.status ? sent.status : 'failed';
         result.email.status = status;
@@ -126,6 +128,21 @@ async function deliver(orderId, generation) {
         await stamp(orderId, generation, [['pickup_sms_status', sent.status || 'failed']]);
       }
     }
+
+    await customerNotices.recordOrderNotice({
+      orderId,
+      channel: 'email',
+      noticeType: 'ready_for_pickup',
+      recipient: result.email.to || to || null,
+      result: result.email.status,
+    });
+    await customerNotices.recordOrderNotice({
+      orderId,
+      channel: 'sms',
+      noticeType: 'ready_for_pickup',
+      recipient: result.sms.to || null,
+      result: result.sms.status,
+    });
 
     const stamped = await get(
       `SELECT pickup_email_sent_at, pickup_sms_sent_at, pickup_email_status, pickup_sms_status

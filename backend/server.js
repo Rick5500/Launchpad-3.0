@@ -96,6 +96,9 @@ const quotesRouter = require('./routes/quotes');
 const pickupRequestsRouter = require('./routes/pickupRequests');
 const locationsRouter = require('./routes/locations');
 const inboundEmailPoller = require('./inboundEmailPoller');
+const inboundRetention = require('./inboundRetention');
+const inboundAttachments = require('./inboundAttachments');
+const accountAuditRouter = require('./routes/accountAudit');
 const systemSettings = require('./systemSettings');
 const mailer = require('./mailer');
 const userAdmin = require('./userAdmin');
@@ -236,9 +239,10 @@ app.get('/api/auth/me', auth.requireAuth, async (req, res) => {
         (err, found) => (err ? reject(err) : resolve(found))
       );
     });
-    if (!row) return res.json({ user: req.user });
+    if (!row) return res.json({ user: req.user, csrf_token: req.csrfToken || null });
     const locationFields = await shopLocations.publicUserFields(row.id);
     res.json({
+      csrf_token: req.csrfToken || null,
       user: {
         id: row.id,
         userId: row.id,
@@ -264,7 +268,7 @@ app.get('/api/auth/me', auth.requireAuth, async (req, res) => {
     });
   } catch (err) {
     console.error('AUTH ME ERROR:', err);
-    return res.json({ user: req.user });
+    return res.json({ user: req.user, csrf_token: req.csrfToken || null });
   }
 });
 
@@ -340,6 +344,7 @@ app.use('/api/settings', settingsRouter);
 app.use('/api/activity', activityRouter);
 app.use('/api/search', searchRouter);
 app.use('/api/inbound-emails', inboundEmailRouter);
+app.use('/api/account-audit', accountAuditRouter);
 app.use('/api/quote-requests', quotesRouter);
 app.use('/api/pickup-requests', pickupRequestsRouter);
 
@@ -368,5 +373,7 @@ systemSettings.loadRuntimeCache()
       startOrphanSweep();
       inboundEmailPoller.start();
       backup.start();
+      inboundRetention.start();
+      inboundAttachments.startRetryTimer();
     });
   });

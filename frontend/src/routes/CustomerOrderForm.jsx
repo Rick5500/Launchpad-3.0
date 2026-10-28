@@ -573,6 +573,11 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
   const [contactName, setContactName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
+  const [ackHeaders, setAckHeaders] = useState(false);
+  const [ackExpired, setAckExpired] = useState({});
+  const [confirmRecipient, setConfirmRecipient] = useState(false);
+  const [confirmedAttachments, setConfirmedAttachments] = useState({});
+  const [emailFields, setEmailFields] = useState(() => new Set());
   const [address1, setAddress1] = useState('');
   const [address2, setAddress2] = useState('');
   const [city, setCity] = useState('');
@@ -727,21 +732,65 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
   useEffect(() => {
     if (!inboundEmail || draftApplied.current) return;
     const suggestion = inboundEmail.suggestion || {};
-    if (suggestion.customer_id) setCustomerId(String(suggestion.customer_id));
-    if (suggestion.company) setCompany(suggestion.company);
-    if (suggestion.contact_name) setContactName(suggestion.contact_name);
-    if (suggestion.phone) setPhone(suggestion.phone);
-    if (suggestion.email) setEmail(suggestion.email);
-    if (suggestion.address_line1) setAddress1(suggestion.address_line1);
-    if (suggestion.address_line2) setAddress2(suggestion.address_line2);
-    if (suggestion.city) setCity(suggestion.city);
-    if (suggestion.state) setStateName(suggestion.state);
-    if (suggestion.zip) setZip(suggestion.zip);
-    if (suggestion.po_number) setPoNumber(suggestion.po_number);
-    if (suggestion.project_name) setProjectName(suggestion.project_name);
-    if (suggestion.notes) setNotes(suggestion.notes);
-    if (suggestion.due_date) setDueDate(suggestion.due_date);
-    const kept = (inboundEmail.attachments || []).filter((file) => file.stored && !file.skipped_reason);
+    const taken = new Set();
+    if (suggestion.customer_id) {
+      setCustomerId(String(suggestion.customer_id));
+      taken.add('customer');
+    }
+    if (suggestion.company) {
+      setCompany(suggestion.company);
+      taken.add('company');
+    }
+    if (suggestion.contact_name) {
+      setContactName(suggestion.contact_name);
+      taken.add('contact');
+    }
+    if (suggestion.phone) {
+      setPhone(suggestion.phone);
+      taken.add('phone');
+    }
+    if (suggestion.email) {
+      setEmail(suggestion.email);
+      taken.add('email');
+    }
+    if (suggestion.address_line1) {
+      setAddress1(suggestion.address_line1);
+      taken.add('address1');
+    }
+    if (suggestion.address_line2) {
+      setAddress2(suggestion.address_line2);
+      taken.add('address2');
+    }
+    if (suggestion.city) {
+      setCity(suggestion.city);
+      taken.add('city');
+    }
+    if (suggestion.state) {
+      setStateName(suggestion.state);
+      taken.add('state');
+    }
+    if (suggestion.zip) {
+      setZip(suggestion.zip);
+      taken.add('zip');
+    }
+    if (suggestion.po_number) {
+      setPoNumber(suggestion.po_number);
+      taken.add('po');
+    }
+    if (suggestion.project_name) {
+      setProjectName(suggestion.project_name);
+      taken.add('project');
+    }
+    if (suggestion.notes) {
+      setNotes(suggestion.notes);
+      taken.add('notes');
+    }
+    if (suggestion.due_date) {
+      setDueDate(suggestion.due_date);
+      taken.add('due');
+    }
+    setEmailFields(taken);
+    const kept = (inboundEmail.attachments || []).filter((file) => file.clean);
     if (kept.length) {
       setOriginalsSource(ORIGINALS_FILES);
       setLooseFiles(kept.map((file) => ({
@@ -1113,9 +1162,6 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
         ? looseFiles.filter((file) => file.id && !file.inbound).map((file) => file.id)
         : [],
     };
-    if (inboundEmail) {
-      payload.attachment_ids = looseFiles.filter((file) => file.inbound).map((file) => file.attachment_id);
-    }
     if (!seeShipLines) payload.delivery_method = deliveryMethod;
     if (isStaff) payload.customer_id = Number(customerId);
     if (orderLocationId) payload.location_id = Number(orderLocationId);
@@ -1123,6 +1169,37 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
 
     setSubmitting(true);
     try {
+      if (inboundEmail) {
+        const attachmentIds = looseFiles.filter((file) => file.inbound).map((file) => file.attachment_id);
+        payload.attachment_ids = attachmentIds;
+        if ((inboundEmail.attachments || []).some((file) => file.fetch_state === 'pending' || file.fetch_state === 'failed' || file.fetch_state === 'fetching')) {
+          throw new Error('An attachment is still pending. Wait until it arrives before converting.');
+        }
+        const expiredFiles = (inboundEmail.attachments || []).filter((file) => file.fetch_state === 'expired');
+        if (expiredFiles.some((file) => !ackExpired[file.id])) {
+          throw new Error('Acknowledge that the order proceeds without each expired attachment');
+        }
+        if (inboundEmail.headers_missing && !ackHeaders) {
+          throw new Error('Acknowledge that the message headers are missing, or wait until they load');
+        }
+        if (!confirmCustomer) throw new Error('Confirm the customer before creating the order');
+        if (!confirmRecipient) throw new Error('Confirm the confirmation recipient before creating the order');
+        if (attachmentIds.some((attachmentId) => !confirmedAttachments[attachmentId])) {
+          throw new Error('Confirm each attachment before creating the order');
+        }
+        const confirmed = await authFetch(`/api/inbound-emails/${inboundEmail.id}/confirmations`, {
+          method: 'POST',
+          body: JSON.stringify({
+            customer_id: Number(customerId),
+            recipient: email,
+            attachment_ids: attachmentIds,
+          acknowledge_missing_headers: Boolean(inboundEmail.headers_missing && ackHeaders),
+          expired_attachment_ids: expiredFiles.filter((file) => ackExpired[file.id]).map((file) => file.id),
+          }),
+        });
+        const confirmedBody = await confirmed.json().catch(() => ({}));
+        if (!confirmed.ok) throw new Error(confirmedBody.error || 'Unable to save the confirmations');
+      }
       // An unsaved consent choice or mobile number is saved with the order.
       // Show a profile error and still post the order when that save fails.
       if (!isStaff && textingTouched && textingNeedsSave(user, mobilePhone, smsOptIn)) {
@@ -1356,13 +1433,59 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
             </Typography>
             <Typography sx={{ mt: 1, color: brand.muted, maxWidth: 760 }}>
               {inboundEmail
-                ? 'This is a draft. Review the customer, the job, and the files from the email, then create the order. Nothing is created until you submit.'
+                ? 'Every value taken from the email is unverified. Confirm the customer, the confirmation recipient, and each attachment. Nothing is created until you submit.'
                 : quoteRequestId
                   ? 'This order is filled in from the accepted quote. Choose the services, payment, and due time, then submit. The order is checked the same way as any other order.'
                 : isStaff
                   ? 'Create an order for a customer. Each step stays open, so required fields are on this page. Review the work orders, then submit.'
                   : 'Place an order with Accent Imaging. Company, contact, phone, and email start from your account. Fill anything still blank, then review and submit.'}
             </Typography>
+            {inboundEmail ? (
+              <Alert severity="warning" sx={{ mt: 1.5 }} data-testid="unverified-email-fields">
+                <Typography sx={{ fontWeight: 700 }}>Unverified — from the email. This feature contains no AI.</Typography>
+                {[...emailFields].map((key) => (
+                  <Typography key={key} variant="body2">Unverified: {key}</Typography>
+                ))}
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 1 }}>
+                  <input id="confirm-customer" type="checkbox" checked={confirmCustomer} onChange={(event) => setConfirmCustomer(event.target.checked)} />
+                  <label htmlFor="confirm-customer">I confirm this customer</label>
+                </Box>
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 0.5 }}>
+                  <input id="confirm-recipient" type="checkbox" checked={confirmRecipient} onChange={(event) => setConfirmRecipient(event.target.checked)} />
+                  <label htmlFor="confirm-recipient">I confirm the confirmation recipient ({email || 'missing email'})</label>
+                </Box>
+                {(inboundEmail.attachments || []).filter((file) => file.fetch_state === 'expired').map((file) => (
+                  <Box key={`expired-${file.id}`} sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 0.5 }}>
+                    <input
+                      id={`ack-expired-${file.id}`}
+                      type="checkbox"
+                      checked={Boolean(ackExpired[file.id])}
+                      onChange={(event) => setAckExpired((current) => ({ ...current, [file.id]: event.target.checked }))}
+                    />
+                    <label htmlFor={`ack-expired-${file.id}`}>
+                      Proceed without {file.original_name}. This file expired and will not be on the order.
+                    </label>
+                  </Box>
+                ))}
+                {inboundEmail.headers_missing ? (
+                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 0.5 }}>
+                    <input id="ack-headers" type="checkbox" checked={ackHeaders} onChange={(event) => setAckHeaders(event.target.checked)} />
+                    <label htmlFor="ack-headers">I acknowledge the message headers are missing and this order can proceed.</label>
+                  </Box>
+                ) : null}
+                {(inboundEmail.attachments || []).filter((file) => file.clean).map((file) => (
+                  <Box key={file.id} sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 0.5 }}>
+                    <input
+                      id={`confirm-attachment-${file.id}`}
+                      type="checkbox"
+                      checked={Boolean(confirmedAttachments[file.id])}
+                      onChange={(event) => setConfirmedAttachments((current) => ({ ...current, [file.id]: event.target.checked }))}
+                    />
+                    <label htmlFor={`confirm-attachment-${file.id}`}>I confirm attachment {file.original_name}</label>
+                  </Box>
+                ))}
+              </Alert>
+            ) : null}
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1.5 }}>
               <Chip size="small" label={isStaff ? 'Staff' : 'Your account'} sx={{ bgcolor: brand.navy, color: '#fff', fontWeight: 700 }} />
               <Chip size="small" variant="outlined" label="* Required" sx={{ borderColor: brand.navy, color: brand.navy, fontWeight: 700 }} />
@@ -1581,10 +1704,10 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
               }}
             />
             <FieldGrid>
-              <TextControl id="order-company" label="Company" required value={company} disabled={locked} onChange={(event) => setCompany(event.target.value)} autoComplete="organization" />
-              <TextControl id="order-contact" label="Contact" required value={contactName} disabled={locked} onChange={(event) => setContactName(event.target.value)} autoComplete="name" />
-              <TextControl id="order-phone" label="Phone" required value={phone} disabled={locked} onChange={(event) => setPhone(event.target.value)} autoComplete="tel" />
-              <TextControl id="order-email" label="Email" required type="email" value={email} disabled={locked} onChange={(event) => setEmail(event.target.value)} autoComplete="email" />
+              <TextControl id="order-company" label="Company" required value={company} disabled={locked} helperText={emailFields.has('company') ? 'Unverified — from the email' : undefined} onChange={(event) => setCompany(event.target.value)} autoComplete="organization" />
+              <TextControl id="order-contact" label="Contact" required value={contactName} disabled={locked} helperText={emailFields.has('contact') ? 'Unverified — from the email' : undefined} onChange={(event) => setContactName(event.target.value)} autoComplete="name" />
+              <TextControl id="order-phone" label="Phone" required value={phone} disabled={locked} helperText={emailFields.has('phone') ? 'Unverified — from the email' : undefined} onChange={(event) => setPhone(event.target.value)} autoComplete="tel" />
+              <TextControl id="order-email" label="Email" required type="email" value={email} disabled={locked} helperText={emailFields.has('email') ? 'Unverified — from the email' : undefined} onChange={(event) => setEmail(event.target.value)} autoComplete="email" />
               <TextControl id="order-address1" label="Addr 1" required value={address1} disabled={locked} onChange={(event) => setAddress1(event.target.value)} autoComplete="address-line1" />
               <TextControl id="order-address2" label="Addr 2" value={address2} disabled={locked} onChange={(event) => setAddress2(event.target.value)} autoComplete="address-line2" />
               <TextControl id="order-city" label="City" required value={city} disabled={locked} onChange={(event) => setCity(event.target.value)} autoComplete="address-level2" />

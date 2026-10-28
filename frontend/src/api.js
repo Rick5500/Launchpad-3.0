@@ -1,5 +1,6 @@
 export function clearStoredAuth(message = 'Your session has expired. Please log in again.') {
   localStorage.removeItem('lp_token');
+  sessionStorage.removeItem('lp_csrf');
   if (message) {
     sessionStorage.setItem('auth_message', message);
   }
@@ -21,6 +22,10 @@ export function authFetch(url, options = {}) {
 
   if (token) {
     headers.Authorization = `Bearer ${token}`;
+  }
+  const csrf = sessionStorage.getItem('lp_csrf');
+  if (csrf && !headers['X-CSRF-Token'] && !headers['x-csrf-token']) {
+    headers['X-CSRF-Token'] = csrf;
   }
 
   return fetch(url, { ...options, headers }).then((response) => {
