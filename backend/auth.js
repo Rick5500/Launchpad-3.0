@@ -262,7 +262,7 @@ function requireAuth(req, res, next) {
   }
 
   req.user = session;
-  req.csrfToken = csrfTokenFor(parts[1]);
+  req.csrfToken = csrfTokenFor(token);
   next();
 }
 
