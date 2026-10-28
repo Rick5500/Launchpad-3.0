@@ -3,6 +3,8 @@ const auth = require('../auth');
 const db = require('../db');
 const { WORK_ORDER_STATUSES } = require('../statuses');
 const barcodeEvents = require('../barcodeEvents');
+const originalsHold = require('../originalsHold');
+const dbAsync = require('../dbAsync');
 const users = require('../userAdmin');
 const { loadWorkOrderContext } = require('../orderService');
 const { printForWorkOrder } = require('../printWorkOrder');
@@ -462,6 +464,7 @@ router.put('/:id', auth.requireAuth, staffRoles, (req, res) => {
 
   db.get(
     `SELECT wo.id, wo.status, wo.priority, wo.customer_id, wo.external_id, wo.department,
+            wo.awaiting_originals, wo.production_department, wo.order_id,
             wo.location_id, o.location_id AS order_location_id
      FROM work_orders wo
      LEFT JOIN orders o ON o.id = wo.order_id
@@ -470,8 +473,20 @@ router.put('/:id', auth.requireAuth, staffRoles, (req, res) => {
     (lookupErr, previous) => {
       if (lookupErr) return res.status(500).json({ error: 'Failed to update work order' });
       if (!previous) return res.status(404).json({ error: 'Work order not found' });
-      staffSeesWorkOrder(req.user, recordLocationId(previous)).then((allowed) => {
+      staffSeesWorkOrder(req.user, recordLocationId(previous)).then(async (allowed) => {
         if (!allowed) return res.status(404).json({ error: 'Work order not found' });
+
+      let departmentToStore = department;
+      let releaseHold = false;
+      try {
+        const target = await originalsHold.departureTarget(previous, department);
+        if (target) {
+          departmentToStore = target.name;
+          releaseHold = true;
+        }
+      } catch (holdErr) {
+        console.error('WORK ORDER ROUTE ERROR:', holdErr);
+      }
 
       db.run(
         `UPDATE work_orders SET
@@ -502,7 +517,7 @@ router.put('/:id', auth.requireAuth, staffRoles, (req, res) => {
           description,
           Number(quantity),
           status,
-          department,
+          departmentToStore,
           parseOptionalNumber(stage_id),
           priority || 'Normal',
           parseOptionalNumber(assigned_department_id),
@@ -546,23 +561,47 @@ router.put('/:id', auth.requireAuth, staffRoles, (req, res) => {
             }
           );
 
-          const departmentChanged = String(previous.department || '').trim() !== department;
-          if (!departmentChanged) return loadUpdated();
+          const departmentChanged = String(previous.department || '').trim() !== departmentToStore;
+          if (!departmentChanged && !releaseHold) return loadUpdated();
+
+          const finishHold = () => {
+            if (!releaseHold) return loadUpdated();
+            originalsHold.markPickupPickedUpIfClear(dbAsync, previous.order_id, req.user.userId)
+              .catch((holdErr) => {
+              console.error('WORK ORDER ROUTE ERROR:', holdErr);
+            }).finally(loadUpdated);
+          };
 
           db.get(
-            `SELECT id, next_department FROM departments WHERE lower(name) = lower(?)`,
-            [department],
+            `SELECT id, name, next_department FROM departments WHERE lower(name) = lower(?)`,
+            [departmentToStore],
             (routeErr, route) => {
               if (routeErr) console.error('WORK ORDER ROUTE ERROR:', routeErr);
-              if (routeErr || !route) return loadUpdated();
-              db.run(
-                `UPDATE work_orders SET assigned_department_id = ?, next_department = ? WHERE id = ?`,
-                [route.id, route.next_department || null, id],
-                (routeUpdateErr) => {
-                  if (routeUpdateErr) console.error('WORK ORDER ROUTE ERROR:', routeUpdateErr);
-                  loadUpdated();
-                }
-              );
+              if (routeErr || !route) {
+                if (!releaseHold) return loadUpdated();
+                db.run(
+                  `UPDATE work_orders SET awaiting_originals = 0, updated_at = datetime('now') WHERE id = ?`,
+                  [id],
+                  (clearErr) => {
+                    if (clearErr) console.error('WORK ORDER ROUTE ERROR:', clearErr);
+                    finishHold();
+                  }
+                );
+                return;
+              }
+              const sql = releaseHold
+                ? `UPDATE work_orders
+                   SET department = ?, assigned_department_id = ?, next_department = ?,
+                       awaiting_originals = 0, updated_at = datetime('now')
+                   WHERE id = ?`
+                : `UPDATE work_orders SET assigned_department_id = ?, next_department = ? WHERE id = ?`;
+              const params = releaseHold
+                ? [route.name, route.id, route.next_department || null, id]
+                : [route.id, route.next_department || null, id];
+              db.run(sql, params, (routeUpdateErr) => {
+                if (routeUpdateErr) console.error('WORK ORDER ROUTE ERROR:', routeUpdateErr);
+                finishHold();
+              });
             }
           );
         }
