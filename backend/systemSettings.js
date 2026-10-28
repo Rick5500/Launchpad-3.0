@@ -433,7 +433,7 @@ async function emailCustomersOnProof() {
 
 async function inboundEmailPollingEnabled() {
   const row = await get('SELECT value FROM system_settings WHERE key = ?', [INBOUND_POLL_KEY]);
-  if (!row) return true;
+  if (!row || row.value == null || String(row.value).trim() === '') return false;
   return signupEnabledFromValue(row.value);
 }
 

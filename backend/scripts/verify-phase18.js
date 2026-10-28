@@ -7,6 +7,7 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
 const http = require('http');
+const net = require('net');
 const os = require('os');
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
@@ -28,6 +29,7 @@ const clientId = 'client-phase18';
 const mailbox = 'orders@phase18.example';
 
 process.env.DATABASE_FILE = dbFile;
+process.env.NODE_ENV = 'test';
 process.env.M365_TENANT_ID = tenantId;
 process.env.M365_CLIENT_ID = clientId;
 process.env.M365_CLIENT_SECRET = clientSecret;
@@ -88,6 +90,39 @@ const tokenBodies = [];
 const preferHeaders = [];
 let tokenStatus = 200;
 let graphMode = 'inbox';
+let clamdPort = 0;
+const csrfByToken = new Map();
+
+function startClamd() {
+  const server = net.createServer((socket) => {
+    let buf = Buffer.alloc(0);
+    let streaming = false;
+    socket.on('data', (chunk) => {
+      buf = Buffer.concat([buf, chunk]);
+      if (!streaming) {
+        const zero = buf.indexOf(0);
+        if (zero < 0) return;
+        buf = buf.subarray(zero + 1);
+        streaming = true;
+      }
+      while (streaming && buf.length >= 4) {
+        const len = buf.readUInt32BE(0);
+        if (len === 0) {
+          socket.end('stream: OK\0');
+          return;
+        }
+        if (buf.length < 4 + len) return;
+        buf = buf.subarray(4 + len);
+      }
+    });
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      clamdPort = server.address().port;
+      resolve(server);
+    });
+  });
+}
 
 function messages() {
   return [
@@ -253,6 +288,10 @@ function startMock() {
       sendJson(res, 200, attachmentPayload());
       return;
     }
+    if (url.pathname.includes('/messages/') && url.searchParams.get('$select') === 'internetMessageHeaders') {
+      sendJson(res, 200, { internetMessageHeaders: [] });
+      return;
+    }
     sendJson(res, 404, { error: { message: 'not found' } });
   });
   return new Promise((resolve) => {
@@ -299,6 +338,9 @@ function baseEnv() {
     M365_LOGIN_BASE_URL: graphBase,
     M365_GRAPH_BASE_URL: graphBase,
     M365_HTTP_TIMEOUT_MS: '8000',
+    CLAMD_HOST: '127.0.0.1',
+    CLAMD_PORT: String(clamdPort),
+    ALLOW_UNSCANNED_ATTACHMENT_EXCEPTION: 'false',
   };
 }
 
@@ -307,6 +349,7 @@ function request({ method, path: requestPath, token, json }) {
     const body = json != null ? Buffer.from(JSON.stringify(json)) : null;
     const headers = {};
     if (token) headers.Authorization = `Bearer ${token}`;
+    if (token && csrfByToken.has(token)) headers['X-CSRF-Token'] = csrfByToken.get(token);
     if (body) {
       headers['Content-Type'] = 'application/json';
       headers['Content-Length'] = body.length;
@@ -384,6 +427,7 @@ async function login(username, password) {
     json: { username, password },
   });
   assert(response.status === 200 && response.json && response.json.token, `login failed for ${username}: ${response.status} ${response.text}`);
+  if (response.json.csrf_token) csrfByToken.set(response.json.token, response.json.csrf_token);
   return response.json;
 }
 
@@ -423,6 +467,7 @@ async function waitForEmails(token) {
 }
 
 async function main() {
+  const clamd = await startClamd();
   const mock = await startMock();
   const graphMail = require('../graphMail');
   const savedTenant = process.env.M365_TENANT_ID;
@@ -585,6 +630,7 @@ async function main() {
     assert(detail.json.suggestion.due_date === dueDate, `due date was ${detail.json.suggestion.due_date}`);
     assert(detail.json.suggestion.project_name === 'Lobby banner set', detail.json.suggestion.project_name);
     assert(detail.json.suggestion.customer_id === created.json.id && detail.json.suggestion.match === 'email', 'the sender email should match the customer');
+    assert(detail.json.suggestion.match_status === 'unverified', 'an email match is only an unverified suggestion');
     assert(detail.json.suggestion.company === 'Phase Eighteen Co', 'the draft should carry the customer company');
     const domainDetail = await request({ method: 'GET', path: `/api/inbound-emails/${domainMail.id}`, token: manager.token });
     assert(domainDetail.json.suggestion.customer_id === created.json.id && domainDetail.json.suggestion.match === 'domain', 'a single company domain should match');
@@ -625,6 +671,17 @@ async function main() {
     assert(inboundFile && inboundFile.stored_name, 'the pdf attachment should have a stored name');
     const inboundPath = path.join(uploadDir, inboundFile.stored_name);
     assert(fs.existsSync(inboundPath), 'the inbound pdf should be on disk before convert');
+    const confirmed = await request({
+      method: 'POST',
+      path: `/api/inbound-emails/${orderMail.id}/confirmations`,
+      token: admin.token,
+      json: {
+        customer_id: created.json.id,
+        recipient: 'pat@phase18.example',
+        attachment_ids: [inboundFile.id],
+      },
+    });
+    assert(confirmed.status === 200, `staff confirmation should be stored: ${confirmed.status} ${confirmed.text}`);
     const badCustomer = await request({
       method: 'POST',
       path: `/api/inbound-emails/${orderMail.id}/convert`,
@@ -708,7 +765,7 @@ async function main() {
     assert(customerDismiss.status === 403, 'a customer cannot dismiss mail');
 
     const settings = await request({ method: 'GET', path: '/api/settings', token: admin.token });
-    assert(settings.status === 200 && settings.json.inbound_email_polling_enabled === true, settings.text);
+    assert(settings.status === 200 && settings.json.inbound_email_polling_enabled === false, settings.text);
     assert(settings.json.inbound_mail && settings.json.inbound_mail.configured === true, 'settings should show the mailbox as configured');
     assert(settings.json.inbound_mail.last_status === 'ok', `last status was ${settings.json.inbound_mail.last_status}`);
     const operatorSettings = await request({ method: 'GET', path: '/api/settings', token: operator.token });
@@ -782,6 +839,7 @@ async function main() {
     await restored.close();
   }
   await new Promise((resolve) => mock.close(() => resolve()));
+  await new Promise((resolve) => clamd.close(() => resolve()));
   console.log('PASS phase 18');
 }
 

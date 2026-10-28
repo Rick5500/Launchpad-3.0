@@ -204,8 +204,17 @@ async function sendConfirmation(row) {
     subject: rendered.subject,
     text: rendered.text,
     html: rendered.html,
+    noticeType: 'pickup_request',
   });
   const status = sent && sent.status ? sent.status : 'failed';
+  const customerNotices = require('./customerNotices');
+  await customerNotices.recordOrderNotice({
+    orderId: row.order_id,
+    channel: 'email',
+    noticeType: 'pickup_request',
+    recipient: to,
+    result: status,
+  });
   if (status === 'sent') {
     await run(
       `UPDATE pickup_requests

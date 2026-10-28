@@ -6,6 +6,7 @@ const nodemailer = require('nodemailer');
 const { httpError } = require('./httpError');
 const { createFixedWindowLimiter } = require('./rateLimit');
 const { loadLetterhead } = require('./shopProfile');
+const emailLoop = require('./emailLoop');
 
 const ADDRESS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ON = new Set(['1', 'true', 'yes', 'on']);
@@ -929,14 +930,18 @@ function previewFrom(captured) {
     to: captured.to || null,
     cc: captured.cc || null,
     from: captured.from || null,
+    replyTo: captured.replyTo || captured.reply_to || null,
+    messageId: captured.messageId || captured.message_id || null,
   };
 }
 
-async function deliver({ to, cc, subject, text, html }) {
+async function deliver({ to, cc, subject, text, html, noticeType }) {
   if (!isConfigured()) {
-    return { status: 'not_configured', recipients: [] };
+    return { status: 'not_configured', recipients: [], replyTo: emailLoop.replyToAddress() || null, messageId: null };
   }
   const addresses = [to, ...(cc || [])].filter(Boolean);
+  const messageId = emailLoop.newMessageId();
+  const replyTo = emailLoop.replyToAddress();
   try {
     const info = await createTransport().sendMail({
       from: fromAddress(smtpSettings().from),
@@ -945,17 +950,27 @@ async function deliver({ to, cc, subject, text, html }) {
       subject,
       text,
       html,
+      messageId,
+      replyTo: replyTo || undefined,
     });
+    await emailLoop.rememberMessageId(messageId, noticeType);
+    const captured = captureMessage(info);
+    if (captured && replyTo && !captured.replyTo) captured.replyTo = replyTo;
+    if (captured && messageId && !captured.messageId) captured.messageId = messageId;
     return {
       status: 'sent',
       recipients: addresses.map((address) => ({ address, status: 'sent' })),
-      captured: captureMessage(info),
+      captured,
+      messageId,
+      replyTo: replyTo || null,
     };
   } catch (err) {
     console.error('MAIL SEND ERROR:', err && err.code ? err.code : 'failed');
     return {
       status: 'failed',
       recipients: addresses.map((address) => ({ address, status: 'failed', error: 'Mail could not be sent' })),
+      messageId: null,
+      replyTo: replyTo || null,
     };
   }
 }

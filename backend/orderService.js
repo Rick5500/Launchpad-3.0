@@ -18,6 +18,7 @@ const quotes = require('./quotes');
 const shopLocations = require('./shopLocations');
 const notifications = require('./notifications');
 const pickupNotify = require('./pickupNotify');
+const customerNotices = require('./customerNotices');
 const orderConfirm = require('./orderConfirm');
 const { afterResponse, holdSideEffects } = require('./afterResponse');
 const pickupRequests = require('./pickupRequests');
@@ -730,6 +731,7 @@ async function loadOrderRecord(orderId, user) {
      LIMIT 1`,
     [order.id]
   );
+  const notices = await customerNotices.orderNotices(order.id);
 
   const fieldDefs = await definitionsFor(lineItems.map((item) => item.service_id));
 
@@ -779,6 +781,14 @@ async function loadOrderRecord(orderId, user) {
     created_by: order.created_by,
     created_at: order.created_at,
     updated_at: order.updated_at,
+    customer_notices: (notices || []).map((row) => ({
+      id: row.id,
+      channel: row.channel,
+      notice_type: row.notice_type,
+      recipient: row.recipient,
+      result: row.result,
+      created_at: row.created_at,
+    })),
     line_items: lineItems.map((row) => publicLineItem(row, fieldDefs.get(row.service_id))),
     files: files.map(publicFile),
     work_orders: workOrders.map((row) => ({
@@ -817,16 +827,16 @@ function presentOrder(record) {
   };
 }
 
-async function createOrder(user, body, now = new Date()) {
+async function createOrder(user, body, now = new Date(), options = {}) {
   const releaseSideEffects = holdSideEffects();
   try {
-    return await createOrderNow(user, body, now);
+    return await createOrderNow(user, body, now, options);
   } finally {
     releaseSideEffects();
   }
 }
 
-async function createOrderNow(user, body, now = new Date()) {
+async function createOrderNow(user, body, now = new Date(), options = {}) {
   const payload = body || {};
   assertCustomerFields(user, payload);
   const customerId = customerIdFor(user, payload);
@@ -861,6 +871,9 @@ async function createOrderNow(user, body, now = new Date()) {
   if (originalsSource === ORIGINALS_FILES && fileIds.length === 0) {
     throw new OrderError('Attach at least one file when originals source is Files attached below');
   }
+  const sourceInboundEmailId = options && Number.isInteger(options.sourceInboundEmailId) && options.sourceInboundEmailId > 0
+    ? options.sourceInboundEmailId
+    : null;
 
   const orderId = await withTransaction(async (tx) => {
     const customer = await tx.get(
@@ -962,8 +975,8 @@ async function createOrderNow(user, body, now = new Date()) {
         ship_to, attention, payment_method, return_to,
         bill_to_name, bill_to_phone, bill_to_email, bill_to_company,
         bill_to_address_line1, bill_to_address_line2, bill_to_city, bill_to_state, bill_to_zip,
-        due_date, due_time, created_by, location_id, updated_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
+        due_date, due_time, created_by, location_id, source_inbound_email_id, updated_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
       [
         orderNumber,
         customerId,
@@ -1000,9 +1013,25 @@ async function createOrderNow(user, body, now = new Date()) {
         due.value.dueTime,
         Number(user.userId || user.id),
         location.value,
+        sourceInboundEmailId,
       ]
     );
     const newOrderId = inserted.lastID;
+    if (options && options.crashAfterInsert) {
+      const crash = new Error('simulated crash after order insert');
+      crash.crash = true;
+      throw crash;
+    }
+    if (sourceInboundEmailId) {
+      const linked = await tx.run(
+        `UPDATE inbound_emails
+         SET status = 'converted', order_id = ?, converted_by = ?, converted_at = datetime('now'),
+             updated_at = datetime('now')
+         WHERE id = ? AND status = 'converting' AND order_id IS NULL`,
+        [newOrderId, Number(user.userId || user.id), sourceInboundEmailId]
+      );
+      if (!linked.changes) throw new OrderError('This email was already converted', 409);
+    }
 
     const lineItemIds = [];
     for (const item of lineItems) {

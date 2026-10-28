@@ -284,6 +284,16 @@ export default function OrderDetail() {
             canDecide={user?.role === 'customer'}
           />
 
+          <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2 }} data-testid="order-customer-notices">
+            <Typography sx={{ fontWeight: 700, color: brand.navy, mb: 1 }}>Customer notices</Typography>
+            {(order.customer_notices || []).length === 0 ? <Typography color="text.secondary">No customer email or text has been recorded for this order.</Typography> : null}
+            {(order.customer_notices || []).map((notice) => (
+              <Typography key={notice.id} sx={{ fontSize: 14, mb: 0.5 }}>
+                {notice.notice_type} · {notice.channel} · {notice.recipient || 'no recipient'} · {notice.result} · {notice.created_at}
+              </Typography>
+            ))}
+          </Box>
+
           <FilesFromAccent orderId={order.id} canManage={user?.role === 'admin' || user?.role === 'manager' || user?.role === 'operator'} />
 
           <Box sx={{ bgcolor: '#fff', border: `1px solid ${brand.border}`, borderRadius: 1.5, p: 2 }}>

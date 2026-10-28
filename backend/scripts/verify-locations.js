@@ -601,38 +601,51 @@ async function main() {
     process.env.DATABASE_FILE = dbFile;
     const inboundEmail = require('../inboundEmail');
     const matchedLocation = await inboundEmail.locationIdForSender('casey@locations.example');
-    assert(Number(matchedLocation) === Number(byName.Hickory.id), 'a matched customer draft uses their default location');
+    assert(Number(matchedLocation) === Number(byName.Raleigh.id), 'an unverified sender stays at the default intake shop');
     const unmatchedLocation = await inboundEmail.locationIdForSender('stranger@nowhere.example');
-    assert(Number(unmatchedLocation) === Number(byName.Raleigh.id), 'an unmatched draft uses Raleigh');
+    assert(Number(unmatchedLocation) === Number(byName.Raleigh.id), 'an unmatched sender also stays at intake');
     await db.run(
       `INSERT INTO users (username, password_hash, role, display_name, email, location_id, is_active)
        VALUES ('noloc-inbound', 'x', 'customer', 'No Location', 'noloc@locations.example', NULL, 1)`
     );
     const nullCustomerLocation = await inboundEmail.locationIdForSender('noloc@locations.example');
-    assert(Number(nullCustomerLocation) === Number(byName.Raleigh.id), 'a customer with no default location routes the draft to Raleigh');
+    assert(Number(nullCustomerLocation) === Number(byName.Raleigh.id), 'a customer with no shop does not move an unverified draft');
     const hickoryDraft = await db.run(
-      `INSERT INTO inbound_emails (graph_message_id, from_address, subject, status, location_id)
-       VALUES ('hickory-draft', 'casey@locations.example', 'Hickory draft', 'new', ?)`,
-      [matchedLocation]
+      `INSERT INTO inbound_emails (graph_message_id, from_address, subject, status, location_id, location_confirmed)
+       VALUES ('hickory-draft', 'casey@locations.example', 'Hickory draft', 'new', ?, 1)`,
+      [byName.Hickory.id]
     );
-    const raleighDraft = await db.run(
-      `INSERT INTO inbound_emails (graph_message_id, from_address, subject, status, location_id)
-       VALUES ('raleigh-draft', 'stranger@nowhere.example', 'Raleigh draft', 'new', ?)`,
-      [unmatchedLocation]
+    const intakeDraft = await db.run(
+      `INSERT INTO inbound_emails (graph_message_id, from_address, subject, status, location_id, location_confirmed, match_status)
+       VALUES ('intake-draft', 'casey@locations.example', 'Intake draft', 'new', ?, 0, 'unverified')`,
+      [matchedLocation]
     );
     const hickoryMail = await request({ method: 'GET', path: '/api/inbound-emails?status=new', token: hickoryLogin.token });
     assert(hickoryMail.status === 200, hickoryMail.text);
     const hickorySubjects = (hickoryMail.json.emails || []).map((row) => row.subject);
-    assert(hickorySubjects.includes('Hickory draft'), 'Hickory staff see a draft for their customer');
-    assert(!hickorySubjects.includes('Raleigh draft'), 'Hickory staff do not see a Raleigh draft');
+    assert(hickorySubjects.includes('Hickory draft'), 'Hickory staff see a confirmed draft for their shop');
+    assert(!hickorySubjects.includes('Intake draft'), 'an operator does not see an unconfirmed intake draft');
+    const hickoryManagerMail = await request({ method: 'GET', path: '/api/inbound-emails?status=new', token: hickoryManager.token });
+    const managerSubjects = (hickoryManagerMail.json.emails || []).map((row) => row.subject);
+    assert(managerSubjects.includes('Intake draft'), 'a shop manager sees an unconfirmed intake draft');
+    assert(managerSubjects.includes('Hickory draft'), 'a Hickory manager still sees a confirmed Hickory draft');
     const raleighMail = await request({ method: 'GET', path: '/api/inbound-emails?status=new', token: raleighLogin.token });
     const raleighSubjects = (raleighMail.json.emails || []).map((row) => row.subject);
-    assert(raleighSubjects.includes('Raleigh draft'), 'Raleigh staff see an unmatched draft');
-    assert(!raleighSubjects.includes('Hickory draft'), 'Raleigh staff do not see a Hickory customer draft');
+    assert(raleighSubjects.includes('Intake draft'), 'the intake shop operator sees an unconfirmed draft');
+    assert(!raleighSubjects.includes('Hickory draft'), 'Raleigh staff do not see a confirmed Hickory draft');
+    const raleighManagerMail = await request({ method: 'GET', path: '/api/inbound-emails?status=new', token: raleighManager.token });
+    const raleighManagerSubjects = (raleighManagerMail.json.emails || []).map((row) => row.subject);
+    assert(raleighManagerSubjects.includes('Intake draft'), 'another shop manager sees the unconfirmed intake draft');
+    assert(!raleighManagerSubjects.includes('Hickory draft'), 'another shop manager does not see a confirmed Hickory draft');
+    const adminMail = await request({ method: 'GET', path: '/api/inbound-emails?status=new', token: adminLogin.token });
+    const adminSubjects = (adminMail.json.emails || []).map((row) => row.subject);
+    assert(adminSubjects.includes('Intake draft') && adminSubjects.includes('Hickory draft'), 'an admin sees both drafts');
     const hiddenDraft = await request({ method: 'GET', path: `/api/inbound-emails/${hickoryDraft.lastID}`, token: raleighLogin.token });
     assert(hiddenDraft.status === 404, 'Raleigh staff cannot open a Hickory draft');
-    const openDraft = await request({ method: 'GET', path: `/api/inbound-emails/${raleighDraft.lastID}`, token: raleighManager.token });
-    assert(openDraft.status === 200 && openDraft.json.location_id === byName.Raleigh.id, openDraft.text);
+    const hiddenIntake = await request({ method: 'GET', path: `/api/inbound-emails/${intakeDraft.lastID}`, token: hickoryLogin.token });
+    assert(hiddenIntake.status === 404, 'an operator at another shop cannot open an unconfirmed intake draft');
+    const openIntake = await request({ method: 'GET', path: `/api/inbound-emails/${intakeDraft.lastID}`, token: hickoryManager.token });
+    assert(openIntake.status === 200 && openIntake.json.location_confirmed === false, openIntake.text);
 
     await db.run(`UPDATE work_orders SET location_id = NULL WHERE id = ?`, [charlotteWorkId]);
     await db.run(

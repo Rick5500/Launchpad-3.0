@@ -90,6 +90,9 @@ jobs:
       - name: Verify customer notifications
         working-directory: backend
         run: npm run verify:customer-notify
+      - name: Verify email order security
+        working-directory: backend
+        run: npm run verify:email-security
       - name: Build frontend
         working-directory: frontend
         run: |

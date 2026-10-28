@@ -25,7 +25,7 @@ router.get('/status', auth.requireAuth, staff, async (req, res) => {
   }
 });
 
-router.post('/sync', auth.requireAuth, auth.requireRole('admin'), async (req, res) => {
+router.post('/sync', auth.requireAuth, auth.requireRole('admin'), auth.requireCsrf, async (req, res) => {
   if (!graphMail.isConfigured()) {
     return res.status(400).json({ error: 'Microsoft 365 mailbox is not configured' });
   }
@@ -53,10 +53,13 @@ router.get('/:id/attachments/:attachmentId/download', auth.requireAuth, staff, a
   try {
     const file = await inboundEmail.attachmentDownload(req.user, req.params.id, req.params.attachmentId);
     if (!file) return res.status(404).json({ error: 'File not found' });
+    const filename = String(file.name || 'attachment').replace(/["\r\n]/g, '');
     res.set('X-Content-Type-Options', 'nosniff');
-    res.set('Content-Type', file.contentType);
+    res.set('Content-Type', file.contentType || 'application/octet-stream');
+    res.set('Content-Disposition', `attachment; filename="${filename}"`);
     res.set('Cache-Control', 'private, no-store');
-    return res.download(file.path, file.name, (err) => {
+    if (file.warning) res.set('X-Quarantine-Warning', file.warning);
+    return res.download(file.path, filename, (err) => {
       finishStoredDownload(res, err, path.dirname(file.path));
     });
   } catch (err) {
@@ -74,9 +77,27 @@ router.get('/:id', auth.requireAuth, staff, async (req, res) => {
   }
 });
 
-router.post('/:id/convert', auth.requireAuth, staff, async (req, res) => {
+router.post('/:id/confirmations', auth.requireAuth, staff, auth.requireCsrf, async (req, res) => {
   try {
-    const created = await inboundEmail.convertEmail(req.user, req.params.id, req.body || {});
+    res.json(await inboundEmail.confirmFields(req.user, req.params.id, req.body || {}));
+  } catch (err) {
+    sendError(res, err, 'INBOUND CONFIRM ERROR:', 'Failed to confirm the email');
+  }
+});
+
+router.post('/:id/attachments/:attachmentId/release', auth.requireAuth, auth.requireRole('admin'), auth.requireCsrf, async (req, res) => {
+  try {
+    const result = await inboundEmail.releaseAttachment(req.user, req.params.id, req.params.attachmentId, req.body || {});
+    res.status(result && result.confirmation_required ? 202 : 200).json(result);
+  } catch (err) {
+    sendError(res, err, 'INBOUND RELEASE ERROR:', 'Failed to release the attachment');
+  }
+});
+
+router.post('/:id/convert', auth.requireAuth, staff, auth.requireCsrf, async (req, res) => {
+  try {
+    const crashAfterInsert = process.env.NODE_ENV === 'test' && req.get('x-inbound-crash') === 'after-insert';
+    const created = await inboundEmail.convertEmail(req.user, req.params.id, req.body || {}, { crashAfterInsert });
     res.status(201).json(created);
   } catch (err) {
     if (err && err.status === 409 && err.orderId) {
@@ -95,7 +116,7 @@ router.post('/:id/convert', auth.requireAuth, staff, async (req, res) => {
   }
 });
 
-router.post('/:id/dismiss', auth.requireAuth, staff, async (req, res) => {
+router.post('/:id/dismiss', auth.requireAuth, staff, auth.requireCsrf, async (req, res) => {
   try {
     const email = await inboundEmail.dismissEmail(req.user, req.params.id);
     res.json(email);
