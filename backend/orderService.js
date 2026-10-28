@@ -1032,6 +1032,13 @@ async function createOrderNow(user, body, now = new Date()) {
 
     const createdWorkOrders = [];
     const suffixes = suffixesFor(services);
+    const dispatchHold = originalsSource === pickupRequests.ORIGINALS_VEHICLE
+      ? await tx.get(
+        `SELECT id, name FROM departments
+         WHERE lower(dept_key) = 'dispatch' AND is_active = 1
+         LIMIT 1`
+      )
+      : null;
     for (let index = 0; index < services.length; index += 1) {
       const service = services[index];
       const externalId = `${orderNumber}-${suffixes[index]}`;
@@ -1047,7 +1054,15 @@ async function createOrderNow(user, body, now = new Date()) {
         .filter((item) => item.serviceId === service.id);
       const quantity = linkedItems.reduce((sum, item) => sum + leadingQuantity(item.quantity), 0) || 1;
       const description = projectName ? `${service.name} — ${projectName}` : service.name;
-      const nextDepartment = department ? department.next_department : null;
+      const normalName = department ? department.name : service.department_name;
+      const normalNext = department ? department.next_department : null;
+      const hold = Boolean(dispatchHold);
+      const queueName = hold ? dispatchHold.name : normalName;
+      const queueId = hold ? dispatchHold.id : (department ? department.id : null);
+      const nextDepartment = hold ? normalName : normalNext;
+      const routing = hold
+        ? `Awaiting originals pickup → ${normalName}`
+        : (normalNext ? `Next department: ${normalNext}` : 'Final department');
       const specs = specificationText(linkedItems, notes);
       const requiresApproval = service.requires_approval ? 1 : 0;
 
@@ -1056,27 +1071,30 @@ async function createOrderNow(user, body, now = new Date()) {
           external_id, customer_id, description, quantity, status, department,
           priority, assigned_department_id, specifications, due_date, notes,
           routing_instructions, order_id, service_id, next_department,
-          requires_approval, approval_status, location_id, updated_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
+          requires_approval, approval_status, location_id, awaiting_originals,
+          production_department, updated_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))`,
         [
           externalId,
           customerId,
           description,
           quantity,
           'open',
-          department ? department.name : service.department_name,
+          queueName,
           'Normal',
-          department ? department.id : null,
+          queueId,
           specs,
           due.value.dueDateTime,
           notes,
-          nextDepartment ? `Next department: ${nextDepartment}` : 'Final department',
+          routing,
           newOrderId,
           service.id,
           nextDepartment,
           requiresApproval,
           requiresApproval ? 'pending' : null,
           location.value,
+          hold ? 1 : 0,
+          hold ? normalName : null,
         ]
       );
 
@@ -1094,21 +1112,23 @@ async function createOrderNow(user, body, now = new Date()) {
 
       await tx.run(
         `INSERT INTO production_history (work_order_id, department, status, scanned_by, user_id, notes)
-         VALUES (?, 'Submitted', 'Submitted', 'System Auto', ?, 'Order Created')`,
-        [workOrder.lastID, Number(user.userId || user.id)]
+         VALUES (?, 'Submitted', 'Submitted', 'System Auto', ?, ?)`,
+        [
+          workOrder.lastID,
+          Number(user.userId || user.id),
+          hold ? 'Waiting at Dispatch for originals pickup' : 'Order Created',
+        ]
       );
 
-      const queueName = department ? department.name : service.department_name;
-      await tx.run(
-        activityLog.INSERT_SQL,
-        activityLog.bindParams(activityLog.createdEntry({
-          actorId: Number(user.userId || user.id),
-          workOrderId: workOrder.lastID,
-          externalId,
-          department: queueName,
-          orderNumber,
-        }))
-      );
+      const created = activityLog.createdEntry({
+        actorId: Number(user.userId || user.id),
+        workOrderId: workOrder.lastID,
+        externalId,
+        department: queueName,
+        orderNumber,
+      });
+      if (hold) created.detail.message = 'Waiting at Dispatch for originals pickup';
+      await tx.run(activityLog.INSERT_SQL, activityLog.bindParams(created));
 
       createdWorkOrders.push(workOrder.lastID);
     }

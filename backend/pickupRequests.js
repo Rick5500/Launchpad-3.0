@@ -6,6 +6,7 @@ const { get, all, run, withTransaction } = require('./dbAsync');
 const { httpError } = require('./httpError');
 const { parseText, parsePostalAddress } = require('./fields');
 const activityLog = require('./activityLog');
+const originalsHold = require('./originalsHold');
 const mailer = require('./mailer');
 const notifications = require('./notifications');
 const shopLocations = require('./shopLocations');
@@ -485,27 +486,42 @@ async function updateStatus(user, id, body) {
     if (row.status === 'picked_up' || row.status === 'cancelled') {
       throw httpError(400, 'This pickup can no longer be cancelled');
     }
-    const updated = await run(
-      `UPDATE pickup_requests
-       SET status = 'cancelled', updated_at = datetime('now')
-       WHERE id = ? AND customer_id = ? AND status IN ('new', 'scheduled')`,
-      [row.id, Number(user.userId || user.id)]
-    );
-    if (!updated.changes) throw httpError(400, 'This pickup can no longer be cancelled');
-    await activityLog.record(Number(user.userId || user.id), 'pickup_request.cancelled', 'pickup_request', row.id, {
-      message: 'Customer cancelled a pickup request',
+    const updated = await withTransaction(async (tx) => {
+      const result = await tx.run(
+        `UPDATE pickup_requests
+         SET status = 'cancelled', updated_at = datetime('now')
+         WHERE id = ? AND customer_id = ? AND status IN ('new', 'scheduled')`,
+        [row.id, Number(user.userId || user.id)]
+      );
+      if (!result.changes) return 0;
+      await activityLog.recordOn(tx, Number(user.userId || user.id), 'pickup_request.cancelled', 'pickup_request', row.id, {
+        message: 'Customer cancelled a pickup request',
+      });
+      await originalsHold.releaseOriginalsHold(tx, row.order_id, user, 'pickup cancelled');
+      return result.changes;
     });
+    if (!updated) throw httpError(400, 'This pickup can no longer be cancelled');
     return present(await loadRow(row.id));
   }
   const status = parseStatus(requested);
   if (status.error) throw httpError(400, status.error);
-  await run(
-    `UPDATE pickup_requests SET status = ?, updated_at = datetime('now') WHERE id = ?`,
-    [status.value, row.id]
-  );
-  await activityLog.record(Number(user.userId || user.id), 'pickup_request.updated', 'pickup_request', row.id, {
-    status: status.value,
-    message: `Pickup request marked ${status.value.replace(/_/g, ' ')}`,
+  await withTransaction(async (tx) => {
+    await tx.run(
+      `UPDATE pickup_requests SET status = ?, updated_at = datetime('now') WHERE id = ?`,
+      [status.value, row.id]
+    );
+    await activityLog.recordOn(tx, Number(user.userId || user.id), 'pickup_request.updated', 'pickup_request', row.id, {
+      status: status.value,
+      message: `Pickup request marked ${status.value.replace(/_/g, ' ')}`,
+    });
+    if (status.value === 'picked_up' || status.value === 'cancelled') {
+      await originalsHold.releaseOriginalsHold(
+        tx,
+        row.order_id,
+        user,
+        status.value === 'cancelled' ? 'pickup cancelled' : null
+      );
+    }
   });
   return present(await loadRow(row.id));
 }

@@ -54,7 +54,7 @@ async function claim(orderId) {
     if (!isAccentTruck(order.delivery_method)) return { skipped: true, reason: 'not_accent_truck' };
     if (order.delivery_notified_generation != null) return { skipped: true, reason: 'already_notified' };
     const workOrders = await tx.all(
-      `SELECT id, department, assigned_department_id FROM work_orders WHERE order_id = ?`,
+      `SELECT id, department, assigned_department_id, awaiting_originals FROM work_orders WHERE order_id = ?`,
       [orderId]
     );
     const ready = await allWorkOrdersAtOrPastQuality(tx, workOrders);
