@@ -1022,6 +1022,12 @@ async function main() {
     });
     assert(scannedOut.status === 201 && scannedOut.json.department_moved === true, scannedOut.text);
     assert(scannedOut.json.from_department === 'Dispatch' && scannedOut.json.to_department === 'Large Format', scannedOut.text);
+    assert(scannedOut.json.requested_department === 'Delivery', scannedOut.text);
+    const scanHistory = await db.get(
+      `SELECT notes FROM production_history WHERE work_order_id = ? ORDER BY id DESC LIMIT 1`,
+      [scanLarge.id]
+    );
+    assert(scanHistory && scanHistory.notes === 'Moved from Dispatch to Large Format instead of Delivery', scanHistory && scanHistory.notes);
     assert(!scannedOut.json.delivery_notice, `leaving Dispatch for production should not notify: ${JSON.stringify(scannedOut.json.delivery_notice)}`);
     const scanLargeRow = await db.get(
       `SELECT department, next_department, awaiting_originals FROM work_orders WHERE id = ?`,
@@ -1045,6 +1051,12 @@ async function main() {
     const moveHold = await placeOriginals('Will Call', [large]);
     const movedOut = await move(moveHold.work_orders[0].id, 'Delivery');
     assert(movedOut.status === 200 && movedOut.json.department === 'Large Format' && movedOut.json.next_department === 'Quality', movedOut.text);
+    assert(movedOut.json.requested_department === 'Delivery', movedOut.text);
+    const moveHistory = await db.get(
+      `SELECT notes FROM production_history WHERE work_order_id = ? ORDER BY id DESC LIMIT 1`,
+      [moveHold.work_orders[0].id]
+    );
+    assert(moveHistory && /Large Format/.test(moveHistory.notes) && /instead of Delivery/.test(moveHistory.notes), moveHistory && moveHistory.notes);
     assert(!movedOut.json.delivery_notice, `a manual move off Dispatch should not enter Delivery: ${movedOut.text}`);
     const moveRow = await db.get(`SELECT department, awaiting_originals FROM work_orders WHERE id = ?`, [moveHold.work_orders[0].id]);
     assert(moveRow.department === 'Large Format' && Number(moveRow.awaiting_originals) === 0, JSON.stringify(moveRow));
@@ -1119,6 +1131,53 @@ async function main() {
     assert(parkedRelease.status === 201 && parkedRelease.json.to_department === 'Small Format', parkedRelease.text);
     const parkedReady = await move(parkedSmall.id, 'Quality');
     assert(parkedReady.status === 200 && parkedReady.json.delivery_notice && parkedReady.json.delivery_notice.email && parkedReady.json.delivery_notice.email.status === 'sent', JSON.stringify(parkedReady.json.delivery_notice));
+
+    const editHold = await placeOriginals('Will Call', [large]);
+    const editDetail = await request({
+      method: 'GET',
+      path: `/api/workorders/${editHold.work_orders[0].id}`,
+      token: admin.token,
+    });
+    assert(editDetail.status === 200, editDetail.text);
+    const edited = await request({
+      method: 'PUT',
+      path: `/api/workorders/${editHold.work_orders[0].id}`,
+      token: admin.token,
+      json: {
+        customer_id: editDetail.json.customer_id,
+        description: editDetail.json.description,
+        quantity: editDetail.json.quantity,
+        status: editDetail.json.status,
+        department: 'Delivery',
+        priority: editDetail.json.priority || 'Normal',
+        external_id: editDetail.json.external_id,
+      },
+    });
+    assert(edited.status === 200 && edited.json.department === 'Large Format' && edited.json.next_department === 'Quality', edited.text);
+    const editRow = await db.get(`SELECT awaiting_originals FROM work_orders WHERE id = ?`, [editHold.work_orders[0].id]);
+    assert(Number(editRow.awaiting_originals) === 0, JSON.stringify(editRow));
+    const editPickup = await db.get(`SELECT status FROM pickup_requests WHERE id = ?`, [editHold.pickup_request.id]);
+    assert(editPickup.status === 'picked_up', 'editing the only waiting job out of Dispatch should pick up the request');
+    const editActivity = await db.get(
+      `SELECT detail FROM activity_log WHERE action = 'work_order.moved' AND entity_id = ? ORDER BY id DESC LIMIT 1`,
+      [editHold.work_orders[0].id]
+    );
+    assert(editActivity && editActivity.detail.includes('Moved from Dispatch to Large Format instead of Delivery'), editActivity && editActivity.detail);
+
+    await db.run(`UPDATE departments SET is_active = 0 WHERE dept_key = 'dispatch'`);
+    try {
+      const inactive = await placeOriginals('Will Call', [large]);
+      const inactiveRow = await db.get(
+        `SELECT department, next_department, awaiting_originals, production_department, routing_instructions
+         FROM work_orders WHERE id = ?`,
+        [inactive.work_orders[0].id]
+      );
+      assert(inactiveRow.department === 'Large Format' && inactiveRow.next_department === 'Quality', JSON.stringify(inactiveRow));
+      assert(Number(inactiveRow.awaiting_originals) === 0 && !inactiveRow.production_department, JSON.stringify(inactiveRow));
+      assert(inactiveRow.routing_instructions === 'Next department: Quality', inactiveRow.routing_instructions);
+    } finally {
+      await db.run(`UPDATE departments SET is_active = 1 WHERE dept_key = 'dispatch'`);
+    }
     console.log('PASS originals hold releases on pickup, scan, and cancel');
   } finally {
     await db.close();

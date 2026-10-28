@@ -120,14 +120,23 @@ async function finishOriginalsDeparture(tx, workOrder, actor) {
   return true;
 }
 
-// Used by the work-order edit route, which does not have a transaction yet.
-async function departureTarget(workOrder, requestedName) {
+// The production department when a flagged job is leaving Dispatch.
+// Null means the caller's chosen department should stand. Runs on the
+// caller's transaction so a failure can roll the edit back.
+async function departureTarget(tx, workOrder, requestedName) {
   if (!workOrder || Number(workOrder.awaiting_originals) !== 1) return null;
   if (sameDepartmentName(workOrder.department, requestedName)) return null;
-  const { get } = require('./dbAsync');
-  const reader = { get };
-  if (!(await isDispatchName(reader, workOrder.department))) return null;
-  return departmentByName(reader, workOrder.production_department);
+  if (!(await isDispatchName(tx, workOrder.department))) return null;
+  return departmentByName(tx, workOrder.production_department);
+}
+
+// History and activity text when the job is sent to production instead of the
+// department the operator chose. Null when that choice is already production.
+function redirectHistoryNote({ fromDepartment, actualName, requestedName, manual }) {
+  if (!actualName || !requestedName || sameDepartmentName(actualName, requestedName)) return null;
+  if (manual) return `Sent to ${actualName} instead of ${requestedName}`;
+  const from = fromDepartment || 'unassigned';
+  return `Moved from ${from} to ${actualName} instead of ${requestedName}`;
 }
 
 async function releaseOriginalsHold(tx, orderId, actor, reason) {
@@ -192,5 +201,6 @@ module.exports = {
   finishOriginalsDeparture,
   markPickupPickedUpIfClear,
   departureTarget,
+  redirectHistoryNote,
   releaseOriginalsHold,
 };

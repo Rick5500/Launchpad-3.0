@@ -476,134 +476,132 @@ router.put('/:id', auth.requireAuth, staffRoles, (req, res) => {
       staffSeesWorkOrder(req.user, recordLocationId(previous)).then(async (allowed) => {
         if (!allowed) return res.status(404).json({ error: 'Work order not found' });
 
-      let departmentToStore = department;
-      let releaseHold = false;
+      let saved;
       try {
-        const target = await originalsHold.departureTarget(previous, department);
-        if (target) {
-          departmentToStore = target.name;
-          releaseHold = true;
-        }
-      } catch (holdErr) {
-        console.error('WORK ORDER ROUTE ERROR:', holdErr);
+        saved = await dbAsync.withTransaction(async (tx) => {
+          const target = await originalsHold.departureTarget(tx, previous, department);
+          const departmentToStore = target ? target.name : department;
+          const releaseHold = Boolean(target);
+          const updated = await tx.run(
+            `UPDATE work_orders SET
+              external_id = ?,
+              customer_id = ?,
+              description = ?,
+              quantity = ?,
+              status = ?,
+              department = ?,
+              stage_id = ?,
+              priority = ?,
+              assigned_department_id = ?,
+              assigned_user_id = ?,
+              estimated_hours = ?,
+              actual_hours = ?,
+              specifications = ?,
+              start_date = ?,
+              due_date = ?,
+              production_line = ?,
+              routing_instructions = ?,
+              attachments = ?,
+              notes = ?,
+              updated_at = datetime('now')
+             WHERE id = ?`,
+            [
+              external_id || null,
+              Number(customer_id),
+              description,
+              Number(quantity),
+              status,
+              departmentToStore,
+              parseOptionalNumber(stage_id),
+              priority || 'Normal',
+              parseOptionalNumber(assigned_department_id),
+              parseOptionalNumber(assigned_user_id),
+              parseOptionalNumber(estimated_hours),
+              parseOptionalNumber(actual_hours),
+              specifications || null,
+              start_date || null,
+              due_date || null,
+              production_line || null,
+              routing_instructions || null,
+              attachments || null,
+              notes || null,
+              id,
+            ]
+          );
+          if (!updated.changes) {
+            const missing = new Error('Work order not found');
+            missing.status = 404;
+            throw missing;
+          }
+
+          const departmentChanged = String(previous.department || '').trim() !== String(departmentToStore || '').trim();
+          if (departmentChanged || releaseHold) {
+            const route = target || await tx.get(
+              `SELECT id, name, next_department FROM departments WHERE lower(name) = lower(?)`,
+              [departmentToStore]
+            );
+            if (route && releaseHold) {
+              await tx.run(
+                `UPDATE work_orders
+                 SET department = ?, assigned_department_id = ?, next_department = ?,
+                     awaiting_originals = 0, updated_at = datetime('now')
+                 WHERE id = ?`,
+                [route.name, route.id, route.next_department || null, id]
+              );
+            } else if (route) {
+              await tx.run(
+                `UPDATE work_orders SET assigned_department_id = ?, next_department = ? WHERE id = ?`,
+                [route.id, route.next_department || null, id]
+              );
+            } else if (releaseHold) {
+              await tx.run(
+                `UPDATE work_orders SET awaiting_originals = 0, updated_at = datetime('now') WHERE id = ?`,
+                [id]
+              );
+            }
+            if (releaseHold) {
+              await originalsHold.markPickupPickedUpIfClear(tx, previous.order_id, req.user.userId);
+            }
+          }
+          return { departmentToStore, releaseHold };
+        });
+      } catch (updateErr) {
+        console.error('WORK ORDER UPDATE ERROR:', updateErr);
+        if (res.headersSent) return;
+        if (updateErr && updateErr.status === 404) return res.status(404).json({ error: 'Work order not found' });
+        return res.status(500).json({ error: 'Failed to update work order' });
       }
 
-      db.run(
-        `UPDATE work_orders SET
-          external_id = ?,
-          customer_id = ?,
-          description = ?,
-          quantity = ?,
-          status = ?,
-          department = ?,
-          stage_id = ?,
-          priority = ?,
-          assigned_department_id = ?,
-          assigned_user_id = ?,
-          estimated_hours = ?,
-          actual_hours = ?,
-          specifications = ?,
-          start_date = ?,
-          due_date = ?,
-          production_line = ?,
-          routing_instructions = ?,
-          attachments = ?,
-          notes = ?,
-          updated_at = datetime('now')
-         WHERE id = ?`,
-        [
-          external_id || null,
-          Number(customer_id),
-          description,
-          Number(quantity),
-          status,
-          departmentToStore,
-          parseOptionalNumber(stage_id),
-          priority || 'Normal',
-          parseOptionalNumber(assigned_department_id),
-          parseOptionalNumber(assigned_user_id),
-          parseOptionalNumber(estimated_hours),
-          parseOptionalNumber(actual_hours),
-          specifications || null,
-          start_date || null,
-          due_date || null,
-          production_line || null,
-          routing_instructions || null,
-          attachments || null,
-          notes || null,
-          id,
-        ],
-        function (err) {
-          if (err) return res.status(500).json({ error: 'Failed to update work order' });
-          if (this.changes === 0) return res.status(404).json({ error: 'Work order not found' });
-
-          const loadUpdated = () => db.get(
-            `SELECT ${workOrderFieldList}
-             FROM work_orders wo
-             ${workOrderJoins}
-             WHERE wo.id = ?`,
-            [id],
-            (err2, row) => {
-              if (err2) return res.status(500).json({ error: 'Failed to load updated work order' });
-              if (!row) return res.status(404).json({ error: 'Work order not found after update' });
-              const entries = activityLog.transitionEntries({
-                actorId: req.user.userId,
-                previous,
-                next: row,
-              });
-              activityLog.insertEntries(db, entries, (activityErr) => {
-                if (activityErr) console.error('WORK ORDER ACTIVITY ERROR:', activityErr);
-                notifications.notifyWorkOrderUpdated(previous, row, (notifyErr) => {
-                  if (notifyErr) console.error('WORK ORDER NOTIFICATION ERROR:', notifyErr);
-                  res.json(row);
-                });
-              });
-            }
-          );
-
-          const departmentChanged = String(previous.department || '').trim() !== departmentToStore;
-          if (!departmentChanged && !releaseHold) return loadUpdated();
-
-          const finishHold = () => {
-            if (!releaseHold) return loadUpdated();
-            originalsHold.markPickupPickedUpIfClear(dbAsync, previous.order_id, req.user.userId)
-              .catch((holdErr) => {
-              console.error('WORK ORDER ROUTE ERROR:', holdErr);
-            }).finally(loadUpdated);
-          };
-
-          db.get(
-            `SELECT id, name, next_department FROM departments WHERE lower(name) = lower(?)`,
-            [departmentToStore],
-            (routeErr, route) => {
-              if (routeErr) console.error('WORK ORDER ROUTE ERROR:', routeErr);
-              if (routeErr || !route) {
-                if (!releaseHold) return loadUpdated();
-                db.run(
-                  `UPDATE work_orders SET awaiting_originals = 0, updated_at = datetime('now') WHERE id = ?`,
-                  [id],
-                  (clearErr) => {
-                    if (clearErr) console.error('WORK ORDER ROUTE ERROR:', clearErr);
-                    finishHold();
-                  }
-                );
-                return;
-              }
-              const sql = releaseHold
-                ? `UPDATE work_orders
-                   SET department = ?, assigned_department_id = ?, next_department = ?,
-                       awaiting_originals = 0, updated_at = datetime('now')
-                   WHERE id = ?`
-                : `UPDATE work_orders SET assigned_department_id = ?, next_department = ? WHERE id = ?`;
-              const params = releaseHold
-                ? [route.name, route.id, route.next_department || null, id]
-                : [route.id, route.next_department || null, id];
-              db.run(sql, params, (routeUpdateErr) => {
-                if (routeUpdateErr) console.error('WORK ORDER ROUTE ERROR:', routeUpdateErr);
-                finishHold();
-              });
-            }
-          );
+      db.get(
+        `SELECT ${workOrderFieldList}
+         FROM work_orders wo
+         ${workOrderJoins}
+         WHERE wo.id = ?`,
+        [id],
+        (err2, row) => {
+          if (err2) return res.status(500).json({ error: 'Failed to load updated work order' });
+          if (!row) return res.status(404).json({ error: 'Work order not found after update' });
+          const redirectNote = saved.releaseHold
+            ? originalsHold.redirectHistoryNote({
+              fromDepartment: previous.department,
+              actualName: row.department,
+              requestedName: department,
+              manual: false,
+            })
+            : null;
+          const entries = activityLog.transitionEntries({
+            actorId: req.user.userId,
+            previous,
+            next: row,
+            note: redirectNote,
+          });
+          activityLog.insertEntries(db, entries, (activityErr) => {
+            if (activityErr) console.error('WORK ORDER ACTIVITY ERROR:', activityErr);
+            notifications.notifyWorkOrderUpdated(previous, row, (notifyErr) => {
+              if (notifyErr) console.error('WORK ORDER NOTIFICATION ERROR:', notifyErr);
+              res.json(row);
+            });
+          });
         }
       );
       }).catch((guardErr) => {

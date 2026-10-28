@@ -1035,8 +1035,7 @@ async function createOrderNow(user, body, now = new Date()) {
     const dispatchHold = originalsSource === pickupRequests.ORIGINALS_VEHICLE
       ? await tx.get(
         `SELECT id, name FROM departments
-         WHERE lower(dept_key) = 'dispatch'
-         ORDER BY is_active DESC, id ASC
+         WHERE lower(dept_key) = 'dispatch' AND is_active = 1
          LIMIT 1`
       )
       : null;
