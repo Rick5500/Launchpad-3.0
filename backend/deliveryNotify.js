@@ -1,12 +1,14 @@
 // Email and SMS when every work order on an Accent Truck order has reached
-// Quality or a later stage. One claim per order. A send failure is recorded
-// and never thrown back to the scan or move that triggered it.
+// Quality or a later stage. Entry into Quality, Dispatch, Delivery, or
+// Complete (by dept_key) runs the same once-per-order check, so a work order
+// that skips Quality still notifies when it is the last one to arrive.
+// A send failure is recorded and never thrown back to the scan or move.
 
 const { get, run, withTransaction } = require('./dbAsync');
 const mailer = require('./mailer');
 const sms = require('./sms');
 const { methodKey } = require('./deliveryRules');
-const { isQualityDepartmentId, allWorkOrdersAtOrPastQuality } = require('./departmentStage');
+const { isReadyStageId, allWorkOrdersAtOrPastQuality } = require('./departmentStage');
 const { loadLetterhead, letterheadFromMap } = require('./shopProfile');
 
 function isAccentTruck(name) {
@@ -183,13 +185,13 @@ async function deliver(orderId, generation) {
   return result;
 }
 
-// Called after the department change has committed. Quality is matched by id
-// and dept_key, not by the label on the scan.
-async function afterQualityEntry({ orderId, departmentId }) {
+// Called after the department change has committed. The destination is
+// matched by id and dept_key, not by the label on the scan or move.
+async function afterReadyStageEntry({ orderId, departmentId }) {
   try {
     if (!orderId) return { skipped: true, reason: 'no_order' };
-    const quality = await isQualityDepartmentId({ get }, departmentId);
-    if (!quality) return { skipped: true, reason: 'not_quality' };
+    const readyStage = await isReadyStageId({ get }, departmentId);
+    if (!readyStage) return { skipped: true, reason: 'not_ready_stage' };
     const claimed = await claim(orderId);
     if (!claimed || claimed.skipped) return claimed || { skipped: true, reason: 'skipped' };
     return deliver(orderId, claimed.generation);
@@ -201,7 +203,8 @@ async function afterQualityEntry({ orderId, departmentId }) {
 
 module.exports = {
   isAccentTruck,
-  afterQualityEntry,
+  afterReadyStageEntry,
+  afterQualityEntry: afterReadyStageEntry,
   deliver,
   claim,
 };

@@ -618,6 +618,47 @@ async function main() {
     assert(!scanAgain.json.delivery_notice, 'a scan that stays in Quality should not notify again');
     console.log('PASS barcode scan into Quality');
 
+    const skipQuality = await place('Accent Truck', [large, small]);
+    const held = await move(skipQuality.work_orders[0].id, 'Quality');
+    assert(held.status === 200 && held.json.delivery_notice.reason === 'work_orders_not_ready', JSON.stringify(held.json.delivery_notice));
+    const jumped = await move(skipQuality.work_orders[1].id, 'Dispatch');
+    assert(jumped.status === 200 && jumped.json.department === 'Dispatch', jumped.text);
+    assert(jumped.json.delivery_notice && jumped.json.delivery_notice.email.status === 'sent', `skipping Quality for the last work order should still notify: ${JSON.stringify(jumped.json.delivery_notice)}`);
+    const jumpStamp = await db.get(`SELECT delivery_email_sent_at, delivery_sms_sent_at FROM orders WHERE id = ?`, [skipQuality.order.id]);
+    assert(jumpStamp.delivery_email_sent_at && jumpStamp.delivery_sms_sent_at, 'a Dispatch entry should stamp the same send-once columns');
+    const finished = await move(skipQuality.work_orders[1].id, 'Complete');
+    assert(finished.status === 200 && finished.json.delivery_notice.reason === 'already_notified', JSON.stringify(finished.json.delivery_notice));
+    const jumpStill = await db.get(`SELECT delivery_email_sent_at FROM orders WHERE id = ?`, [skipQuality.order.id]);
+    assert(jumpStill.delivery_email_sent_at === jumpStamp.delivery_email_sent_at, 'Complete after a Dispatch notice must not send again');
+
+    const early = await place('Accent Truck', [large]);
+    const sideways = await move(early.work_orders[0].id, 'Small Format');
+    assert(sideways.status === 200 && !sideways.json.delivery_notice, `a production department should not notify: ${sideways.text}`);
+    const earlyRow = await db.get(`SELECT delivery_notified_generation FROM orders WHERE id = ?`, [early.order.id]);
+    assert(earlyRow.delivery_notified_generation == null, 'a move into Small Format must not claim the delivery notice');
+
+    const willLater = await place('Will Call', [large]);
+    const willDone = await move(willLater.work_orders[0].id, 'Complete');
+    assert(willDone.status === 200 && willDone.json.delivery_notice.reason === 'not_accent_truck', JSON.stringify(willDone.json.delivery_notice));
+
+    const scanDeliveryOrder = await place('Accent Truck', [large]);
+    const scannedDelivery = await request({
+      method: 'POST',
+      path: '/api/barcode',
+      token: admin.token,
+      json: { scanned_value: scanDeliveryOrder.work_orders[0].external_id, location: 'Delivery' },
+    });
+    assert(scannedDelivery.status === 201 && scannedDelivery.json.department_moved === true && scannedDelivery.json.to_department === 'Delivery', scannedDelivery.text);
+    assert(scannedDelivery.json.delivery_notice && scannedDelivery.json.delivery_notice.email.status === 'sent', `a scan into Delivery should notify: ${JSON.stringify(scannedDelivery.json.delivery_notice)}`);
+
+    await db.run(`UPDATE departments SET name = 'Shipping Desk' WHERE dept_key = 'dispatch'`);
+    const deskOrder = await place('Accent Truck', [large]);
+    const deskMove = await move(deskOrder.work_orders[0].id, 'Shipping Desk');
+    assert(deskMove.status === 200 && deskMove.json.department === 'Shipping Desk', deskMove.text);
+    assert(deskMove.json.delivery_notice && deskMove.json.delivery_notice.email.status === 'sent', `a renamed Dispatch department should still notify: ${JSON.stringify(deskMove.json.delivery_notice)}`);
+    await db.run(`UPDATE departments SET name = 'Dispatch' WHERE dept_key = 'dispatch'`);
+    console.log('PASS ready-stage entry, including a skip of Quality');
+
     await db.run(`UPDATE departments SET name = 'QC Hold' WHERE dept_key = 'quality'`);
     const renamed = await place('Accent Truck', [large]);
     const renamedMove = await move(renamed.work_orders[0].id, 'QC Hold');

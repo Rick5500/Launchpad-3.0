@@ -1,7 +1,7 @@
 const db = require('./db');
 const activityLog = require('./activityLog');
 const deliveryNotify = require('./deliveryNotify');
-const { isQualityDepartmentRow } = require('./departmentStage');
+const { isReadyStageRow } = require('./departmentStage');
 const shopLocations = require('./shopLocations');
 const { withTransaction } = require('./dbAsync');
 const { DEFAULT_LOCATION_STAGES, isLegacyInactiveAlias } = require('./barcodeLocationDefaults');
@@ -525,9 +525,9 @@ async function applyScan({ scannedValue, location, eventTime, operatorId, workOr
     }
   }
 
-  if (moved && isQualityDepartmentRow(matchedDepartment) && workOrder.order_id) {
+  if (moved && isReadyStageRow(matchedDepartment) && workOrder.order_id) {
     try {
-      payload.delivery_notice = await deliveryNotify.afterQualityEntry({
+      payload.delivery_notice = await deliveryNotify.afterReadyStageEntry({
         orderId: workOrder.order_id,
         departmentId: matchedDepartment.id,
       });
@@ -786,12 +786,12 @@ async function moveWorkOrder({ workOrderId, department, note, actorId, actorRole
       location_changed: locationChanged,
       order_id: workOrder.order_id || null,
       department_id: matched.id,
-      entered_quality: Boolean(departmentChanged && isQualityDepartmentRow(matched)),
+      entered_ready_stage: Boolean(departmentChanged && isReadyStageRow(matched)),
     };
   });
-  if (result && result.entered_quality && result.order_id) {
+  if (result && result.entered_ready_stage && result.order_id) {
     try {
-      result.delivery_notice = await deliveryNotify.afterQualityEntry({
+      result.delivery_notice = await deliveryNotify.afterReadyStageEntry({
         orderId: result.order_id,
         departmentId: result.department_id,
       });

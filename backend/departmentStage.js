@@ -28,6 +28,11 @@ function isQualityDepartmentRow(row) {
   return keyForRow(row) === 'quality';
 }
 
+function isReadyStageRow(row) {
+  const key = keyForRow(row);
+  return STAGE_KEYS.includes(key);
+}
+
 async function loadStages(executor) {
   const db = dbOf(executor);
   const rows = await db.all(`SELECT id, name, dept_key FROM departments`);
@@ -45,12 +50,19 @@ async function loadStages(executor) {
   return { readyIds, readyNames, qualityId };
 }
 
-async function isQualityDepartmentId(executor, departmentId) {
+async function departmentRow(executor, departmentId) {
   const id = Number(departmentId);
-  if (!Number.isInteger(id) || id <= 0) return false;
+  if (!Number.isInteger(id) || id <= 0) return null;
   const db = dbOf(executor);
-  const row = await db.get(`SELECT id, name, dept_key FROM departments WHERE id = ?`, [id]);
-  return isQualityDepartmentRow(row);
+  return db.get(`SELECT id, name, dept_key FROM departments WHERE id = ?`, [id]);
+}
+
+async function isQualityDepartmentId(executor, departmentId) {
+  return isQualityDepartmentRow(await departmentRow(executor, departmentId));
+}
+
+async function isReadyStageId(executor, departmentId) {
+  return isReadyStageRow(await departmentRow(executor, departmentId));
 }
 
 function workOrderAtOrPastQuality(workOrder, stages) {
@@ -72,7 +84,9 @@ async function allWorkOrdersAtOrPastQuality(executor, workOrders) {
 module.exports = {
   STAGE_KEYS,
   isQualityDepartmentRow,
+  isReadyStageRow,
   isQualityDepartmentId,
+  isReadyStageId,
   loadStages,
   workOrderAtOrPastQuality,
   allWorkOrdersAtOrPastQuality,
