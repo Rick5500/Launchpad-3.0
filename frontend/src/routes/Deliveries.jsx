@@ -96,7 +96,28 @@ export default function Deliveries() {
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(emptyForm);
+  const [pickups, setPickups] = useState([]);
+  const [pickupError, setPickupError] = useState('');
   const limit = 20;
+
+  const pickupLabels = {
+    new: 'New',
+    scheduled: 'Scheduled',
+    picked_up: 'Picked up',
+    cancelled: 'Cancelled',
+  };
+
+  function loadPickups() {
+    if (!canWrite) return Promise.resolve();
+    return authFetch('/api/pickup-requests?limit=100')
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || 'Unable to load pickup requests');
+        setPickups(body.pickup_requests || []);
+        setPickupError('');
+      })
+      .catch((err) => setPickupError(err.message || 'Unable to load pickup requests'));
+  }
 
   function load(nextOffset = offset, nextStatus = statusFilter, nextTiming = timingFilter) {
     setLoading(true);
@@ -130,7 +151,22 @@ export default function Deliveries() {
       })
       .catch(() => {});
     load(0, '', '');
+    loadPickups();
   }, []);
+
+  async function updatePickupStatus(id, status) {
+    setPickupError('');
+    const response = await authFetch(`/api/pickup-requests/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setPickupError(body.error || 'Unable to update that pickup');
+      return;
+    }
+    await loadPickups();
+  }
 
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -412,6 +448,78 @@ export default function Deliveries() {
           </Box>
         </CardContent>
       </Card>
+
+      {canWrite && (
+        <Card sx={{ bgcolor: '#ffffff', mt: 3 }} data-testid="originals-pickups">
+          <CardContent>
+            <Typography variant="h5" sx={{ fontWeight: 700, mb: 1 }}>
+              Originals pickups
+            </Typography>
+            <Typography sx={{ fontSize: '1.05rem', lineHeight: 1.5, mb: 2 }}>
+              Requests to collect customer originals. These are not deliveries of finished work. New requests also appear in the bell for Dispatch at that shop.
+            </Typography>
+            {pickupError ? <Alert severity="error" sx={{ mb: 2 }}>{pickupError}</Alert> : null}
+            <TableContainer>
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Customer</TableCell>
+                    <TableCell>Ready</TableCell>
+                    <TableCell>Address</TableCell>
+                    <TableCell>Shop</TableCell>
+                    <TableCell>Order</TableCell>
+                    <TableCell>Status</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {pickups.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={6}>No originals pickups for your shops.</TableCell>
+                    </TableRow>
+                  )}
+                  {pickups.map((pickup) => (
+                    <TableRow key={pickup.id}>
+                      <TableCell>
+                        <Typography sx={{ fontSize: '1rem', fontWeight: 700 }}>{pickup.contact_name}</Typography>
+                        <Typography variant="body2">{pickup.contact_phone}</Typography>
+                        {pickup.company ? <Typography variant="body2">{pickup.company}</Typography> : null}
+                      </TableCell>
+                      <TableCell>{pickup.ready_date}{pickup.ready_time ? ` ${pickup.ready_time}` : ''}</TableCell>
+                      <TableCell>
+                        {pickup.address_line1}
+                        {pickup.address_line2 ? `, ${pickup.address_line2}` : ''}
+                        {`, ${pickup.city}, ${pickup.state} ${pickup.zip}`}
+                        {pickup.notes ? <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', mt: 0.5 }}>{pickup.notes}</Typography> : null}
+                      </TableCell>
+                      <TableCell>{pickup.location_name || '—'}</TableCell>
+                      <TableCell>
+                        {pickup.order_id ? (
+                          <Button size="small" onClick={() => navigate(`/orders/${pickup.order_id}`)}>
+                            {pickup.order_number || `#${pickup.order_id}`}
+                          </Button>
+                        ) : '—'}
+                      </TableCell>
+                      <TableCell>
+                        <TextField
+                          select
+                          size="small"
+                          value={pickup.status}
+                          onChange={(event) => updatePickupStatus(pickup.id, event.target.value)}
+                          sx={{ minWidth: 150 }}
+                        >
+                          {Object.entries(pickupLabels).map(([value, label]) => (
+                            <MenuItem key={value} value={value}>{label}</MenuItem>
+                          ))}
+                        </TextField>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </CardContent>
+        </Card>
+      )}
     </Box>
   );
 }

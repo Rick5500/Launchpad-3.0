@@ -39,6 +39,7 @@ import AssignmentIcon from '@mui/icons-material/Assignment';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
 import RateReviewIcon from '@mui/icons-material/RateReview';
 import LocalShippingIcon from '@mui/icons-material/LocalShipping';
+import AirportShuttleIcon from '@mui/icons-material/AirportShuttle';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import FolderSharedIcon from '@mui/icons-material/FolderShared';
 import MarkEmailUnreadIcon from '@mui/icons-material/MarkEmailUnread';
@@ -59,6 +60,7 @@ const staffNav = [
   { title: 'Dashboard', route: '/', icon: <DashboardIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Create Order', route: '/order', icon: <NoteAddIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Scan', route: '/scan', icon: <QrCodeScannerIcon />, roles: ['admin', 'operator', 'manager'] },
+  { title: 'Deliveries', route: '/delivery', icon: <LocalShippingIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Search Orders', route: '/search', icon: <SearchIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Send Files', route: '/send-files', icon: <UploadFileIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Send Proof', route: '/send-proof', icon: <FactCheckIcon />, roles: ['admin', 'operator', 'manager'] },
@@ -89,6 +91,7 @@ const customerNav = [
   { title: 'Files from Accent', route: '/files', icon: <FolderSharedIcon />, roles: ['customer'] },
   { title: 'Work Orders', route: '/work-orders', icon: <AssignmentIcon />, roles: ['customer'] },
   { title: 'Proofs', route: '/proofs', icon: <RateReviewIcon />, roles: ['customer'] },
+  { title: 'Request a Pickup', route: '/pickups', icon: <AirportShuttleIcon />, roles: ['customer'] },
   { title: 'Delivery', route: '/delivery', icon: <LocalShippingIcon />, roles: ['customer'] },
   { title: 'Notifications', route: '/notifications', icon: <NotificationsIcon />, roles: ['customer'] },
 ];
@@ -125,7 +128,8 @@ function pageTitle(pathname) {
     ['/barcode-settings', 'Barcode Settings'],
     ['/scan', 'Scan'],
     ['/production-board', 'Production Board'],
-    ['/delivery', 'Delivery'],
+    ['/pickups', 'Request a Pickup'],
+    ['/delivery', 'Deliveries'],
     ['/work-orders', 'Work Orders'],
     ['/orders', 'Order'],
   ];

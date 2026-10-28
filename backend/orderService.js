@@ -18,6 +18,8 @@ const quotes = require('./quotes');
 const shopLocations = require('./shopLocations');
 const notifications = require('./notifications');
 const pickupNotify = require('./pickupNotify');
+const orderConfirm = require('./orderConfirm');
+const pickupRequests = require('./pickupRequests');
 const { parsePostalAddress } = require('./fields');
 const {
   PAYMENT_METHODS,
@@ -582,10 +584,19 @@ async function allocateOrderNumber(tx, now) {
   return formatOrderNumber(today.key, row.last_number);
 }
 
-function confirmationPayload() {
+function confirmationPayload(record) {
+  const status = record && record.confirmation_email_status
+    ? String(record.confirmation_email_status)
+    : '';
+  if (!status) {
+    return {
+      email_sent: false,
+      email_status: 'disabled',
+    };
+  }
   return {
-    email_sent: false,
-    email_status: 'disabled',
+    email_sent: status === 'sent',
+    email_status: status,
   };
 }
 
@@ -793,7 +804,7 @@ function presentOrder(record) {
     order: record,
     work_orders: record.work_orders,
     delivery: record.delivery,
-    confirmation: confirmationPayload(),
+    confirmation: confirmationPayload(record),
   };
 }
 
@@ -1128,7 +1139,32 @@ async function createOrder(user, body, now = new Date()) {
   } catch (err) {
     console.error('ORDER NOTIFICATION ERROR:', err);
   }
-  return presentOrder(record);
+  let pickupRequest = null;
+  try {
+    pickupRequest = await pickupRequests.createFromOrder(orderId);
+  } catch (err) {
+    console.error('PICKUP REQUEST ERROR:', err && err.message ? err.message : 'failed');
+  }
+  let confirmation = { status: 'failed' };
+  try {
+    confirmation = await orderConfirm.deliver(orderId);
+  } catch (err) {
+    console.error('ORDER CONFIRM ERROR:', err && err.message ? err.message : 'failed');
+    confirmation = { status: 'failed' };
+  }
+  const presented = presentOrder(record);
+  presented.confirmation = orderConfirm.publicConfirmation(confirmation);
+  if (pickupRequest && pickupRequest.pickup_request) {
+    presented.pickup_request = {
+      id: pickupRequest.pickup_request.id,
+      status: pickupRequest.pickup_request.status,
+      email_status: pickupRequest.email ? pickupRequest.email.status : null,
+    };
+    if (process.env.NODE_ENV === 'test' && pickupRequest.email && pickupRequest.email.preview) {
+      presented.pickup_request.preview = pickupRequest.email.preview;
+    }
+  }
+  return presented;
 }
 
 async function listOrders(user, query) {

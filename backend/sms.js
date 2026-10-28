@@ -73,6 +73,13 @@ function pickupSmsBody({ orderNumber, locationName, locationAddress, locationPho
   return `${message} ${SMS_STOP_LINE}`;
 }
 
+function deliverySmsBody({ orderNumber }) {
+  const number = String(orderNumber || 'your order').replace(/[\r\n]+/g, ' ').trim() || 'your order';
+  const message = `Accent Corporate Graphics: Order #${number} is ready for delivery.`;
+  if (message.endsWith(SMS_STOP_LINE)) return message;
+  return `${message} ${SMS_STOP_LINE}`;
+}
+
 async function sendSms({ to, body }) {
   const destination = normalizeE164(to);
   const text = String(body || '').trim();
@@ -123,6 +130,7 @@ module.exports = {
   normalizeE164,
   flattenAddress,
   pickupSmsBody,
+  deliverySmsBody,
   sendSms,
   twilioAccount,
 };

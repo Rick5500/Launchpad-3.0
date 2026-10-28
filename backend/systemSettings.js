@@ -33,6 +33,8 @@ const LETTERHEAD_KEYS = ['company_name', 'company_address', 'company_phone'];
 const SIGNUP_KEY = 'customer_self_signup_enabled';
 const FILE_SHARE_EMAIL_KEY = 'email_customers_on_file_share';
 const PROOF_EMAIL_KEY = 'email_customers_on_proof';
+const WELCOME_EMAIL_KEY = 'email_welcome_on_account';
+const ORDER_CONFIRM_EMAIL_KEY = 'email_order_confirmation';
 const INBOUND_POLL_KEY = 'inbound_email_polling_enabled';
 const FILE_STORAGE_KEY = 'file_storage_dir';
 const FILE_STORAGE_MARKER_KEY = 'file_storage_marker';
@@ -156,6 +158,8 @@ function present(map) {
     customer_self_signup_enabled: signupEnabledFromValue(map[SIGNUP_KEY]),
     email_customers_on_file_share: signupEnabledFromValue(map[FILE_SHARE_EMAIL_KEY]),
     email_customers_on_proof: signupEnabledFromValue(map[PROOF_EMAIL_KEY]),
+    email_welcome_on_account: signupEnabledFromValue(map[WELCOME_EMAIL_KEY]),
+    email_order_confirmation: signupEnabledFromValue(map[ORDER_CONFIRM_EMAIL_KEY]),
     inbound_email_polling_enabled: signupEnabledFromValue(map[INBOUND_POLL_KEY]),
     read_only: {
       delivery_timezone: rules.timezone,
@@ -185,7 +189,7 @@ function hasOwn(body, key) {
 
 async function updateSettings(actorId, body) {
   const source = body || {};
-  const allowed = new Set([...LETTERHEAD_KEYS, 'due_soon_hours', 'last_backup_at', SIGNUP_KEY, FILE_SHARE_EMAIL_KEY, PROOF_EMAIL_KEY, INBOUND_POLL_KEY]);
+  const allowed = new Set([...LETTERHEAD_KEYS, 'due_soon_hours', 'last_backup_at', SIGNUP_KEY, FILE_SHARE_EMAIL_KEY, PROOF_EMAIL_KEY, WELCOME_EMAIL_KEY, ORDER_CONFIRM_EMAIL_KEY, INBOUND_POLL_KEY]);
   const unknown = Object.keys(source).filter((key) => !allowed.has(key));
   if (unknown.length) throw httpError(400, `Unknown setting: ${unknown[0]}`);
 
@@ -231,6 +235,16 @@ async function updateSettings(actorId, body) {
     const parsed = parseFlag(source[PROOF_EMAIL_KEY], PROOF_EMAIL_KEY);
     if (parsed.error) throw httpError(400, parsed.error);
     changes.push([PROOF_EMAIL_KEY, parsed.value]);
+  }
+  if (hasOwn(source, WELCOME_EMAIL_KEY)) {
+    const parsed = parseFlag(source[WELCOME_EMAIL_KEY], WELCOME_EMAIL_KEY);
+    if (parsed.error) throw httpError(400, parsed.error);
+    changes.push([WELCOME_EMAIL_KEY, parsed.value]);
+  }
+  if (hasOwn(source, ORDER_CONFIRM_EMAIL_KEY)) {
+    const parsed = parseFlag(source[ORDER_CONFIRM_EMAIL_KEY], ORDER_CONFIRM_EMAIL_KEY);
+    if (parsed.error) throw httpError(400, parsed.error);
+    changes.push([ORDER_CONFIRM_EMAIL_KEY, parsed.value]);
   }
   if (hasOwn(source, INBOUND_POLL_KEY)) {
     const parsed = parseFlag(source[INBOUND_POLL_KEY], INBOUND_POLL_KEY);
@@ -423,10 +437,24 @@ async function inboundEmailPollingEnabled() {
   return signupEnabledFromValue(row.value);
 }
 
+async function emailWelcomeOnAccount() {
+  const row = await get('SELECT value FROM system_settings WHERE key = ?', [WELCOME_EMAIL_KEY]);
+  if (!row) return true;
+  return signupEnabledFromValue(row.value);
+}
+
+async function emailOrderConfirmation() {
+  const row = await get('SELECT value FROM system_settings WHERE key = ?', [ORDER_CONFIRM_EMAIL_KEY]);
+  if (!row) return true;
+  return signupEnabledFromValue(row.value);
+}
+
 module.exports = {
   SIGNUP_KEY,
   FILE_SHARE_EMAIL_KEY,
   PROOF_EMAIL_KEY,
+  WELCOME_EMAIL_KEY,
+  ORDER_CONFIRM_EMAIL_KEY,
   INBOUND_POLL_KEY,
   FILE_STORAGE_KEY,
   FILE_STORAGE_MARKER_KEY,
@@ -439,5 +467,7 @@ module.exports = {
   emailCustomersOnFileShare,
   emailCustomersOnProof,
   inboundEmailPollingEnabled,
+  emailWelcomeOnAccount,
+  emailOrderConfirmation,
   signupEnabledFromValue,
 };

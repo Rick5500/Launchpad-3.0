@@ -709,6 +709,161 @@ function renderPickupReadyEmail({ letterhead, orderNumber, locationName, locatio
   };
 }
 
+function setPasswordLink(token) {
+  const path = `/set-password?token=${encodeURIComponent(String(token || ''))}`;
+  const base = publicAppUrl();
+  if (!base) return path;
+  return `${base}${path}`;
+}
+
+function signInLink() {
+  const base = publicAppUrl();
+  if (!base) return '/login';
+  return `${base}/login`;
+}
+
+function renderCustomerLetter({ letterhead, subject, heading, lines, link, linkLabel }) {
+  const name = letterhead && letterhead.name ? letterhead.name : '';
+  const footer = footerLines(letterhead);
+  const safeLink = escapeHtml(link || '');
+  const href = String(link || '').replace(/"/g, '%22');
+  const bodyLines = Array.isArray(lines) ? lines : [];
+  const text = [
+    name,
+    '',
+    heading,
+    '',
+    ...bodyLines,
+    '',
+    link ? `${linkLabel || 'Open Launchpad'}:` : '',
+    link || '',
+    '',
+    footerText(footer, { credit: true }).join('\n'),
+  ].filter((line) => line !== undefined).join('\n').replace(/\n{3,}/g, '\n\n');
+
+  const bodyHtml = bodyLines.map((line) => {
+    if (line == null || line === '') return '';
+    return `<p style="margin:0 0 14px;font-size:16px;line-height:1.5;">${escapeHtml(line).replace(/\n/g, '<br>')}</p>`;
+  }).join('');
+  const linkHtml = link
+    ? `<p style="margin:18px 0 0;"><a href="${href}" style="display:inline-block;background:#F58220;color:#111111;text-decoration:none;font-weight:700;padding:12px 18px;font-size:16px;">${escapeHtml(linkLabel || 'Open Launchpad')}</a></p>
+          <p style="margin:12px 0 0;font-size:15px;line-height:1.5;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>`
+    : '';
+  const html = `<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#F4F7FB;font-family:Arial,Helvetica,sans-serif;color:#1B2838;font-size:16px;line-height:1.5;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F7FB;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#ffffff;border:1px solid #E2E8F0;">
+        ${emailBannerHtml(name)}
+        <tr><td style="padding:24px;">
+          <h1 style="margin:0 0 16px;font-size:22px;line-height:1.35;color:#0A2F6E;">${escapeHtml(heading)}</h1>
+          ${bodyHtml}
+          ${linkHtml}
+        </td></tr>
+        ${emailFooterHtml(footer, { credit: true })}
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+  return { subject: safeSubject(subject || heading), text, html };
+}
+
+function renderSetPasswordEmail({ letterhead, displayName, link }) {
+  const who = displayName ? ` ${displayName}` : '';
+  return renderCustomerLetter({
+    letterhead,
+    subject: 'Set your Launchpad password',
+    heading: 'Your Launchpad account is ready',
+    lines: [
+      `Hello${who},`,
+      'An account was created for you at Launchpad. Choose a password to sign in. This message does not include a password.',
+      'The link expires after a few days. If it expires, ask your shop to send a new one.',
+    ],
+    link,
+    linkLabel: 'Set your password',
+  });
+}
+
+function renderWelcomeEmail({ letterhead, displayName, link }) {
+  const who = displayName ? ` ${displayName}` : '';
+  return renderCustomerLetter({
+    letterhead,
+    subject: 'Welcome to Launchpad',
+    heading: 'Welcome to Launchpad',
+    lines: [
+      `Hello${who},`,
+      'Your account is ready. Sign in to place an order, request a quote, or check on work we are producing for you.',
+    ],
+    link,
+    linkLabel: 'Sign in',
+  });
+}
+
+function renderOrderConfirmationEmail({ letterhead, orderNumber, dueDate, dueTime, deliveryMethod, shipTo, link }) {
+  const orderLabel = orderNumber || 'your order';
+  const due = [dueDate, dueTime].filter(Boolean).join(' ');
+  const lines = [
+    `We received order ${orderLabel}.`,
+    due ? `Due: ${due}` : '',
+    deliveryMethod ? `Delivery method: ${deliveryMethod}` : '',
+    shipTo ? `Ship to:\n${shipTo}` : '',
+    'Sign in to view this order. This link opens Launchpad. You need to sign in.',
+  ].filter((line) => line !== '');
+  return renderCustomerLetter({
+    letterhead,
+    subject: `Order ${orderLabel} received`,
+    heading: `Order ${orderLabel} received`,
+    lines,
+    link,
+    linkLabel: 'Sign in to view your order',
+  });
+}
+
+function renderReadyForDeliveryEmail({ letterhead, orderNumber, dueDate, dueTime, deliveryMethod, shipTo, link }) {
+  const orderLabel = orderNumber || 'your order';
+  const due = [dueDate, dueTime].filter(Boolean).join(' ');
+  const lines = [
+    `Order ${orderLabel} is ready for delivery.`,
+    due ? `Due: ${due}` : '',
+    deliveryMethod ? `Delivery method: ${deliveryMethod}` : '',
+    shipTo ? `Ship to:\n${shipTo}` : '',
+    'Sign in to view this order.',
+  ].filter((line) => line !== '');
+  return renderCustomerLetter({
+    letterhead,
+    subject: `Order ${orderLabel} is ready for delivery`,
+    heading: 'Your order is ready for delivery',
+    lines,
+    link,
+    linkLabel: 'Sign in to view your order',
+  });
+}
+
+function renderPickupRequestEmail({ letterhead, contactName, readyDate, readyTime, address, locationName, orderNumber, notes, link }) {
+  const when = [readyDate, readyTime].filter(Boolean).join(' ');
+  const place = locationName ? `We will send a vehicle from our ${locationName} shop.` : 'We will send a vehicle to pick up your originals.';
+  const lines = [
+    contactName ? `Hello ${contactName},` : 'Hello,',
+    'We received your request to pick up originals.',
+    when ? `Ready: ${when}` : '',
+    address ? `Pickup address:\n${address}` : '',
+    place,
+    orderNumber ? `Related order: ${orderNumber}` : '',
+    notes ? `Notes:\n${notes}` : '',
+    'Sign in if you need to review or cancel this request.',
+  ].filter((line) => line !== '');
+  return renderCustomerLetter({
+    letterhead,
+    subject: 'We received your pickup request',
+    heading: 'Pickup request received',
+    lines,
+    link,
+    linkLabel: 'Sign in to view your pickup',
+  });
+}
+
 function renderTestEmail({ letterhead }) {
   const name = letterhead && letterhead.name ? letterhead.name : 'Launchpad';
   const footer = footerLines(letterhead);
@@ -837,6 +992,9 @@ module.exports = {
   publicAppUrl,
   orderFilesLink,
   orderPageLink,
+  appLink,
+  setPasswordLink,
+  signInLink,
   transferFilesLink,
   orderProofLink,
   quoteLink,
@@ -854,6 +1012,11 @@ module.exports = {
   renderProofEmail,
   renderProofChangesEmail,
   renderPickupReadyEmail,
+  renderSetPasswordEmail,
+  renderWelcomeEmail,
+  renderOrderConfirmationEmail,
+  renderReadyForDeliveryEmail,
+  renderPickupRequestEmail,
   renderTestEmail,
   deliver,
   sendTest,
