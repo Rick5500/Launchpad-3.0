@@ -89,6 +89,36 @@ function spawnNode(script, env) {
   });
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForConfirmation(token, orderId) {
+  let last = null;
+  const started = Date.now();
+  while (Date.now() - started < 8000) {
+    const body = await request({ method: 'GET', path: `/api/orders/${orderId}`, token });
+    last = body;
+    const status = body.json && body.json.confirmation && body.json.confirmation.email_status;
+    if (status && status !== 'pending') return body;
+    await delay(25);
+  }
+  throw new Error(`order confirmation did not finish: ${last && last.text}`);
+}
+
+async function waitForPickupMail(token, pickupId) {
+  let last = null;
+  const started = Date.now();
+  while (Date.now() - started < 8000) {
+    const body = await request({ method: 'GET', path: `/api/pickup-requests/${pickupId}`, token });
+    last = body;
+    const status = body.json && body.json.email_status;
+    if (status && status !== 'pending') return body;
+    await delay(25);
+  }
+  throw new Error(`pickup confirmation did not finish: ${last && last.text}`);
+}
+
 function request({ method, path: requestPath, token, json }) {
   return new Promise((resolve, reject) => {
     const body = json != null ? Buffer.from(JSON.stringify(json)) : null;
@@ -456,8 +486,10 @@ async function main() {
       }),
     });
     assert(silentOrder.status === 201, silentOrder.text);
-    assert(silentOrder.json.confirmation.email_sent === false, silentOrder.text);
-    assert(silentOrder.json.confirmation.email_status === 'disabled', silentOrder.text);
+    assert(silentOrder.json.confirmation.email_status === 'pending', 'order create should return before confirmation mail');
+    const silentSettled = await waitForConfirmation(admin.token, silentOrder.json.order.id);
+    assert(silentSettled.json.confirmation.email_sent === false, silentSettled.text);
+    assert(silentSettled.json.confirmation.email_status === 'disabled', silentSettled.text);
     const silentRow = await db.get(`SELECT confirmation_email_sent_at, confirmation_email_status FROM orders WHERE id = ?`, [silentOrder.json.order.id]);
     assert(silentRow && !silentRow.confirmation_email_sent_at && !silentRow.confirmation_email_status, 'a disabled confirmation must not stamp a send');
 
@@ -481,9 +513,11 @@ async function main() {
       }),
     });
     assert(confirmed.status === 201, confirmed.text);
-    assert(confirmed.json.confirmation.email_status === 'sent' && confirmed.json.confirmation.email_sent === true, confirmed.text);
-    assertCustomerMail(confirmed.json.confirmation.preview, 'order confirmation');
-    const confirmBlob = mailBlob(confirmed.json.confirmation.preview);
+    assert(confirmed.json.confirmation.email_status === 'pending', 'order create should return before confirmation mail');
+    const confirmedSettled = await waitForConfirmation(admin.token, confirmed.json.order.id);
+    assert(confirmedSettled.json.confirmation.email_status === 'sent' && confirmedSettled.json.confirmation.email_sent === true, confirmedSettled.text);
+    assertCustomerMail(confirmedSettled.json.confirmation.preview, 'order confirmation');
+    const confirmBlob = mailBlob(confirmedSettled.json.confirmation.preview);
     assert(confirmBlob.includes(confirmed.json.order_number), 'confirmation should include the order number');
     assert(confirmBlob.includes(weekdayAhead()), 'confirmation should include the due date');
     assert(confirmBlob.includes('Accent Truck'), 'confirmation should include the delivery method');
@@ -683,9 +717,11 @@ async function main() {
     });
     assert(originals.status === 201 && originals.json.order.originals_pickup === true, originals.text);
     assert(originals.json.pickup_request && originals.json.pickup_request.id, originals.text);
-    assert(originals.json.pickup_request.email_status === 'sent', JSON.stringify(originals.json.pickup_request));
-    assertCustomerMail(originals.json.pickup_request.preview, 'automatic pickup confirmation');
-    assert(mailBlob(originals.json.pickup_request.preview).includes('pick up'), 'pickup mail should describe the pickup');
+    assert(originals.json.pickup_request.email_status === 'pending', 'order create should return before the pickup confirmation mail');
+    const pickupMail = await waitForPickupMail(opted.token, originals.json.pickup_request.id);
+    assert(pickupMail.json.email_status === 'sent', JSON.stringify(pickupMail.json));
+    assertCustomerMail(pickupMail.json.preview, 'automatic pickup confirmation');
+    assert(mailBlob(pickupMail.json.preview).includes('pick up'), 'pickup mail should describe the pickup');
     const autoRow = await db.get(`SELECT status, source, location_id, customer_id FROM pickup_requests WHERE id = ?`, [originals.json.pickup_request.id]);
     assert(autoRow.status === 'new' && autoRow.source === 'order', JSON.stringify(autoRow));
     assert(Number(autoRow.customer_id) === Number(customerRecord.json.id), 'the automatic pickup belongs to the customer');
