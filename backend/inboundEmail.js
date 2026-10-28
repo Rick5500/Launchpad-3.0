@@ -1,26 +1,24 @@
 const activityLog = require('./activityLog');
 const { matchSender, parseDraft } = require('./emailDraft');
+const emailLoop = require('./emailLoop');
 const graphMail = require('./graphMail');
 const { htmlToText, plainText, singleLine, subjectLine } = require('./htmlText');
 const { httpError } = require('./httpError');
 const { all, get, run } = require('./dbAsync');
+const inboundAlerts = require('./inboundAlerts');
+const inboundAttachments = require('./inboundAttachments');
 const {
-  ALLOWED_EXTENSIONS,
   contentTypeFor,
-  extensionOf,
-  maxUploadBytes,
-  maxUploadMb,
   sanitizeOriginalName,
-  openStored,
-  removeStored,
-  writeNewFile,
   copyToCurrentRoot,
+  removeStored,
+  openStored,
 } = require('./fileStore');
 const { createOrder } = require('./orderService');
 const shopLocations = require('./shopLocations');
 
-const STATUSES = new Set(['new', 'converted', 'dismissed', 'converting']);
-const LIST_STATUSES = new Set(['new', 'converted', 'dismissed']);
+const STATUSES = new Set(['new', 'converted', 'dismissed', 'converting', 'ignored']);
+const LIST_STATUSES = new Set(['new', 'converted', 'dismissed', 'ignored']);
 
 function safeErrorText(err) {
   const message = String((err && (err.publicMessage || err.message)) || 'Mailbox request failed');
@@ -84,18 +82,13 @@ function suggestionFrom(row, customers) {
     job_description: extracted.job_description || '',
     project_name: extracted.project_name || '',
     notes: extracted.notes || '',
+    match_status: row.match_status || matched.match_status || 'unverified',
+    unverified: (row.match_status || 'unverified') !== 'approved',
   };
 }
 
 function presentAttachment(row) {
-  return {
-    id: row.id,
-    original_name: row.original_name,
-    mime_type: row.mime_type || null,
-    size_bytes: row.size_bytes || 0,
-    skipped_reason: row.skipped_reason || null,
-    stored: Boolean(row.stored_name),
-  };
+  return inboundAttachments.presentAttachment(row);
 }
 
 function presentSummary(row, customers) {
@@ -121,13 +114,16 @@ function presentSummary(row, customers) {
       due_date: suggestion.due_date,
       quantity: suggestion.quantity,
       project_name: suggestion.project_name,
+      match_status: suggestion.match_status,
+      unverified: suggestion.unverified,
     },
   };
 }
 
 async function attachmentsFor(emailId) {
   return all(
-    `SELECT id, original_name, mime_type, size_bytes, skipped_reason, stored_name
+    `SELECT id, original_name, mime_type, size_bytes, skipped_reason, stored_name,
+            fetch_state, scan_status, content_encrypted
      FROM inbound_email_attachments
      WHERE inbound_email_id = ?
      ORDER BY id`,
@@ -142,6 +138,9 @@ async function presentDetail(row, customers) {
   return {
     ...summary,
     body_text: row.body_text || '',
+    ignore_reason: row.ignore_reason || null,
+    match_status: row.match_status || suggestion.match_status || 'unverified',
+    unscanned_exception_enabled: inboundAttachments.exceptionEnabled(),
     suggestion,
     attachments: attachments.map(presentAttachment),
   };
@@ -183,9 +182,11 @@ async function listEmails(query, user) {
   const clauses = [];
   if (source.status != null && String(source.status).trim() !== '' && String(source.status).trim() !== 'all') {
     const status = String(source.status).trim().toLowerCase();
-    if (!LIST_STATUSES.has(status)) throw httpError(400, 'status must be new, converted, dismissed, or all');
+    if (!LIST_STATUSES.has(status)) throw httpError(400, 'status must be new, converted, dismissed, ignored, or all');
     clauses.push('e.status = ?');
     params.push(status);
+  } else if (String(source.status || '').trim().toLowerCase() !== 'all') {
+    clauses.push(`e.status != 'ignored'`);
   }
   if (user) {
     const access = await shopLocations.loadAccess(user.userId || user.id);
@@ -239,118 +240,6 @@ function messageBody(message) {
   return htmlToText(content);
 }
 
-async function insertSkipped(emailId, attachment, reason) {
-  const name = sanitizeOriginalName(attachment && attachment.name ? attachment.name : 'attachment');
-  await run(
-    `INSERT OR IGNORE INTO inbound_email_attachments (
-      inbound_email_id, graph_attachment_id, original_name, mime_type, size_bytes, skipped_reason
-    ) VALUES (?,?,?,?,?,?)`,
-    [
-      emailId,
-      attachment && attachment.id ? String(attachment.id).slice(0, 200) : null,
-      name,
-      attachment && attachment.contentType ? String(attachment.contentType).slice(0, 200) : null,
-      Number(attachment && attachment.size) || 0,
-      reason,
-    ]
-  );
-}
-
-async function storeAttachment(emailId, attachment) {
-  const graphId = attachment && attachment.id ? String(attachment.id).slice(0, 200) : null;
-  if (graphId) {
-    const existing = await get(
-      `SELECT id FROM inbound_email_attachments
-       WHERE inbound_email_id = ? AND graph_attachment_id = ?`,
-      [emailId, graphId]
-    );
-    if (existing) return;
-  }
-  const odata = String(attachment && attachment['@odata.type'] || '').toLowerCase();
-  if (attachment && attachment.isInline) {
-    await insertSkipped(emailId, attachment, 'Inline attachments are skipped');
-    return;
-  }
-  if (odata && !odata.includes('fileattachment')) {
-    await insertSkipped(emailId, attachment, 'Only file attachments are saved');
-    return;
-  }
-  const ext = extensionOf(attachment && attachment.name);
-  if (!ALLOWED_EXTENSIONS.has(ext)) {
-    await insertSkipped(emailId, attachment, 'Allowed file types are pdf, images, dwg, zip, and plt');
-    return;
-  }
-  const mime = String(attachment.contentType || '').toLowerCase();
-  if (/text\/html|application\/(javascript|x-msdownload|x-httpd-php|x-sh|xhtml)/.test(mime)) {
-    await insertSkipped(emailId, attachment, 'This file type is not allowed');
-    return;
-  }
-  const declared = Number(attachment.size) || 0;
-  if (declared > maxUploadBytes()) {
-    await insertSkipped(emailId, attachment, `File exceeds the ${maxUploadMb()} MB limit`);
-    return;
-  }
-  const bytes = attachment.contentBytes ? Buffer.from(String(attachment.contentBytes), 'base64') : Buffer.alloc(0);
-  if (!bytes.length) {
-    await insertSkipped(emailId, attachment, 'Empty files are not allowed');
-    return;
-  }
-  if (bytes.length > maxUploadBytes()) {
-    await insertSkipped(emailId, attachment, `File exceeds the ${maxUploadMb()} MB limit`);
-    return;
-  }
-  const written = writeNewFile(ext, bytes);
-  await run(
-    `INSERT OR IGNORE INTO inbound_email_attachments (
-      inbound_email_id, graph_attachment_id, original_name, stored_name, mime_type, size_bytes, storage_root
-    ) VALUES (?,?,?,?,?,?,?)`,
-    [
-      emailId,
-      graphId,
-      sanitizeOriginalName(attachment.name),
-      written.storedName,
-      contentTypeFor(written.storedName),
-      written.size,
-      written.storageRoot,
-    ]
-  );
-}
-
-async function downloadAttachments(emailId, message, token) {
-  if (!message || !message.hasAttachments || !message.id) return;
-  const count = await get(
-    'SELECT COUNT(*) AS count FROM inbound_email_attachments WHERE inbound_email_id = ?',
-    [emailId]
-  );
-  if (count && count.count > 0) return;
-  const headers = {
-    Authorization: `Bearer ${token}`,
-    Accept: 'application/json',
-  };
-  const page = await graphMail.fetchJson(graphMail.attachmentsUrl(message.id), { headers });
-  for (const item of page.value || []) {
-    let attachment = item;
-    try {
-      const ext = extensionOf(attachment && attachment.name);
-      const declared = Number(attachment && attachment.size) || 0;
-      const needsBytes = attachment && !attachment.contentBytes && attachment.id
-        && !attachment.isInline
-        && ALLOWED_EXTENSIONS.has(ext)
-        && declared <= maxUploadBytes();
-      if (needsBytes) {
-        attachment = await graphMail.fetchJson(
-          `${graphMail.attachmentsUrl(message.id)}/${encodeURIComponent(attachment.id)}`,
-          { headers }
-        );
-      }
-      await storeAttachment(emailId, attachment);
-    } catch (err) {
-      console.error('INBOUND ATTACHMENT ERROR:', err.status || '', safeErrorText(err));
-      await insertSkipped(emailId, attachment, 'The attachment could not be saved').catch(() => {});
-    }
-  }
-}
-
 async function locationIdForSender(fromAddress) {
   const matched = matchSender(await loadCustomers(), fromAddress);
   if (matched.customer && matched.customer.location_id != null) {
@@ -363,6 +252,27 @@ async function ingestMessage(message, token) {
   if (!message || !message.id || message['@removed']) return { skipped: true };
   const graphId = String(message.id).slice(0, 400);
   const from = message.from && message.from.emailAddress ? message.from.emailAddress : {};
+  const reason = await emailLoop.ignoreReason(message);
+  if (reason) {
+    await run(
+      `INSERT OR IGNORE INTO inbound_emails (
+        graph_message_id, mailbox, from_address, from_name, subject, received_at,
+        body_text, status, ignore_reason, match_status, location_id, created_at, updated_at
+      ) VALUES (?,?,?,?,?,?,?,'ignored',?, 'unverified', ?, datetime('now'), datetime('now'))`,
+      [
+        graphId,
+        graphMail.mailbox(),
+        singleLine(from.address || '').slice(0, 320),
+        singleLine(from.name || '').slice(0, 200),
+        subjectLine(message.subject || ''),
+        message.receivedDateTime ? String(message.receivedDateTime).slice(0, 40) : null,
+        messageBody(message),
+        reason.slice(0, 500),
+        await locationIdForSender(from.address || ''),
+      ]
+    );
+    return { ignored: true, reason };
+  }
   const subject = subjectLine(message.subject || '');
   const bodyText = messageBody(message);
   const draft = parseDraft(subject, bodyText);
@@ -371,8 +281,8 @@ async function ingestMessage(message, token) {
   const inserted = await run(
     `INSERT OR IGNORE INTO inbound_emails (
       graph_message_id, mailbox, from_address, from_name, subject, received_at,
-      body_text, status, suggestion_json, location_id, created_at, updated_at
-    ) VALUES (?,?,?,?,?,?,?,'new',?,?,datetime('now'),datetime('now'))`,
+      body_text, status, suggestion_json, match_status, location_id, created_at, updated_at
+    ) VALUES (?,?,?,?,?,?,?,'new',?, 'unverified', ?, datetime('now'), datetime('now'))`,
     [
       graphId,
       graphMail.mailbox(),
@@ -385,10 +295,10 @@ async function ingestMessage(message, token) {
       locationId,
     ]
   );
-  const row = await get('SELECT id FROM inbound_emails WHERE graph_message_id = ?', [graphId]);
-  if (!row) return { skipped: true };
+  const row = await get('SELECT id, status FROM inbound_emails WHERE graph_message_id = ?', [graphId]);
+  if (!row || row.status === 'ignored') return { skipped: true };
   try {
-    await downloadAttachments(row.id, message, token);
+    await inboundAttachments.refreshAttachments(row.id, message, token);
   } catch (err) {
     console.error('INBOUND ATTACHMENT ERROR:', err.status || '', safeErrorText(err));
   }
@@ -455,6 +365,7 @@ async function doSync() {
      WHERE id = 1`,
     [resumeLink, watermark, imported]
   );
+  inboundAlerts.notePollSuccess();
   return { imported, duplicates, last_status: 'ok' };
 }
 
@@ -479,6 +390,7 @@ async function recordSyncError(err) {
   } catch (writeErr) {
     console.error('INBOUND MAIL STATUS ERROR:', safeErrorText(writeErr));
   }
+  inboundAlerts.notePollFailure(message);
   return message;
 }
 
@@ -502,20 +414,7 @@ async function attachmentDownload(user, emailId, attachmentId) {
   const email = await loadRow(parseId(emailId));
   if (!email) return null;
   await assertEmailVisible(user, email);
-  const file = await get(
-    `SELECT id, original_name, stored_name, storage_root, skipped_reason
-     FROM inbound_email_attachments
-     WHERE id = ? AND inbound_email_id = ?`,
-    [parseId(attachmentId), parseId(emailId)]
-  );
-  if (!file || file.skipped_reason || !file.stored_name) return null;
-  const opened = openStored(file.stored_name, file.storage_root);
-  if (!opened) return null;
-  return {
-    path: opened.fullPath,
-    name: sanitizeOriginalName(file.original_name),
-    contentType: contentTypeFor(file.stored_name),
-  };
+  return inboundAttachments.attachmentDownload(user, parseId(emailId), parseId(attachmentId));
 }
 
 function parseAttachmentIds(body) {
@@ -554,9 +453,10 @@ function copyStoredFile(storedName, storageRoot) {
 
 async function materializeAttachments(user, emailId, customerId, attachmentIds) {
   const rows = await all(
-    `SELECT id, original_name, stored_name, storage_root, mime_type, size_bytes, order_file_id
+    `SELECT id, original_name, stored_name, storage_root, mime_type, size_bytes, order_file_id, scan_status
      FROM inbound_email_attachments
      WHERE inbound_email_id = ? AND stored_name IS NOT NULL AND skipped_reason IS NULL
+       AND fetch_state = 'fetched' AND scan_status = 'clean'
      ORDER BY id`,
     [emailId]
   );
@@ -671,7 +571,35 @@ async function waitForRow(id) {
   return loadRow(id);
 }
 
-async function convertEmail(user, id, body) {
+async function savedConfirmation(emailId, kind, subjectKey) {
+  return get(
+    `SELECT c.id
+     FROM inbound_email_confirmations c
+     JOIN users u ON u.id = c.confirmed_by
+     WHERE c.inbound_email_id = ? AND c.kind = ? AND lower(c.subject_key) = lower(?)
+       AND u.role IN ('admin', 'manager', 'operator')
+       AND COALESCE(u.is_active, 1) = 1`,
+    [emailId, kind, String(subjectKey)]
+  );
+}
+
+async function assertStoredConfirmations(emailId, customerId, recipient, attachmentIds) {
+  const customer = await savedConfirmation(emailId, 'customer', customerId);
+  if (!customer) throw httpError(400, 'A staff user must confirm the customer before converting');
+  const address = String(recipient || '').trim().toLowerCase();
+  const recipientRow = await savedConfirmation(emailId, 'recipient', address);
+  if (!recipientRow) throw httpError(400, 'A staff user must confirm the confirmation recipient before converting');
+  for (const attachmentId of attachmentIds) {
+    const confirmed = await savedConfirmation(emailId, 'attachment', attachmentId);
+    if (!confirmed) throw httpError(400, 'A staff user must confirm each attachment before converting');
+  }
+}
+
+function isSourceConstraint(err) {
+  return /source_inbound_email_id|idx_orders_source_inbound_email/i.test(String(err && err.message || ''));
+}
+
+async function convertEmail(user, id, body, options = {}) {
   const emailId = parseId(id);
   await recoverStaleConversions();
   const claim = await run(
@@ -686,6 +614,7 @@ async function convertEmail(user, id, body) {
     await assertEmailVisible(user, row);
     if (row.status === 'converted') throw alreadyConverted(row);
     if (row.status === 'dismissed') throw httpError(409, 'This email was dismissed');
+    if (row.status === 'ignored') throw httpError(409, 'This email was ignored');
     throw httpError(409, 'This email is already being converted');
   }
 
@@ -704,6 +633,10 @@ async function convertEmail(user, id, body) {
   let materialized = [];
   try {
     const payload = { ...(body || {}) };
+    delete payload.source_inbound_email_id;
+    delete payload.confirmations;
+    delete payload.confirmed_by;
+    delete payload.crashAfterInsert;
     if (payload.location_id == null || String(payload.location_id).trim() === '') {
       payload.location_id = claimed && claimed.location_id ? claimed.location_id : null;
     }
@@ -720,20 +653,19 @@ async function convertEmail(user, id, body) {
     }
     const attachmentIds = parseAttachmentIds(payload);
     delete payload.attachment_ids;
-    const materializedResult = await materializeAttachments(user, emailId, customerId, attachmentIds);
+    const chosen = await inboundAttachments.assertConvertible(emailId, attachmentIds);
+    const chosenIds = chosen.map((row) => row.id);
+    await assertStoredConfirmations(emailId, customerId, payload.email, chosenIds);
+    const materializedResult = await materializeAttachments(user, emailId, customerId, chosenIds);
     materialized = materializedResult.created;
     const merged = [...(Array.isArray(payload.file_ids) ? payload.file_ids : []), ...materializedResult.ids];
     payload.file_ids = [...new Set(merged)];
-    created = await createOrder(user, payload);
+    created = await createOrder(user, payload, new Date(), {
+      sourceInboundEmailId: emailId,
+      crashAfterInsert: Boolean(options.crashAfterInsert)
+        || (process.env.NODE_ENV === 'test' && process.env.INBOUND_CONVERT_CRASH === 'after-insert'),
+    });
     const orderId = created && created.order ? created.order.id : null;
-    const updated = await run(
-      `UPDATE inbound_emails
-       SET status = 'converted', order_id = ?, converted_by = ?, converted_at = datetime('now'),
-           updated_at = datetime('now')
-       WHERE id = ? AND status = 'converting'`,
-      [orderId, Number(user.userId || user.id), emailId]
-    );
-    if (!updated.changes) throw httpError(409, 'This email was already converted');
     await activityLog.record(Number(user.userId || user.id), 'inbound_email.converted', 'inbound_email', emailId, {
       order_id: orderId,
       order_number: created.order_number || null,
@@ -743,6 +675,21 @@ async function convertEmail(user, id, body) {
     });
     return created;
   } catch (err) {
+    if (isSourceConstraint(err)) {
+      const existing = await get(
+        'SELECT id, order_number FROM orders WHERE source_inbound_email_id = ?',
+        [emailId]
+      );
+      if (existing) {
+        await run(
+          `UPDATE inbound_emails
+           SET status = 'converted', order_id = ?, updated_at = datetime('now')
+           WHERE id = ? AND status = 'converting'`,
+          [existing.id, emailId]
+        ).catch(() => {});
+        throw alreadyConverted({ order_id: existing.id, order_number: existing.order_number });
+      }
+    }
     if (!created) {
       await discardMaterialized(materialized).catch((cleanupErr) => {
         console.error('INBOUND FILE CLEANUP ERROR:', safeErrorText(cleanupErr));
@@ -756,6 +703,75 @@ async function convertEmail(user, id, body) {
     }
     throw err;
   }
+}
+
+async function rememberConfirmation(emailId, kind, subjectKey, userId) {
+  await run(
+    `INSERT INTO inbound_email_confirmations (inbound_email_id, kind, subject_key, confirmed_by, confirmed_at)
+     VALUES (?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(inbound_email_id, kind, subject_key)
+     DO UPDATE SET confirmed_by = excluded.confirmed_by, confirmed_at = datetime('now')`,
+    [emailId, kind, String(subjectKey), userId]
+  );
+}
+
+async function confirmFields(user, id, body) {
+  const emailId = parseId(id);
+  const row = await loadRow(emailId);
+  if (!row) throw httpError(404, 'Email not found');
+  await assertEmailVisible(user, row);
+  if (row.status !== 'new') throw httpError(409, 'This email cannot be confirmed');
+  const userId = Number(user.userId || user.id);
+  const staff = await get(
+    `SELECT id FROM users
+     WHERE id = ? AND role IN ('admin', 'manager', 'operator') AND COALESCE(is_active, 1) = 1`,
+    [userId]
+  );
+  if (!staff) throw httpError(403, 'Only staff can confirm an email');
+  const source = body || {};
+  if (source.customer_id != null && String(source.customer_id).trim() !== '') {
+    const customerId = Number(source.customer_id);
+    const customer = await get(
+      `SELECT id FROM users WHERE id = ? AND role = 'customer' AND COALESCE(is_active, 1) = 1`,
+      [customerId]
+    );
+    if (!customer) throw httpError(400, 'customer_id must be an existing customer');
+    await rememberConfirmation(emailId, 'customer', customerId, userId);
+    await run(
+      `UPDATE inbound_emails SET match_status = 'approved', updated_at = datetime('now') WHERE id = ?`,
+      [emailId]
+    );
+  }
+  if (source.recipient != null && String(source.recipient).trim() !== '') {
+    const recipient = String(source.recipient).trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(recipient)) {
+      throw httpError(400, 'recipient must be an email address');
+    }
+    await rememberConfirmation(emailId, 'recipient', recipient, userId);
+  }
+  if (source.attachment_ids != null) {
+    const ids = parseAttachmentIds({ attachment_ids: source.attachment_ids });
+    for (const attachmentId of ids) {
+      const file = await get(
+        `SELECT id, fetch_state FROM inbound_email_attachments WHERE id = ? AND inbound_email_id = ?`,
+        [attachmentId, emailId]
+      );
+      if (!file) throw httpError(400, 'An attachment on this email was not found');
+      if (file.fetch_state === 'pending') {
+        throw httpError(409, 'An attachment is still pending and cannot be confirmed yet');
+      }
+      await rememberConfirmation(emailId, 'attachment', attachmentId, userId);
+    }
+  }
+  return getEmail(emailId, user);
+}
+
+async function releaseAttachment(user, id, attachmentId, body) {
+  const emailId = parseId(id);
+  const row = await loadRow(emailId);
+  if (!row) throw httpError(404, 'Email not found');
+  await assertEmailVisible(user, row);
+  return inboundAttachments.releaseAttachment(user, emailId, parseId(attachmentId), body || {});
 }
 
 async function dismissEmail(user, id) {
@@ -797,6 +813,8 @@ module.exports = {
   safeErrorText,
   attachmentDownload,
   convertEmail,
+  confirmFields,
+  releaseAttachment,
   dismissEmail,
   readState,
 };

@@ -10,6 +10,7 @@ import UsersPage from './routes/UsersPage';
 import SystemSettingsPage from './routes/SystemSettingsPage';
 import LocationsPage from './routes/LocationsPage';
 import ActivityLogPage from './routes/ActivityLogPage';
+import AccountAuditPage from './routes/AccountAuditPage';
 import BarcodeSettingsPage from './routes/BarcodeSettingsPage';
 import WorkOrdersList from './routes/WorkOrdersList';
 import SendProofPage from './routes/SendProofPage';
@@ -852,6 +853,7 @@ function AppRoutes() {
         <Route path="settings" element={<ProtectedRoute roles={['admin']}><SystemSettingsPage /></ProtectedRoute>} />
         <Route path="locations" element={<ProtectedRoute roles={['admin']}><LocationsPage /></ProtectedRoute>} />
         <Route path="activity-log" element={<ProtectedRoute roles={['admin']}><ActivityLogPage /></ProtectedRoute>} />
+        <Route path="account-audit" element={<ProtectedRoute roles={['admin']}><AccountAuditPage /></ProtectedRoute>} />
         <Route path="barcode-settings" element={<ProtectedRoute roles={['admin']}><BarcodeSettingsPage /></ProtectedRoute>} />
         <Route path="admin" element={<ProtectedRoute roles={['admin']}><PlaceholderPage title="Admin" /></ProtectedRoute>} />
         <Route path="admin/departments" element={<ProtectedRoute roles={['admin']}><DepartmentsAdmin /></ProtectedRoute>} />

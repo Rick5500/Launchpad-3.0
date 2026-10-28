@@ -35,6 +35,12 @@ async function resetUserPassword({ user, password, actorId, exceptToken }) {
   });
   auth.clearSessionsForUser(user.id, exceptToken || null);
   auth.clearLoginFailuresForUsername(user.username);
+  try {
+    const accountMail = require('./accountMail');
+    await accountMail.sendPasswordResetNotice(user);
+  } catch (err) {
+    console.error('PASSWORD RESET EMAIL ERROR:', err && err.message ? err.message : 'failed');
+  }
   return { id: user.id, username: user.username, password };
 }
 

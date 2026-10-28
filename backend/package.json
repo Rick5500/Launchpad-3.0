@@ -29,7 +29,8 @@
     "verify:locations": "node scripts/verify-locations.js",
     "verify:pickup": "node scripts/verify-pickup.js",
     "verify:customer-notify": "node scripts/verify-customer-notify.js",
-    "verify:phase1-19": "npm run verify:phase1 && npm run verify:phase2 && npm run verify:phase3 && npm run verify:phase4 && npm run verify:phase5 && npm run verify:phase6 && npm run verify:phase7 && npm run verify:phase8 && npm run verify:phase9 && npm run verify:phase10 && npm run verify:phase11 && npm run verify:phase12 && npm run verify:phase13 && npm run verify:phase14 && npm run verify:phase15 && npm run verify:phase16 && npm run verify:phase17 && npm run verify:phase18 && npm run verify:phase19 && npm run verify:quotes && npm run verify:locations && npm run verify:pickup && npm run verify:customer-notify"
+    "verify:email-security": "node scripts/verify-email-security.js",
+    "verify:phase1-19": "npm run verify:phase1 && npm run verify:phase2 && npm run verify:phase3 && npm run verify:phase4 && npm run verify:phase5 && npm run verify:phase6 && npm run verify:phase7 && npm run verify:phase8 && npm run verify:phase9 && npm run verify:phase10 && npm run verify:phase11 && npm run verify:phase12 && npm run verify:phase13 && npm run verify:phase14 && npm run verify:phase15 && npm run verify:phase16 && npm run verify:phase17 && npm run verify:phase18 && npm run verify:phase19 && npm run verify:quotes && npm run verify:locations && npm run verify:pickup && npm run verify:customer-notify && npm run verify:email-security"
   },
   "dependencies": {
     "@xmldom/xmldom": "^0.9.12",

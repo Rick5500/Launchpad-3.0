@@ -30,7 +30,7 @@ export default function SystemSettingsPage() {
     email_customers_on_proof: true,
     email_welcome_on_account: true,
     email_order_confirmation: true,
-    inbound_email_polling_enabled: true,
+    inbound_email_polling_enabled: false,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -58,7 +58,7 @@ export default function SystemSettingsPage() {
       email_customers_on_proof: body.email_customers_on_proof !== false,
       email_welcome_on_account: body.email_welcome_on_account !== false,
       email_order_confirmation: body.email_order_confirmation !== false,
-      inbound_email_polling_enabled: body.inbound_email_polling_enabled !== false,
+      inbound_email_polling_enabled: body.inbound_email_polling_enabled === true,
     });
     if (body.file_storage) setStoragePath(body.file_storage.path || '');
   }

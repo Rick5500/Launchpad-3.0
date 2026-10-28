@@ -67,6 +67,10 @@ export default function EmailOrders() {
   const [checking, setChecking] = useState(false);
   const [email, setEmail] = useState(null);
   const [dismissing, setDismissing] = useState(false);
+  const [releaseReason, setReleaseReason] = useState('');
+  const [releaseToken, setReleaseToken] = useState('');
+  const [releaseFileId, setReleaseFileId] = useState(null);
+  const [releasing, setReleasing] = useState(false);
 
   async function loadStatus() {
     const response = await authFetch('/api/inbound-emails/status');
@@ -181,6 +185,48 @@ export default function EmailOrders() {
       setError(err.message || 'Unable to dismiss this email');
     } finally {
       setDismissing(false);
+    }
+  }
+
+  async function requestRelease(file) {
+    setReleasing(true);
+    setError('');
+    try {
+      const response = await authFetch(`/api/inbound-emails/${email.id}/attachments/${file.id}/release`, {
+        method: 'POST',
+        body: JSON.stringify({ exception: true, reason: releaseReason }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Unable to request a release');
+      setReleaseFileId(file.id);
+      setReleaseToken(body.confirm_token || '');
+    } catch (err) {
+      setError(err.message || 'Unable to request a release');
+    } finally {
+      setReleasing(false);
+    }
+  }
+
+  async function confirmRelease(file) {
+    setReleasing(true);
+    setError('');
+    try {
+      const response = await authFetch(`/api/inbound-emails/${email.id}/attachments/${file.id}/release`, {
+        method: 'POST',
+        body: JSON.stringify({ exception: true, reason: releaseReason, confirm_token: releaseToken }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Unable to confirm the release');
+      setReleaseToken('');
+      setReleaseFileId(null);
+      setReleaseReason('');
+      const detail = await authFetch(`/api/inbound-emails/${email.id}`);
+      const detailBody = await detail.json().catch(() => ({}));
+      if (detail.ok) setEmail(detailBody);
+    } catch (err) {
+      setError(err.message || 'Unable to confirm the release');
+    } finally {
+      setReleasing(false);
     }
   }
 
@@ -316,15 +362,26 @@ export default function EmailOrders() {
             >
               {email.body_text || 'This message has no body text.'}
             </Typography>
-            {email.suggestion?.quantity || email.suggestion?.po_number || email.suggestion?.due_date ? (
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-                Suggested
-                {email.suggestion.po_number ? ` · PO ${email.suggestion.po_number}` : ''}
-                {email.suggestion.quantity ? ` · Quantity ${email.suggestion.quantity}` : ''}
-                {email.suggestion.due_date ? ` · Due ${email.suggestion.due_date}` : ''}
-                {email.suggestion.match === 'domain' ? ' · Customer matched by domain' : ''}
-                {email.suggestion.match === 'email' ? ' · Customer matched by email' : ''}
-              </Typography>
+            {email.suggestion?.quantity || email.suggestion?.po_number || email.suggestion?.due_date || email.suggestion?.match ? (
+              <Box sx={{ mt: 2 }} data-testid="unverified-email-fields">
+                <Typography variant="body2" sx={{ color: brand.orangeDark, fontWeight: 700 }}>
+                  Unverified — taken from the email. This feature contains no AI.
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mt: 0.75 }}>
+                  {email.suggestion.match ? <Chip size="small" label={`Customer suggestion (${email.suggestion.match}) · Unverified`} /> : <Chip size="small" label="No customer match · Unverified" />}
+                  {email.suggestion.po_number ? <Chip size="small" label={`PO ${email.suggestion.po_number} · Unverified`} /> : null}
+                  {email.suggestion.quantity ? <Chip size="small" label={`Quantity ${email.suggestion.quantity} · Unverified`} /> : null}
+                  {email.suggestion.due_date ? <Chip size="small" label={`Due ${email.suggestion.due_date} · Unverified`} /> : null}
+                  {email.suggestion.project_name ? <Chip size="small" label={`Job ${email.suggestion.project_name} · Unverified`} /> : null}
+                </Box>
+                {email.match_status === 'approved' ? (
+                  <Typography variant="body2" sx={{ mt: 0.75 }}>The customer suggestion was approved by staff.</Typography>
+                ) : (
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
+                    A matching address or company domain is only a suggestion until a staff user approves the customer.
+                  </Typography>
+                )}
+              </Box>
             ) : null}
             {!email.suggestion?.customer_id && email.suggestion?.candidate_ids?.length > 1 ? (
               <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
@@ -333,21 +390,62 @@ export default function EmailOrders() {
             ) : null}
           </SectionCard>
 
-          <SectionCard title="Attachments" subtitle="Files that are not an allowed type or are over the upload limit are skipped.">
+          <SectionCard title="Attachments" subtitle="New files stay quarantined until the virus scanner reports them clean. A placeholder is not a file.">
+            {(email.attachments || []).some((file) => file.fetch_state === 'pending') ? (
+              <Alert severity="warning" sx={{ mb: 1 }}>An attachment is still pending. This email cannot be converted yet.</Alert>
+            ) : null}
             {(email.attachments || []).length === 0 ? <Typography color="text.secondary">No attachments.</Typography> : null}
             {(email.attachments || []).map((file) => (
-              <Box key={file.id} sx={{ display: 'flex', gap: 1, alignItems: 'center', mb: 0.75, flexWrap: 'wrap' }}>
-                <Typography sx={{ overflowWrap: 'anywhere' }}>{file.original_name}</Typography>
-                {file.skipped_reason ? (
-                  <Typography variant="body2" color="text.secondary">{file.skipped_reason}</Typography>
-                ) : (
-                  <Button
-                    size="small"
-                    onClick={() => downloadAuthorized(`/api/inbound-emails/${email.id}/attachments/${file.id}/download`, file.original_name)}
-                  >
-                    Download
-                  </Button>
-                )}
+              <Box key={file.id} sx={{ mb: 1.25 }}>
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Typography sx={{ overflowWrap: 'anywhere' }}>{file.original_name}</Typography>
+                  {file.fetch_state === 'pending' ? <Chip size="small" label="Pending" /> : null}
+                  {file.fetch_state === 'failed' ? <Chip size="small" label="Fetch failed" /> : null}
+                  {file.clean ? <Chip size="small" label="Scanned clean" /> : null}
+                  {file.quarantined ? <Chip size="small" color="warning" label={file.encrypted ? 'Encrypted · quarantined' : 'Unverified · quarantined'} /> : null}
+                  {file.exception ? <Chip size="small" color="warning" label="Exception · download only" /> : null}
+                  {file.skipped_reason ? (
+                    <Typography variant="body2" color="text.secondary">{file.skipped_reason}</Typography>
+                  ) : null}
+                  {file.clean || (file.exception && isAdmin) ? (
+                    <Button
+                      size="small"
+                      onClick={() => downloadAuthorized(`/api/inbound-emails/${email.id}/attachments/${file.id}/download`, file.original_name)}
+                    >
+                      Download
+                    </Button>
+                  ) : null}
+                </Box>
+                {file.exception ? (
+                  <Alert severity="warning" sx={{ mt: 0.75 }} data-testid="isolated-machine-warning">
+                    {file.release_warning || 'Open this file only on an isolated machine. It is download-only.'}
+                  </Alert>
+                ) : null}
+                {isAdmin && email.unscanned_exception_enabled && file.quarantined && !file.exception ? (
+                  <Box sx={{ mt: 0.75, display: 'grid', gap: 0.75, maxWidth: 520 }}>
+                    <TextField
+                      size="small"
+                      label="Exception reason"
+                      value={releaseFileId === file.id || !releaseFileId ? releaseReason : ''}
+                      onChange={(event) => {
+                        setReleaseFileId(file.id);
+                        setReleaseReason(event.target.value);
+                      }}
+                    />
+                    {releaseFileId === file.id && releaseToken ? (
+                      <Button variant="contained" color="warning" disabled={releasing} onClick={() => confirmRelease(file)}>
+                        Confirm release
+                      </Button>
+                    ) : (
+                      <Button variant="outlined" disabled={releasing || releaseReason.trim().length < 8} onClick={() => requestRelease(file)}>
+                        Request exception release
+                      </Button>
+                    )}
+                  </Box>
+                ) : null}
+                {isAdmin && !email.unscanned_exception_enabled && file.quarantined ? (
+                  <Typography variant="body2" color="text.secondary">Releasing an unscanned file is turned off.</Typography>
+                ) : null}
               </Box>
             ))}
             {email.status === 'new' ? (

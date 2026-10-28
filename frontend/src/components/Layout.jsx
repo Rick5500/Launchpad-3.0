@@ -81,6 +81,7 @@ const staffNav = [
   { title: 'System Settings', route: '/settings', icon: <SettingsIcon />, roles: ['admin'] },
   { title: 'Notifications', route: '/notifications', icon: <NotificationsIcon />, roles: ['admin', 'operator', 'manager'] },
   { title: 'Activity Log', route: '/activity-log', icon: <HistoryIcon />, roles: ['admin'] },
+  { title: 'Account Audit', route: '/account-audit', icon: <HistoryIcon />, roles: ['admin'] },
   { title: 'Barcode Settings', route: '/barcode-settings', icon: <QrCode2Icon />, roles: ['admin'] },
 ];
 
@@ -125,6 +126,7 @@ function pageTitle(pathname) {
     ['/settings', 'System Settings'],
     ['/notifications', 'Notifications'],
     ['/activity-log', 'Activity Log'],
+    ['/account-audit', 'Account Audit'],
     ['/barcode-settings', 'Barcode Settings'],
     ['/scan', 'Scan'],
     ['/production-board', 'Production Board'],

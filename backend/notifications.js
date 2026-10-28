@@ -121,6 +121,17 @@ function insertNotifications(items, cb) {
   );
 }
 
+function notifyInboundMailAlert(item, cb) {
+  if (!item || !item.dedupeKey) return cb(null, []);
+  insertNotifications([{
+    type: 'inbound_mail_alert',
+    title: item.title || 'Email Orders needs attention',
+    body: item.body || '',
+    customerId: null,
+    dedupeKey: item.dedupeKey,
+  }], cb);
+}
+
 function notifyPickupRequested(item, cb) {
   if (!item || !item.pickupId) return cb(null, []);
   const who = item.company || item.contactName || 'A customer';
@@ -430,10 +441,13 @@ function visibility(user, access) {
       params.push(department);
     }
   }
+  if (user && user.role !== 'admin' && user.role !== 'customer') {
+    clauses.push(`n.type != 'inbound_mail_alert'`);
+  }
   if (access && !shopLocations.seesAll(access) && user && user.role !== 'customer') {
     const pred = shopLocations.predicate('n.location_id', access);
     if (pred.sql) {
-      clauses.push(pred.sql);
+      clauses.push(`(n.type = 'inbound_mail_alert' OR ${pred.sql})`);
       params.push(...pred.params);
     }
   }
@@ -579,6 +593,7 @@ module.exports = {
   notifyQuoteAccepted,
   notifyQuoteRequested,
   notifyQuoteDeclined,
+  notifyInboundMailAlert,
   checkDeliveryNotifications,
   listNotifications,
   markRead,

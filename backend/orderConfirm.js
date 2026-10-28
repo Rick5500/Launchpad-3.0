@@ -130,8 +130,17 @@ async function deliverOnce(orderId) {
       subject: rendered.subject,
       text: rendered.text,
       html: rendered.html,
+      noticeType: 'confirmation',
     });
     const status = sent && sent.status ? sent.status : 'failed';
+    const customerNotices = require('./customerNotices');
+    await customerNotices.recordOrderNotice({
+      orderId,
+      channel: 'email',
+      noticeType: 'confirmation',
+      recipient: to,
+      result: status,
+    });
     if (status === 'sent') {
       await run(
         `UPDATE orders

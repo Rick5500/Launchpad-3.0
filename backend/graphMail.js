@@ -23,12 +23,21 @@ function isConfigured() {
   );
 }
 
+const PRODUCTION_LOGIN = 'https://login.microsoftonline.com';
+const PRODUCTION_GRAPH = 'https://graph.microsoft.com';
+
+function isProduction() {
+  return String(process.env.NODE_ENV || '').trim() === 'production';
+}
+
 function loginBase() {
-  return (envTrim('M365_LOGIN_BASE_URL') || 'https://login.microsoftonline.com').replace(/\/$/, '');
+  if (isProduction()) return PRODUCTION_LOGIN;
+  return (envTrim('M365_LOGIN_BASE_URL') || PRODUCTION_LOGIN).replace(/\/$/, '');
 }
 
 function graphBase() {
-  return (envTrim('M365_GRAPH_BASE_URL') || 'https://graph.microsoft.com').replace(/\/$/, '');
+  if (isProduction()) return PRODUCTION_GRAPH;
+  return (envTrim('M365_GRAPH_BASE_URL') || PRODUCTION_GRAPH).replace(/\/$/, '');
 }
 
 function mailbox() {
@@ -99,12 +108,19 @@ function assertAllowed(url, kind) {
   } catch (err) {
     throw graphError('Refusing a mailbox request with an invalid address', 400);
   }
+  if (parsed.protocol !== 'https:' && (isProduction() || parsed.protocol !== 'http:')) {
+    throw graphError('Refusing a mailbox request that is not https', 400);
+  }
+  if (isProduction()) {
+    const expected = new URL(kind === 'login' ? PRODUCTION_LOGIN : PRODUCTION_GRAPH);
+    if (parsed.protocol !== 'https:' || parsed.origin !== expected.origin) {
+      throw graphError('Refusing a mailbox request outside Microsoft 365', 400);
+    }
+    return;
+  }
   const base = new URL(kind === 'login' ? loginBase() : graphBase());
   if (parsed.origin !== base.origin) {
     throw graphError('Refusing a mailbox request outside the configured host', 400);
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw graphError('Refusing a mailbox request with an unsupported protocol', 400);
   }
 }
 
@@ -198,7 +214,7 @@ function folderSegment() {
 
 function initialDeltaUrl(watermark) {
   const since = watermark || new Date().toISOString();
-  const select = 'id,subject,receivedDateTime,from,body,bodyPreview,hasAttachments';
+  const select = 'id,subject,receivedDateTime,from,body,bodyPreview,hasAttachments,internetMessageHeaders';
   const filter = `receivedDateTime ge ${since}`;
   const params = new URLSearchParams();
   params.set('$select', select);
