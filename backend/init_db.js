@@ -1005,10 +1005,19 @@ async function ensureInboundEmails() {
     { name: 'match_status', definition: "TEXT DEFAULT 'unverified'" },
     { name: 'ignore_reason', definition: 'TEXT' },
     { name: 'loop_check_note', definition: 'TEXT' },
+    { name: 'headers_status', definition: 'TEXT' },
+    { name: 'headers_attempts', definition: 'INTEGER DEFAULT 0' },
+    { name: 'headers_next_fetch_at', definition: 'DATETIME' },
     { name: 'location_confirmed', definition: 'INTEGER DEFAULT 0' },
   ]);
   await run(`UPDATE inbound_emails SET match_status = 'unverified' WHERE match_status IS NULL OR trim(match_status) = ''`);
   await run(`UPDATE inbound_emails SET location_confirmed = 0 WHERE location_confirmed IS NULL`);
+  await run(
+    `UPDATE inbound_emails
+     SET headers_status = 'missing'
+     WHERE headers_status IS NULL AND loop_check_note LIKE '%could not be read%'`
+  );
+  await run(`UPDATE inbound_emails SET headers_status = 'read' WHERE headers_status IS NULL`);
   await run(
     `UPDATE inbound_emails
      SET location_confirmed = 1

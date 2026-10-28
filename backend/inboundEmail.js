@@ -140,6 +140,7 @@ async function presentDetail(row, customers) {
     body_text: row.body_text || '',
     ignore_reason: row.ignore_reason || null,
     loop_check_note: row.loop_check_note || null,
+    headers_missing: row.headers_status === 'missing',
     location_confirmed: Number(row.location_confirmed) === 1,
     match_status: row.match_status || suggestion.match_status || 'unverified',
     unscanned_exception_enabled: inboundAttachments.exceptionEnabled(),
@@ -248,6 +249,13 @@ function messageBody(message) {
   return htmlToText(content);
 }
 
+function headerRetryDelay() {
+  const override = Number(process.env.INBOUND_ATTACHMENT_BACKOFF_MS);
+  const millis = Number.isFinite(override) && override >= 0 ? override : 60000;
+  const seconds = Math.max(1, Math.round(millis / 1000));
+  return `+${seconds} seconds`;
+}
+
 async function intakeLocationId() {
   return shopLocations.defaultLocationId();
 }
@@ -295,9 +303,9 @@ async function ingestMessage(message, token) {
     await run(
       `INSERT OR IGNORE INTO inbound_emails (
         graph_message_id, mailbox, from_address, from_name, subject, received_at,
-        body_text, status, ignore_reason, loop_check_note, match_status, location_id,
+        body_text, status, ignore_reason, loop_check_note, match_status, headers_status, location_id,
         location_confirmed, created_at, updated_at
-      ) VALUES (?,?,?,?,?,?,?,'ignored',?,?, 'unverified', ?, 0, datetime('now'), datetime('now'))`,
+      ) VALUES (?,?,?,?,?,?,?,'ignored',?,?, 'unverified', 'read', ?, 0, datetime('now'), datetime('now'))`,
       [
         graphId,
         graphMail.mailbox(),
@@ -317,12 +325,14 @@ async function ingestMessage(message, token) {
   const bodyText = messageBody(message);
   const draft = parseDraft(subject, bodyText);
   const received = message.receivedDateTime ? String(message.receivedDateTime).slice(0, 40) : null;
+  const headersMissing = loaded.note.includes('could not be read');
   const inserted = await run(
     `INSERT OR IGNORE INTO inbound_emails (
       graph_message_id, mailbox, from_address, from_name, subject, received_at,
-      body_text, status, suggestion_json, match_status, loop_check_note, location_id,
+      body_text, status, suggestion_json, match_status, loop_check_note, headers_status,
+      headers_attempts, headers_next_fetch_at, location_id,
       location_confirmed, created_at, updated_at
-    ) VALUES (?,?,?,?,?,?,?,'new',?, 'unverified', ?, ?, 0, datetime('now'), datetime('now'))`,
+    ) VALUES (?,?,?,?,?,?,?,'new',?, 'unverified', ?, ?, ?, datetime('now', ?), ?, 0, datetime('now'), datetime('now'))`,
     [
       graphId,
       graphMail.mailbox(),
@@ -333,6 +343,9 @@ async function ingestMessage(message, token) {
       bodyText,
       JSON.stringify(draft),
       loaded.note,
+      headersMissing ? 'missing' : 'read',
+      headersMissing ? 1 : 0,
+      headerRetryDelay(),
       locationId,
     ]
   );
@@ -701,6 +714,7 @@ async function convertEmail(user, id, body, options = {}) {
     delete payload.attachment_ids;
     const chosen = await inboundAttachments.assertConvertible(emailId, attachmentIds);
     const chosenIds = chosen.map((row) => row.id);
+    await assertConversionGaps(emailId);
     await assertStoredConfirmations(emailId, customerId, payload.email, chosenIds);
     const materializedResult = await materializeAttachments(user, emailId, customerId, chosenIds);
     materialized = materializedResult.created;
@@ -748,6 +762,30 @@ async function convertEmail(user, id, body, options = {}) {
       ).catch(() => {});
     }
     throw err;
+  }
+}
+
+async function assertConversionGaps(emailId) {
+  const row = await get('SELECT headers_status FROM inbound_emails WHERE id = ?', [emailId]);
+  if (row && row.headers_status === 'missing') {
+    const ack = await savedConfirmation(emailId, 'headers_missing', 'acknowledge');
+    if (!ack) {
+      throw httpError(409, 'Message headers are still missing. Wait for the retry, or acknowledge that they are missing.');
+    }
+  }
+  if (row && row.headers_status === 'reading') {
+    throw httpError(409, 'Message headers are still being read.');
+  }
+  const expired = await all(
+    `SELECT id, original_name FROM inbound_email_attachments
+     WHERE inbound_email_id = ? AND fetch_state = 'expired'`,
+    [emailId]
+  );
+  for (const file of expired) {
+    const ack = await savedConfirmation(emailId, 'expired_attachment', file.id);
+    if (!ack) {
+      throw httpError(409, `Attachment ${file.original_name} expired. Acknowledge that this order proceeds without that file.`);
+    }
   }
 }
 
@@ -810,6 +848,30 @@ async function confirmFields(user, id, body) {
         throw httpError(409, 'An attachment is still pending and cannot be confirmed yet');
       }
       await rememberConfirmation(emailId, 'attachment', attachmentId, userId);
+    }
+  }
+  if (source.acknowledge_missing_headers === true) {
+    await rememberConfirmation(emailId, 'headers_missing', 'acknowledge', userId);
+    await activityLog.record(userId, 'inbound_email.headers_missing_acknowledged', 'inbound_email', emailId, {
+      message: 'A staff user acknowledged that message headers are missing and the order may proceed',
+    }).catch(() => {});
+  }
+  if (source.expired_attachment_ids != null) {
+    const ids = parseAttachmentIds({ attachment_ids: source.expired_attachment_ids });
+    for (const attachmentId of ids) {
+      const file = await get(
+        `SELECT id, original_name, fetch_state FROM inbound_email_attachments WHERE id = ? AND inbound_email_id = ?`,
+        [attachmentId, emailId]
+      );
+      if (!file || file.fetch_state !== 'expired') {
+        throw httpError(400, 'Only an expired attachment can be acknowledged');
+      }
+      await rememberConfirmation(emailId, 'expired_attachment', attachmentId, userId);
+      await activityLog.record(userId, 'inbound_email.expired_attachment_acknowledged', 'inbound_email', emailId, {
+        attachment_id: attachmentId,
+        original_name: file.original_name,
+        message: `A staff user acknowledged that the order proceeds without expired file ${file.original_name}`,
+      }).catch(() => {});
     }
   }
   return getEmail(emailId, user);

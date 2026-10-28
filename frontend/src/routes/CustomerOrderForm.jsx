@@ -573,7 +573,8 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
   const [contactName, setContactName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
-  const [confirmCustomer, setConfirmCustomer] = useState(false);
+  const [ackHeaders, setAckHeaders] = useState(false);
+  const [ackExpired, setAckExpired] = useState({});
   const [confirmRecipient, setConfirmRecipient] = useState(false);
   const [confirmedAttachments, setConfirmedAttachments] = useState({});
   const [emailFields, setEmailFields] = useState(() => new Set());
@@ -1171,8 +1172,15 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
       if (inboundEmail) {
         const attachmentIds = looseFiles.filter((file) => file.inbound).map((file) => file.attachment_id);
         payload.attachment_ids = attachmentIds;
-        if ((inboundEmail.attachments || []).some((file) => file.fetch_state === 'pending')) {
+        if ((inboundEmail.attachments || []).some((file) => file.fetch_state === 'pending' || file.fetch_state === 'failed' || file.fetch_state === 'fetching')) {
           throw new Error('An attachment is still pending. Wait until it arrives before converting.');
+        }
+        const expiredFiles = (inboundEmail.attachments || []).filter((file) => file.fetch_state === 'expired');
+        if (expiredFiles.some((file) => !ackExpired[file.id])) {
+          throw new Error('Acknowledge that the order proceeds without each expired attachment');
+        }
+        if (inboundEmail.headers_missing && !ackHeaders) {
+          throw new Error('Acknowledge that the message headers are missing, or wait until they load');
         }
         if (!confirmCustomer) throw new Error('Confirm the customer before creating the order');
         if (!confirmRecipient) throw new Error('Confirm the confirmation recipient before creating the order');
@@ -1185,6 +1193,8 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
             customer_id: Number(customerId),
             recipient: email,
             attachment_ids: attachmentIds,
+          acknowledge_missing_headers: Boolean(inboundEmail.headers_missing && ackHeaders),
+          expired_attachment_ids: expiredFiles.filter((file) => ackExpired[file.id]).map((file) => file.id),
           }),
         });
         const confirmedBody = await confirmed.json().catch(() => ({}));
@@ -1444,6 +1454,25 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
                   <input id="confirm-recipient" type="checkbox" checked={confirmRecipient} onChange={(event) => setConfirmRecipient(event.target.checked)} />
                   <label htmlFor="confirm-recipient">I confirm the confirmation recipient ({email || 'missing email'})</label>
                 </Box>
+                {(inboundEmail.attachments || []).filter((file) => file.fetch_state === 'expired').map((file) => (
+                  <Box key={`expired-${file.id}`} sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 0.5 }}>
+                    <input
+                      id={`ack-expired-${file.id}`}
+                      type="checkbox"
+                      checked={Boolean(ackExpired[file.id])}
+                      onChange={(event) => setAckExpired((current) => ({ ...current, [file.id]: event.target.checked }))}
+                    />
+                    <label htmlFor={`ack-expired-${file.id}`}>
+                      Proceed without {file.original_name}. This file expired and will not be on the order.
+                    </label>
+                  </Box>
+                ))}
+                {inboundEmail.headers_missing ? (
+                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 0.5 }}>
+                    <input id="ack-headers" type="checkbox" checked={ackHeaders} onChange={(event) => setAckHeaders(event.target.checked)} />
+                    <label htmlFor="ack-headers">I acknowledge the message headers are missing and this order can proceed.</label>
+                  </Box>
+                ) : null}
                 {(inboundEmail.attachments || []).filter((file) => file.clean).map((file) => (
                   <Box key={file.id} sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 0.5 }}>
                     <input

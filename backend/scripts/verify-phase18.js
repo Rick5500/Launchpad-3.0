@@ -288,6 +288,10 @@ function startMock() {
       sendJson(res, 200, attachmentPayload());
       return;
     }
+    if (url.pathname.includes('/messages/') && url.searchParams.get('$select') === 'internetMessageHeaders') {
+      sendJson(res, 200, { internetMessageHeaders: [] });
+      return;
+    }
     sendJson(res, 404, { error: { message: 'not found' } });
   });
   return new Promise((resolve) => {

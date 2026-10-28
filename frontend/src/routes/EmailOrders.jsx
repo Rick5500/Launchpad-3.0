@@ -391,16 +391,26 @@ export default function EmailOrders() {
           </SectionCard>
 
           <SectionCard title="Attachments" subtitle="New files stay quarantined until the virus scanner reports them clean. A placeholder is not a file.">
-            {(email.attachments || []).some((file) => file.fetch_state === 'pending') ? (
+            {(email.attachments || []).some((file) => file.fetch_state === 'pending' || file.fetch_state === 'failed') ? (
               <Alert severity="warning" sx={{ mb: 1 }}>An attachment is still pending. This email cannot be converted yet.</Alert>
+            ) : null}
+            {(email.attachments || []).some((file) => file.fetch_state === 'expired') ? (
+              <Alert severity="warning" sx={{ mb: 1 }} data-testid="expired-attachment-warning">
+                An attachment expired and was not delivered. The order cannot include it. Converting staff must acknowledge that the order proceeds without that file.
+              </Alert>
+            ) : null}
+            {email.headers_missing ? (
+              <Alert severity="warning" sx={{ mb: 1 }} data-testid="missing-headers-warning">
+                Message headers could not be read. Conversion waits until they load, or until you acknowledge that they are missing.
+              </Alert>
             ) : null}
             {(email.attachments || []).length === 0 ? <Typography color="text.secondary">No attachments.</Typography> : null}
             {(email.attachments || []).map((file) => (
               <Box key={file.id} sx={{ mb: 1.25 }}>
                 <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
                   <Typography sx={{ overflowWrap: 'anywhere' }}>{file.original_name}</Typography>
-                  {file.fetch_state === 'pending' ? <Chip size="small" label="Pending" /> : null}
-                  {file.fetch_state === 'failed' ? <Chip size="small" label="Fetch failed" /> : null}
+                  {file.fetch_state === 'pending' || file.fetch_state === 'failed' ? <Chip size="small" label="Pending" /> : null}
+                  {file.fetch_state === 'expired' ? <Chip size="small" color="warning" label="Expired — not on the order" /> : null}
                   {file.clean ? <Chip size="small" label="Scanned clean" /> : null}
                   {file.quarantined ? <Chip size="small" color="warning" label={file.encrypted ? 'Encrypted · quarantined' : 'Unverified · quarantined'} /> : null}
                   {file.exception ? <Chip size="small" color="warning" label="Exception · download only" /> : null}

@@ -41,7 +41,7 @@ let clamdPort = 0;
 let attachmentMode = 'placeholder';
 let deltaCalls = 0;
 const deltaQueries = [];
-const headerGets = [];
+let attachmentListGets = 0;
 
 function assert(condition, message) {
   if (!condition) {
@@ -275,8 +275,10 @@ function startGraph() {
     }
     if (url.pathname.includes('/attachments')) {
       const message = messageFor(attachmentMode);
-      if (url.pathname.endsWith('/attachments')) send(200, { value: message.attachments });
-      else send(200, message.attachments[0]);
+      if (url.pathname.endsWith('/attachments')) {
+        attachmentListGets += 1;
+        send(200, { value: message.attachments });
+      } else send(200, message.attachments[0]);
       return;
     }
     send(404, {});
@@ -303,6 +305,7 @@ function startServer() {
       CLAMD_HOST: '127.0.0.1',
       CLAMD_PORT: String(clamdPort),
       ALLOW_UNSCANNED_ATTACHMENT_EXCEPTION: 'false',
+      INBOUND_ATTACHMENT_BACKOFF_MS: '1500',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -625,11 +628,29 @@ async function main() {
     operatorBlocked = err.status === 403;
   }
   assert(operatorBlocked, 'normal staff cannot release an unscanned file');
-  const secondRelease = await inboundAttachments.releaseAttachment(
-    { role: 'admin', userId: 1 }, emailId, quarantined.id,
-    { exception: true, reason: 'isolated review', confirm_token: firstRelease.confirm_token }
-  );
-  assert(secondRelease.released && secondRelease.download_only, 'the second confirmation releases a download-only file');
+  const [releaseA, releaseB] = await Promise.all([
+    inboundAttachments.releaseAttachment(
+      { role: 'admin', userId: 1 }, emailId, quarantined.id,
+      { exception: true, reason: 'isolated review', confirm_token: firstRelease.confirm_token }
+    ).then((body) => ({ ok: true, body })).catch((err) => ({ ok: false, status: err.status })),
+    inboundAttachments.releaseAttachment(
+      { role: 'admin', userId: 1 }, emailId, quarantined.id,
+      { exception: true, reason: 'isolated review', confirm_token: firstRelease.confirm_token }
+    ).then((body) => ({ ok: true, body })).catch((err) => ({ ok: false, status: err.status })),
+  ]);
+  const releaseResults = [releaseA, releaseB];
+  assert(releaseResults.filter((item) => item.ok).length === 1, `only one simultaneous release succeeds: ${JSON.stringify(releaseResults)}`);
+  assert(releaseResults.filter((item) => !item.ok && item.status === 400).length === 1, 'the other simultaneous release is rejected');
+  let replayRejected = false;
+  try {
+    await inboundAttachments.releaseAttachment(
+      { role: 'admin', userId: 1 }, emailId, quarantined.id,
+      { exception: true, reason: 'isolated review', confirm_token: firstRelease.confirm_token }
+    );
+  } catch (err) {
+    replayRejected = err.status === 400;
+  }
+  assert(replayRejected, 'replaying the release token is rejected');
   const activity = await db.get(`SELECT action FROM activity_log WHERE action = 'inbound_attachment.released'`);
   assert(activity, 'the release is logged');
   let staffDownload = false;
@@ -697,6 +718,110 @@ async function main() {
   });
   assert(/automatic reply/i.test(autoReason), autoReason);
 
+  process.env.M365_TENANT_ID = 'tenant-sec';
+  process.env.M365_CLIENT_ID = 'client-sec';
+  process.env.M365_CLIENT_SECRET = 'secret-sec';
+  process.env.M365_MAILBOX = 'orders@security.example';
+  process.env.INBOUND_ATTACHMENT_FETCH_MAX_MS = '20';
+  const expireEmail = (await db.run(
+    `INSERT INTO inbound_emails (graph_message_id, from_address, subject, status, headers_status)
+     VALUES ('expire-sec', 'pat@security.example', 'Expire', 'new', 'read')`
+  )).lastID;
+  await db.run(
+    `INSERT INTO inbound_email_attachments (
+       inbound_email_id, graph_attachment_id, original_name, fetch_state, created_at, next_fetch_at
+     ) VALUES (?, 'att-expire', 'late.pdf', 'pending', datetime('now', '-1 minute'), datetime('now', '-1 minute'))`,
+    [expireEmail]
+  );
+  const expiredRun = await inboundAttachments.retryDueAttachments();
+  assert(expiredRun.expired >= 1, `expiry should be counted, saw ${JSON.stringify(expiredRun)}`);
+  const expiredRow = await db.get(`SELECT fetch_state FROM inbound_email_attachments WHERE graph_attachment_id = 'att-expire'`);
+  assert(expiredRow && expiredRow.fetch_state === 'expired', `the old attachment should expire, was ${expiredRow && expiredRow.fetch_state}`);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const expireNotice = await db.get(`SELECT title FROM notifications WHERE type = 'inbound_mail_alert' AND title LIKE '%not delivered%'`);
+  assert(expireNotice, 'an expired attachment raises an admin notice');
+  delete process.env.INBOUND_ATTACHMENT_FETCH_MAX_MS;
+
+  graphMail.clearTokenCache();
+  let duplicateFetches = 0;
+  const duplicateServer = http.createServer((req, res) => {
+    const url = new URL(req.url, 'http://127.0.0.1');
+    const send = (status, body) => {
+      const raw = Buffer.from(JSON.stringify(body));
+      res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': raw.length });
+      res.end(raw);
+    };
+    if (req.method === 'POST' && url.pathname.endsWith('/token')) {
+      send(200, { token_type: 'Bearer', expires_in: 3600, access_token: 'dup-token' });
+      return;
+    }
+    if (url.pathname.endsWith('/attachments')) {
+      duplicateFetches += 1;
+      setTimeout(() => {
+        send(200, {
+          value: [{
+            '@odata.type': '#microsoft.graph.fileAttachment',
+            id: 'att-dup',
+            name: 'once.pdf',
+            contentType: 'application/pdf',
+            size: pdf.length,
+            isInline: false,
+            contentBytes: pdf.toString('base64'),
+          }],
+        });
+      }, 80);
+      return;
+    }
+    send(404, {});
+  });
+  await new Promise((resolve) => duplicateServer.listen(0, '127.0.0.1', resolve));
+  const duplicatePort = duplicateServer.address().port;
+  process.env.M365_LOGIN_BASE_URL = `http://127.0.0.1:${duplicatePort}`;
+  process.env.M365_GRAPH_BASE_URL = `http://127.0.0.1:${duplicatePort}`;
+  const dupEmail = (await db.run(
+    `INSERT INTO inbound_emails (graph_message_id, from_address, subject, status, headers_status)
+     VALUES ('dup-msg', 'pat@security.example', 'Dup', 'new', 'read')`
+  )).lastID;
+  await db.run(
+    `INSERT INTO inbound_email_attachments (
+       inbound_email_id, graph_attachment_id, original_name, fetch_state, size_bytes, next_fetch_at
+     ) VALUES (?, 'att-dup', 'once.pdf', 'pending', 0, datetime('now', '-1 minute'))`,
+    [dupEmail]
+  );
+  await Promise.all([
+    inboundAttachments.retryDueAttachments(),
+    inboundAttachments.retryDueAttachments(),
+  ]);
+  assert(duplicateFetches === 1, `two retries should fetch the attachment once, saw ${duplicateFetches}`);
+  const storedCopies = await db.get(
+    `SELECT COUNT(*) AS count FROM inbound_email_attachments
+     WHERE graph_attachment_id = 'att-dup' AND stored_name IS NOT NULL`
+  );
+  assert(storedCopies.count === 1, `the attachment should be stored once, saw ${storedCopies.count}`);
+  await new Promise((resolve) => duplicateServer.close(() => resolve()));
+  delete process.env.M365_LOGIN_BASE_URL;
+  delete process.env.M365_GRAPH_BASE_URL;
+
+  const hickory = await db.get(`SELECT id FROM locations WHERE name = 'Hickory'`);
+  const adminUser = await db.get(`SELECT id FROM users WHERE username = 'admin'`);
+  const movedCustomer = (await db.run(
+    `INSERT INTO users (username, password_hash, role, display_name, email, location_id, is_active)
+     VALUES ('hickory-buyer', 'x', 'customer', 'Hickory Buyer', 'buyer@hickory.example', ?, 1)`,
+    [hickory.id]
+  )).lastID;
+  const moveEmail = (await db.run(
+    `INSERT INTO inbound_emails (graph_message_id, from_address, subject, status, location_id, location_confirmed, headers_status)
+     VALUES ('move-sec', 'buyer@hickory.example', 'Move', 'new', NULL, 0, 'read')`
+  )).lastID;
+  const inboundEmail = require('../inboundEmail');
+  await inboundEmail.confirmFields(
+    { id: adminUser.id, userId: adminUser.id, role: 'admin' },
+    moveEmail,
+    { customer_id: movedCustomer }
+  );
+  const moved = await db.get(`SELECT location_id, location_confirmed FROM inbound_emails WHERE id = ?`, [moveEmail]);
+  assert(Number(moved.location_id) === Number(hickory.id) && Number(moved.location_confirmed) === 1, `confirming the customer sets the shop: ${JSON.stringify(moved)}`);
+
   await db.close();
 
   const clamd = await startClamd('stream: OK');
@@ -757,6 +882,63 @@ async function main() {
     const byName = Object.fromEntries((options.json.services || []).map((service) => [service.name, service]));
     const dueDate = weekdayAhead();
     const payload = orderBody(byName, customer.json.id, dueDate);
+    const keptRow = (listed.json.emails || []).find((row) => row.subject === 'Please print the posters');
+    assert(keptRow, 'the message with unread headers should be kept');
+    const headersBlocked = await request({
+      method: 'POST',
+      path: `/api/inbound-emails/${keptRow.id}/convert`,
+      token: admin.token,
+      json: payload,
+    });
+    assert(headersBlocked.status === 409 && /headers/i.test(headersBlocked.text), `missing headers block conversion: ${headersBlocked.status} ${headersBlocked.text}`);
+    const headersAck = await request({
+      method: 'POST',
+      path: `/api/inbound-emails/${keptRow.id}/confirmations`,
+      token: admin.token,
+      json: {
+        customer_id: customer.json.id,
+        recipient: 'pat@security.example',
+        acknowledge_missing_headers: true,
+        attachment_ids: [],
+      },
+    });
+    assert(headersAck.status === 200, headersAck.text);
+    const headerLog = await openDb(dbFile);
+    const headerActivity = await headerLog.get(`SELECT id FROM activity_log WHERE action = 'inbound_email.headers_missing_acknowledged'`);
+    await headerLog.close();
+    assert(headerActivity, 'acknowledging missing headers is logged');
+
+    const expireMail = (listed.json.emails || []).find((row) => row.subject === 'Expire');
+    if (expireMail) {
+      const expireDetail = await request({ method: 'GET', path: `/api/inbound-emails/${expireMail.id}`, token: admin.token });
+      const expiredFile = (expireDetail.json.attachments || []).find((file) => file.fetch_state === 'expired');
+      const expireBlocked = await request({
+        method: 'POST',
+        path: `/api/inbound-emails/${expireMail.id}/convert`,
+        token: admin.token,
+        json: { ...payload, attachment_ids: [] },
+      });
+      assert(expireBlocked.status === 409 && /expired/i.test(expireBlocked.text), `an expired file blocks conversion: ${expireBlocked.status} ${expireBlocked.text}`);
+      if (expiredFile) {
+        const expireAck = await request({
+          method: 'POST',
+          path: `/api/inbound-emails/${expireMail.id}/confirmations`,
+          token: admin.token,
+          json: {
+            customer_id: customer.json.id,
+            recipient: 'pat@security.example',
+            expired_attachment_ids: [expiredFile.id],
+            attachment_ids: [],
+          },
+        });
+        assert(expireAck.status === 200, expireAck.text);
+        const expireLog = openDb(dbFile);
+        const expireActivity = await expireLog.get(`SELECT detail FROM activity_log WHERE action = 'inbound_email.expired_attachment_acknowledged'`);
+        await expireLog.close();
+        assert(expireActivity && /proceeds without/i.test(expireActivity.detail || ''), 'the expired-file acknowledgement is logged');
+      }
+    }
+
     const blockedConvert = await request({
       method: 'POST',
       path: `/api/inbound-emails/${placeholder.id}/convert`,
@@ -764,14 +946,14 @@ async function main() {
       json: payload,
     });
     assert(blockedConvert.status === 409, `a pending attachment blocks conversion: ${blockedConvert.status} ${blockedConvert.text}`);
-
-    const pace = openDb(dbFile);
-    await pace.run(
-      `UPDATE inbound_email_attachments
-       SET next_fetch_at = datetime('now', '-1 minute')
-       WHERE fetch_state IN ('pending', 'failed')`
-    );
-    await pace.close();
+    const fetchesAfterFirst = attachmentListGets;
+    const early = await request({ method: 'POST', path: '/api/inbound-emails/sync', token: admin.token });
+    assert(early.status === 200, early.text);
+    assert(attachmentListGets === fetchesAfterFirst, `backoff should skip the attachment fetch, saw ${attachmentListGets} after ${fetchesAfterFirst}`);
+    const stillPending = await request({ method: 'GET', path: `/api/inbound-emails/${placeholder.id}`, token: admin.token });
+    const waiting = (stillPending.json.attachments || []).find((file) => file.original_name === 'late.pdf');
+    assert(waiting && (waiting.fetch_state === 'pending' || waiting.fetch_state === 'failed'), `the file stays unfetched during backoff: ${JSON.stringify(waiting)}`);
+    await new Promise((resolve) => setTimeout(resolve, 2000));
     attachmentMode = 'ready';
     const secondSync = await request({ method: 'POST', path: '/api/inbound-emails/sync', token: admin.token });
     assert(secondSync.status === 200, secondSync.text);

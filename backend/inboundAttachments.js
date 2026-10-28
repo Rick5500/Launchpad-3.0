@@ -34,13 +34,19 @@ function exceptionEnabled() {
 }
 
 function fetchMaxAgeMs() {
+  const millis = Number(process.env.INBOUND_ATTACHMENT_FETCH_MAX_MS);
+  if (Number.isFinite(millis) && millis > 0) return millis;
   const hours = Number(process.env.INBOUND_ATTACHMENT_FETCH_MAX_HOURS);
   const chosen = Number.isFinite(hours) && hours > 0 ? hours : 72;
   return chosen * 60 * 60 * 1000;
 }
 
 function backoffMs(attempts) {
+  const override = Number(process.env.INBOUND_ATTACHMENT_BACKOFF_MS);
   const shift = Math.min(Math.max(0, Number(attempts) || 0), 8);
+  if (Number.isFinite(override) && override >= 0) {
+    return Math.min(override * (2 ** shift), FETCH_BACKOFF_MAX_MS);
+  }
   return Math.min(60 * 1000 * (2 ** shift), FETCH_BACKOFF_MAX_MS);
 }
 
@@ -163,7 +169,7 @@ async function markPending(emailId, attachment) {
       name,
       attachment && attachment.contentType ? String(attachment.contentType).slice(0, 200) : null,
       Number(attachment && attachment.size) || 0,
-      sqliteNowPlus(backoffMs(1)),
+      sqliteNowPlus(backoffMs(0)),
     ]
   );
 }
@@ -385,48 +391,131 @@ async function refreshAttachments(emailId, message, token) {
 }
 
 async function retryDueAttachments() {
-  if (!graphMail.isConfigured()) return { retried: 0, expired: 0 };
-  let token;
+  const run = retryChain.then(() => retryDueAttachmentsLocked(), () => retryDueAttachmentsLocked());
+  retryChain = run.then(() => {}, () => {});
+  return run;
+}
+
+let retryChain = Promise.resolve();
+
+async function retryDueAttachmentsLocked() {
+  if (!graphMail.isConfigured()) return { retried: 0, expired: 0, headers: 0 };
+  const expired = await expireOldAttachments();
+  const attachmentWork = await claimDueAttachments();
+  const headerWork = await claimDueHeaders();
+  if (!attachmentWork.length && !headerWork.length) return { retried: 0, expired, headers: 0 };
+  let token = '';
   try {
     token = await graphMail.getToken();
   } catch (err) {
     console.error('INBOUND ATTACHMENT ERROR:', safeErrorText(err));
-    return { retried: 0, expired: 0 };
+    await releaseClaims(attachmentWork, headerWork);
+    return { retried: 0, expired, headers: 0 };
   }
+  const retried = await fetchClaimedAttachments(token, attachmentWork);
+  const headers = await fetchClaimedHeaders(token, headerWork);
+  return { retried, expired, headers };
+}
+
+async function expireOldAttachments() {
   const rows = await all(
-    `SELECT a.id, a.inbound_email_id, a.graph_attachment_id, a.original_name, a.mime_type,
-            a.size_bytes, a.fetch_state, a.fetch_attempts, a.created_at, e.graph_message_id
+    `SELECT a.id, a.original_name, a.created_at, e.graph_message_id
      FROM inbound_email_attachments a
      JOIN inbound_emails e ON e.id = a.inbound_email_id
-     WHERE a.fetch_state IN ('pending', 'failed')
-       AND (a.next_fetch_at IS NULL OR datetime(a.next_fetch_at) <= datetime('now'))
-       AND e.graph_message_id IS NOT NULL`
+     WHERE a.fetch_state IN ('pending', 'failed', 'fetching')`
   );
-  const due = [];
   let expired = 0;
   for (const row of rows) {
     const created = row.created_at ? new Date(String(row.created_at).replace(' ', 'T') + 'Z') : new Date();
     const ageMs = Date.now() - (Number.isNaN(created.getTime()) ? Date.now() : created.getTime());
-    if (ageMs >= fetchMaxAgeMs()) {
-      const updated = await run(
-        `UPDATE inbound_email_attachments
-         SET fetch_state = 'expired', next_fetch_at = NULL,
-             skipped_reason = ?, updated_at = datetime('now')
-         WHERE id = ? AND fetch_state IN ('pending', 'failed')`,
-        ['The attachment did not arrive before the retry limit', row.id]
+    if (ageMs < fetchMaxAgeMs()) continue;
+    const updated = await run(
+      `UPDATE inbound_email_attachments
+       SET fetch_state = 'expired', next_fetch_at = NULL,
+           skipped_reason = ?, updated_at = datetime('now')
+       WHERE id = ? AND fetch_state IN ('pending', 'failed', 'fetching')`,
+      ['The attachment did not arrive before the retry limit', row.id]
+    );
+    if (updated.changes) {
+      expired += 1;
+      inboundAlerts.noteAttachmentGaveUp(
+        `Attachment ${row.original_name || row.id} on message ${row.graph_message_id} was not delivered before the retry limit.`
       );
-      if (updated.changes) {
-        expired += 1;
-        inboundAlerts.noteAttachmentGaveUp(
-          `Attachment ${row.original_name || row.id} on message ${row.graph_message_id} was not delivered before the retry limit.`
-        );
-      }
-      continue;
     }
-    due.push(row);
   }
+  return expired;
+}
+
+async function claimDueAttachments() {
+  const rows = await all(
+    `SELECT a.id, a.inbound_email_id, a.graph_attachment_id, a.original_name, a.mime_type,
+            a.size_bytes, a.created_at, e.graph_message_id
+     FROM inbound_email_attachments a
+     JOIN inbound_emails e ON e.id = a.inbound_email_id
+     WHERE a.fetch_state IN ('pending', 'failed', 'fetching')
+       AND (a.next_fetch_at IS NULL OR datetime(a.next_fetch_at) <= datetime('now'))
+       AND e.graph_message_id IS NOT NULL`
+  );
+  const claimed = [];
+  for (const row of rows) {
+    const updated = await run(
+      `UPDATE inbound_email_attachments
+       SET fetch_state = 'fetching', next_fetch_at = datetime('now', '+2 minutes'), updated_at = datetime('now')
+       WHERE id = ? AND fetch_state IN ('pending', 'failed', 'fetching')
+         AND (next_fetch_at IS NULL OR datetime(next_fetch_at) <= datetime('now'))`,
+      [row.id]
+    );
+    if (updated.changes) claimed.push(row);
+  }
+  return claimed;
+}
+
+async function claimDueHeaders() {
+  const rows = await all(
+    `SELECT id, graph_message_id, subject, from_address, headers_attempts
+     FROM inbound_emails
+     WHERE headers_status = 'missing' AND status = 'new' AND graph_message_id IS NOT NULL
+       AND (headers_next_fetch_at IS NULL OR datetime(headers_next_fetch_at) <= datetime('now'))`
+  );
+  const claimed = [];
+  for (const row of rows) {
+    const updated = await run(
+      `UPDATE inbound_emails
+       SET headers_status = 'reading', headers_next_fetch_at = datetime('now', '+2 minutes'), updated_at = datetime('now')
+       WHERE id = ? AND headers_status = 'missing'
+         AND (headers_next_fetch_at IS NULL OR datetime(headers_next_fetch_at) <= datetime('now'))`,
+      [row.id]
+    );
+    if (updated.changes) claimed.push(row);
+  }
+  return claimed;
+}
+
+async function releaseClaims(attachmentWork, headerWork) {
+  for (const row of attachmentWork) {
+    await markPending(row.inbound_email_id, {
+      id: row.graph_attachment_id,
+      name: row.original_name,
+      contentType: row.mime_type,
+      size: row.size_bytes,
+    });
+  }
+  for (const row of headerWork) {
+    await run(
+      `UPDATE inbound_emails
+       SET headers_status = 'missing',
+           headers_attempts = COALESCE(headers_attempts, 0) + 1,
+           headers_next_fetch_at = datetime('now', ?),
+           updated_at = datetime('now')
+       WHERE id = ? AND headers_status = 'reading'`,
+      [sqliteNowPlus(backoffMs(Number(row.headers_attempts || 0) + 1)), row.id]
+    );
+  }
+}
+
+async function fetchClaimedAttachments(token, attachmentWork) {
   const byMessage = new Map();
-  for (const row of due) {
+  for (const row of attachmentWork) {
     const list = byMessage.get(row.graph_message_id) || [];
     list.push(row);
     byMessage.set(row.graph_message_id, list);
@@ -475,8 +564,58 @@ async function retryDueAttachments() {
       }
     }
   }
-  return { retried, expired };
+  return retried;
 }
+
+async function fetchClaimedHeaders(token, headerWork) {
+  const emailLoop = require('./emailLoop');
+  let read = 0;
+  for (const row of headerWork) {
+    try {
+      const payload = await graphMail.fetchJson(graphMail.messageHeadersUrl(row.graph_message_id), {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      });
+      const message = {
+        id: row.graph_message_id,
+        subject: row.subject,
+        from: { emailAddress: { address: row.from_address || '' } },
+        internetMessageHeaders: payload.internetMessageHeaders || [],
+      };
+      const reason = await emailLoop.ignoreReason(message);
+      if (reason) {
+        await run(
+          `UPDATE inbound_emails
+           SET status = 'ignored', ignore_reason = ?, headers_status = 'read',
+               loop_check_note = 'Headers were read.', headers_next_fetch_at = NULL, updated_at = datetime('now')
+           WHERE id = ? AND status = 'new'`,
+          [String(reason).slice(0, 500), row.id]
+        );
+      } else {
+        await run(
+          `UPDATE inbound_emails
+           SET headers_status = 'read', loop_check_note = 'Headers were read.',
+               headers_next_fetch_at = NULL, updated_at = datetime('now')
+           WHERE id = ?`,
+          [row.id]
+        );
+      }
+      read += 1;
+    } catch (err) {
+      console.error('INBOUND HEADER ERROR:', safeErrorText(err));
+      await run(
+        `UPDATE inbound_emails
+         SET headers_status = 'missing',
+             headers_attempts = COALESCE(headers_attempts, 0) + 1,
+             headers_next_fetch_at = datetime('now', ?),
+             updated_at = datetime('now')
+         WHERE id = ? AND headers_status = 'reading'`,
+        [sqliteNowPlus(backoffMs(Number(row.headers_attempts || 0) + 1)), row.id]
+      );
+    }
+  }
+  return read;
+}
+
 
 let retryTimer = null;
 
@@ -524,7 +663,7 @@ async function assertConvertible(emailId, attachmentIds) {
      ORDER BY id`,
     [emailId]
   );
-  if (rows.some((row) => row.fetch_state === 'pending' || row.fetch_state === 'failed')) {
+  if (rows.some((row) => row.fetch_state === 'pending' || row.fetch_state === 'failed' || row.fetch_state === 'fetching')) {
     throw httpError(409, 'An attachment is still pending and this email cannot be converted yet');
   }
     const chosen = attachmentIds
