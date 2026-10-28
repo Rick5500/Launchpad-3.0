@@ -14,7 +14,7 @@ const WRITE_IN_COLUMNS = [
   { key: 'description', label: 'Description', width: '33%' },
   { key: 'price', label: 'Price', width: '15%' },
 ];
-const WRITE_IN_ROWS = 6;
+const WRITE_IN_ROWS = 4;
 
 function formatStamp(value) {
   if (!value) return '';
@@ -61,6 +61,17 @@ function display(value, fallback = '—') {
   return text || fallback;
 }
 
+function emailText(value) {
+  const text = value == null ? '' : String(value).trim();
+  if (!text) return '—';
+  const parts = text.split(/(@|\.)/);
+  return parts.map((part, index) => (
+    part === '@' || part === '.'
+      ? <React.Fragment key={index}>{part}<wbr /></React.Fragment>
+      : <React.Fragment key={index}>{part}</React.Fragment>
+  ));
+}
+
 function yesNo(value) {
   return value ? 'Yes' : 'No';
 }
@@ -98,12 +109,17 @@ function Barcode({ svg, className }) {
   );
 }
 
-function Field({ label, value, prominent = false }) {
+function Field({ label, value, prominent = false, email = false }) {
+  const valueClass = [
+    'wo-value',
+    prominent ? 'wo-customer-name' : '',
+    email ? 'wo-email-value' : '',
+  ].filter(Boolean).join(' ');
   return (
-    <div className="wo-field">
+    <div className={email ? 'wo-field wo-field-email' : 'wo-field'}>
       <span className="wo-label">{label}</span>
-      <span className={prominent ? 'wo-value wo-customer-name' : 'wo-value'}>
-        {display(value)}
+      <span className={valueClass}>
+        {email ? emailText(value) : display(value)}
       </span>
     </div>
   );
@@ -322,7 +338,7 @@ function WorkOrderSheet({ payload, sheet }) {
             <Field label="Company" value={sheet.contact?.company} prominent={Boolean(companyName)} />
             <Field label="Contact" value={sheet.contact?.contact_name} prominent={!companyName && Boolean(contactName)} />
             <Field label="Phone" value={sheet.contact?.phone} />
-            <Field label="Email" value={sheet.contact?.email} />
+            <Field label="Email" value={sheet.contact?.email} email />
             <AddressFields address={sheet.address} />
           </div>
         </Section>
@@ -339,7 +355,7 @@ function WorkOrderSheet({ payload, sheet }) {
               <>
                 <Field label="Bill To" value={sheet.bill_to.name} />
                 <Field label="Bill Phone" value={sheet.bill_to.phone} />
-                <Field label="Bill Email" value={sheet.bill_to.email} />
+                <Field label="Bill Email" value={sheet.bill_to.email} email />
                 <Field label="Bill Company" value={sheet.bill_to.company} />
                 <Field label="Bill Addr 1" value={sheet.bill_to.line1} />
                 {sheet.bill_to.line2 ? <Field label="Bill Addr 2" value={sheet.bill_to.line2} /> : null}
