@@ -52,6 +52,10 @@ function noteStoragePressure(message) {
   raise('storage', 'Attachment storage is nearly full', String(message || 'Inbound attachment storage is near its cap').slice(0, 500));
 }
 
+function noteAttachmentGaveUp(message) {
+  raise('attachment_fetch', 'An email attachment was not delivered', String(message || 'A pending attachment passed the retry limit').slice(0, 500));
+}
+
 function failureCounts() {
   return { pollFailures, scanFailures };
 }
@@ -68,6 +72,7 @@ module.exports = {
   noteScanSuccess,
   noteScanFailure,
   noteStoragePressure,
+  noteAttachmentGaveUp,
   failureCounts,
   resetCounts,
 };

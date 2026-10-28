@@ -117,12 +117,25 @@ async function markPending(emailId, attachment) {
       [emailId, graphId]
     )
     : null;
-  if (existing && (existing.fetch_state === 'fetched' || existing.fetch_state === 'skipped')) return;
+  if (existing && (existing.fetch_state === 'fetched' || existing.fetch_state === 'skipped' || existing.fetch_state === 'expired')) return;
   const attempts = existing ? Number(existing.fetch_attempts || 0) + 1 : 1;
   const created = existing && existing.created_at ? new Date(String(existing.created_at).replace(' ', 'T') + 'Z') : new Date();
   const ageMs = Date.now() - (Number.isNaN(created.getTime()) ? Date.now() : created.getTime());
-  const expired = ageMs > fetchMaxAgeMs() || attempts > 24;
-  const state = expired ? 'failed' : 'pending';
+  const expired = ageMs >= fetchMaxAgeMs();
+  const state = expired ? 'expired' : (attempts > 1 ? 'failed' : 'pending');
+  if (expired && existing) {
+    const updated = await run(
+      `UPDATE inbound_email_attachments
+       SET fetch_state = 'expired', fetch_attempts = ?, next_fetch_at = NULL,
+           skipped_reason = ?, scan_status = NULL, updated_at = datetime('now')
+       WHERE id = ? AND fetch_state IN ('pending', 'failed')`,
+      [attempts, 'The attachment did not arrive before the retry limit', existing.id]
+    );
+    if (updated.changes) {
+      inboundAlerts.noteAttachmentGaveUp(`Attachment ${name} was not delivered before the retry limit.`);
+    }
+    return;
+  }
   if (existing) {
     await run(
       `UPDATE inbound_email_attachments
@@ -133,7 +146,7 @@ async function markPending(emailId, attachment) {
         state,
         attempts,
         sqliteNowPlus(backoffMs(attempts)),
-        state === 'failed' ? 'The attachment did not arrive before the retry limit' : null,
+        state === 'expired' ? 'The attachment did not arrive before the retry limit' : null,
         existing.id,
       ]
     );
@@ -275,7 +288,7 @@ async function storeAttachment(emailId, attachment) {
        WHERE inbound_email_id = ? AND graph_attachment_id = ?`,
       [emailId, graphId]
     );
-    if (existing && (existing.fetch_state === 'fetched' || existing.fetch_state === 'skipped')) return;
+    if (existing && (existing.fetch_state === 'fetched' || existing.fetch_state === 'skipped' || existing.fetch_state === 'expired')) return;
   }
   const odata = String(attachment && attachment['@odata.type'] || '').toLowerCase();
   if (attachment && attachment.isInline) {
@@ -371,6 +384,114 @@ async function refreshAttachments(emailId, message, token) {
   }
 }
 
+async function retryDueAttachments() {
+  if (!graphMail.isConfigured()) return { retried: 0, expired: 0 };
+  let token;
+  try {
+    token = await graphMail.getToken();
+  } catch (err) {
+    console.error('INBOUND ATTACHMENT ERROR:', safeErrorText(err));
+    return { retried: 0, expired: 0 };
+  }
+  const rows = await all(
+    `SELECT a.id, a.inbound_email_id, a.graph_attachment_id, a.original_name, a.mime_type,
+            a.size_bytes, a.fetch_state, a.fetch_attempts, a.created_at, e.graph_message_id
+     FROM inbound_email_attachments a
+     JOIN inbound_emails e ON e.id = a.inbound_email_id
+     WHERE a.fetch_state IN ('pending', 'failed')
+       AND (a.next_fetch_at IS NULL OR datetime(a.next_fetch_at) <= datetime('now'))
+       AND e.graph_message_id IS NOT NULL`
+  );
+  const due = [];
+  let expired = 0;
+  for (const row of rows) {
+    const created = row.created_at ? new Date(String(row.created_at).replace(' ', 'T') + 'Z') : new Date();
+    const ageMs = Date.now() - (Number.isNaN(created.getTime()) ? Date.now() : created.getTime());
+    if (ageMs >= fetchMaxAgeMs()) {
+      const updated = await run(
+        `UPDATE inbound_email_attachments
+         SET fetch_state = 'expired', next_fetch_at = NULL,
+             skipped_reason = ?, updated_at = datetime('now')
+         WHERE id = ? AND fetch_state IN ('pending', 'failed')`,
+        ['The attachment did not arrive before the retry limit', row.id]
+      );
+      if (updated.changes) {
+        expired += 1;
+        inboundAlerts.noteAttachmentGaveUp(
+          `Attachment ${row.original_name || row.id} on message ${row.graph_message_id} was not delivered before the retry limit.`
+        );
+      }
+      continue;
+    }
+    due.push(row);
+  }
+  const byMessage = new Map();
+  for (const row of due) {
+    const list = byMessage.get(row.graph_message_id) || [];
+    list.push(row);
+    byMessage.set(row.graph_message_id, list);
+  }
+  let retried = 0;
+  const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+  for (const [messageId, items] of byMessage) {
+    let page;
+    try {
+      page = await graphMail.fetchJson(graphMail.attachmentsUrl(messageId), { headers });
+    } catch (err) {
+      console.error('INBOUND ATTACHMENT ERROR:', safeErrorText(err));
+      for (const row of items) {
+        await markPending(row.inbound_email_id, {
+          id: row.graph_attachment_id,
+          name: row.original_name,
+          contentType: row.mime_type,
+          size: row.size_bytes,
+        });
+      }
+      continue;
+    }
+    for (const row of items) {
+      const found = (page.value || []).find((item) => String(item.id) === String(row.graph_attachment_id));
+      try {
+        if (!found) {
+          await markPending(row.inbound_email_id, {
+            id: row.graph_attachment_id,
+            name: row.original_name,
+            contentType: row.mime_type,
+            size: row.size_bytes,
+          });
+          continue;
+        }
+        const attachment = await loadGraphAttachment(messageId, found, token);
+        await storeAttachment(row.inbound_email_id, attachment);
+        retried += 1;
+      } catch (err) {
+        console.error('INBOUND ATTACHMENT ERROR:', safeErrorText(err));
+        await markPending(row.inbound_email_id, found || {
+          id: row.graph_attachment_id,
+          name: row.original_name,
+          contentType: row.mime_type,
+          size: row.size_bytes,
+        });
+      }
+    }
+  }
+  return { retried, expired };
+}
+
+let retryTimer = null;
+
+function startRetryTimer() {
+  if (retryTimer) return;
+  const seconds = Number(process.env.INBOUND_ATTACHMENT_RETRY_SECONDS);
+  const interval = (Number.isFinite(seconds) && seconds >= 5 ? seconds : 60) * 1000;
+  retryTimer = setInterval(() => {
+    retryDueAttachments().catch((err) => {
+      console.error('INBOUND ATTACHMENT ERROR:', safeErrorText(err));
+    });
+  }, interval);
+  if (typeof retryTimer.unref === 'function') retryTimer.unref();
+}
+
 async function attachmentDownload(user, emailId, attachmentId) {
   const file = await get(
     `SELECT id, original_name, stored_name, storage_root, skipped_reason, fetch_state, scan_status
@@ -403,7 +524,7 @@ async function assertConvertible(emailId, attachmentIds) {
      ORDER BY id`,
     [emailId]
   );
-  if (rows.some((row) => row.fetch_state === 'pending')) {
+  if (rows.some((row) => row.fetch_state === 'pending' || row.fetch_state === 'failed')) {
     throw httpError(409, 'An attachment is still pending and this email cannot be converted yet');
   }
     const chosen = attachmentIds
@@ -472,13 +593,14 @@ async function releaseAttachment(user, emailId, attachmentId, body) {
       warning: ISOLATED_WARNING,
     };
   }
-  const challenge = await get(
-    `SELECT id, reason, user_id FROM inbound_attachment_releases
-     WHERE token_hash = ? AND attachment_id = ? AND used_at IS NULL
-       AND datetime(expires_at) >= datetime('now')`,
-    [hashToken(token), file.id]
+  const claimed = await run(
+    `UPDATE inbound_attachment_releases
+     SET used_at = datetime('now')
+     WHERE token_hash = ? AND attachment_id = ? AND user_id = ? AND reason = ?
+       AND used_at IS NULL AND datetime(expires_at) >= datetime('now')`,
+    [hashToken(token), file.id, userId, reason]
   );
-  if (!challenge || Number(challenge.user_id) !== userId || challenge.reason !== reason) {
+  if (!claimed.changes) {
     throw httpError(400, 'The second confirmation does not match this release');
   }
   await run(
@@ -488,7 +610,6 @@ async function releaseAttachment(user, emailId, attachmentId, body) {
      WHERE id = ?`,
     [userId, reason, file.id]
   );
-  await run(`UPDATE inbound_attachment_releases SET used_at = datetime('now') WHERE id = ?`, [challenge.id]);
   await activityLog.record(userId, 'inbound_attachment.released', 'inbound_email_attachment', file.id, {
     inbound_email_id: emailId,
     message: 'An admin released a quarantined attachment for download on an isolated machine',
@@ -509,6 +630,8 @@ module.exports = {
   presentAttachment,
   storeAttachment,
   refreshAttachments,
+  retryDueAttachments,
+  startRetryTimer,
   attachmentDownload,
   assertConvertible,
   releaseAttachment,

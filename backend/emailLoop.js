@@ -67,10 +67,20 @@ async function rememberMessageId(messageId, noticeType) {
   );
 }
 
+function subjectAutoReply(subject) {
+  const text = String(subject || '').replace(/^\s*((re|fw|fwd)\s*:\s*)+/i, '').trim();
+  if (/^(automatic reply|auto:|out of office|undeliverable|delivery status notification|mail delivery failed|mail delivery subsystem)/i.test(text)) {
+    return `Ignored automatic reply (subject: ${text.slice(0, 80)})`;
+  }
+  return '';
+}
+
 async function ignoreReason(message) {
   const headers = headerMap(message);
   const auto = String(headers['auto-submitted'] || '').trim().toLowerCase();
   if (auto && auto !== 'no') return `Ignored automatic reply (Auto-Submitted: ${auto.slice(0, 80)})`;
+  const fromSubject = subjectAutoReply(message && (message.subject || message.subjectLine));
+  if (fromSubject && !Object.keys(headers).length) return fromSubject;
   if (String(headers['x-auto-response-suppress'] || '').trim()) {
     return 'Ignored automatic reply (X-Auto-Response-Suppress)';
   }
@@ -107,4 +117,5 @@ module.exports = {
   headerMap,
   rememberMessageId,
   ignoreReason,
+  subjectAutoReply,
 };

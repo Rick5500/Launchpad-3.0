@@ -1004,8 +1004,16 @@ async function ensureInboundEmails() {
   await ensureColumns('inbound_emails', [
     { name: 'match_status', definition: "TEXT DEFAULT 'unverified'" },
     { name: 'ignore_reason', definition: 'TEXT' },
+    { name: 'loop_check_note', definition: 'TEXT' },
+    { name: 'location_confirmed', definition: 'INTEGER DEFAULT 0' },
   ]);
   await run(`UPDATE inbound_emails SET match_status = 'unverified' WHERE match_status IS NULL OR trim(match_status) = ''`);
+  await run(`UPDATE inbound_emails SET location_confirmed = 0 WHERE location_confirmed IS NULL`);
+  await run(
+    `UPDATE inbound_emails
+     SET location_confirmed = 1
+     WHERE location_confirmed = 0 AND (status = 'converted' OR match_status = 'approved')`
+  );
   await ensureColumns('inbound_email_attachments', [
     { name: 'fetch_state', definition: 'TEXT' },
     { name: 'scan_status', definition: 'TEXT' },

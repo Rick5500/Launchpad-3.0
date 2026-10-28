@@ -139,6 +139,8 @@ async function presentDetail(row, customers) {
     ...summary,
     body_text: row.body_text || '',
     ignore_reason: row.ignore_reason || null,
+    loop_check_note: row.loop_check_note || null,
+    location_confirmed: Number(row.location_confirmed) === 1,
     match_status: row.match_status || suggestion.match_status || 'unverified',
     unscanned_exception_enabled: inboundAttachments.exceptionEnabled(),
     suggestion,
@@ -171,6 +173,8 @@ function parseId(value) {
 async function assertEmailVisible(user, row) {
   if (!user || !row) return;
   const access = await shopLocations.loadAccess(user.userId || user.id);
+  const unconfirmed = !Number(row.location_confirmed);
+  if (unconfirmed && (access.role === 'admin' || access.role === 'manager' || shopLocations.seesAll(access))) return;
   shopLocations.assertVisible(access, row.location_id, 'Email not found');
 }
 
@@ -191,7 +195,11 @@ async function listEmails(query, user) {
   if (user) {
     const access = await shopLocations.loadAccess(user.userId || user.id);
     const pred = shopLocations.predicate('e.location_id', access);
-    if (pred.sql) {
+    const wide = access.role === 'admin' || access.role === 'manager' || shopLocations.seesAll(access);
+    if (pred.sql && wide && !shopLocations.seesAll(access)) {
+      clauses.push(`(COALESCE(e.location_confirmed, 0) = 0 OR ${pred.sql})`);
+      params.push(...pred.params);
+    } else if (pred.sql) {
       clauses.push(pred.sql);
       params.push(...pred.params);
     }
@@ -240,25 +248,56 @@ function messageBody(message) {
   return htmlToText(content);
 }
 
-async function locationIdForSender(fromAddress) {
-  const matched = matchSender(await loadCustomers(), fromAddress);
-  if (matched.customer && matched.customer.location_id != null) {
-    return Number(matched.customer.location_id);
-  }
+async function intakeLocationId() {
   return shopLocations.defaultLocationId();
+}
+
+async function locationIdForSender() {
+  return intakeLocationId();
+}
+
+async function withMessageHeaders(message, token) {
+  if (!message || !message.id || !token) {
+    return {
+      message,
+      note: 'Headers were not requested. The sender and the subject were checked. The message is unverified.',
+    };
+  }
+  try {
+    const payload = await graphMail.fetchJson(graphMail.messageHeadersUrl(message.id), {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+    });
+    return {
+      message: { ...message, internetMessageHeaders: payload.internetMessageHeaders || [] },
+      note: 'Headers were read.',
+    };
+  } catch (err) {
+    console.error('INBOUND HEADER ERROR:', safeErrorText(err));
+    return {
+      message,
+      note: 'Headers could not be read. The sender and the subject were checked. The message is unverified.',
+    };
+  }
 }
 
 async function ingestMessage(message, token) {
   if (!message || !message.id || message['@removed']) return { skipped: true };
+  const loaded = await withMessageHeaders(message, token);
+  message = loaded.message;
   const graphId = String(message.id).slice(0, 400);
   const from = message.from && message.from.emailAddress ? message.from.emailAddress : {};
   const reason = await emailLoop.ignoreReason(message);
+  const locationId = await intakeLocationId();
   if (reason) {
     await run(
       `INSERT OR IGNORE INTO inbound_emails (
         graph_message_id, mailbox, from_address, from_name, subject, received_at,
-        body_text, status, ignore_reason, match_status, location_id, created_at, updated_at
-      ) VALUES (?,?,?,?,?,?,?,'ignored',?, 'unverified', ?, datetime('now'), datetime('now'))`,
+        body_text, status, ignore_reason, loop_check_note, match_status, location_id,
+        location_confirmed, created_at, updated_at
+      ) VALUES (?,?,?,?,?,?,?,'ignored',?,?, 'unverified', ?, 0, datetime('now'), datetime('now'))`,
       [
         graphId,
         graphMail.mailbox(),
@@ -268,7 +307,8 @@ async function ingestMessage(message, token) {
         message.receivedDateTime ? String(message.receivedDateTime).slice(0, 40) : null,
         messageBody(message),
         reason.slice(0, 500),
-        await locationIdForSender(from.address || ''),
+        loaded.note,
+        locationId,
       ]
     );
     return { ignored: true, reason };
@@ -277,12 +317,12 @@ async function ingestMessage(message, token) {
   const bodyText = messageBody(message);
   const draft = parseDraft(subject, bodyText);
   const received = message.receivedDateTime ? String(message.receivedDateTime).slice(0, 40) : null;
-  const locationId = await locationIdForSender(from.address || '');
   const inserted = await run(
     `INSERT OR IGNORE INTO inbound_emails (
       graph_message_id, mailbox, from_address, from_name, subject, received_at,
-      body_text, status, suggestion_json, match_status, location_id, created_at, updated_at
-    ) VALUES (?,?,?,?,?,?,?,'new',?, 'unverified', ?, datetime('now'), datetime('now'))`,
+      body_text, status, suggestion_json, match_status, loop_check_note, location_id,
+      location_confirmed, created_at, updated_at
+    ) VALUES (?,?,?,?,?,?,?,'new',?, 'unverified', ?, ?, 0, datetime('now'), datetime('now'))`,
     [
       graphId,
       graphMail.mailbox(),
@@ -292,6 +332,7 @@ async function ingestMessage(message, token) {
       received,
       bodyText,
       JSON.stringify(draft),
+      loaded.note,
       locationId,
     ]
   );
@@ -356,6 +397,11 @@ async function doSync() {
       if (page['@odata.deltaLink']) resumeLink = page['@odata.deltaLink'];
       url = null;
     }
+  }
+  try {
+    await inboundAttachments.retryDueAttachments();
+  } catch (err) {
+    console.error('INBOUND ATTACHMENT ERROR:', safeErrorText(err));
   }
   await run(
     `UPDATE inbound_mail_state
@@ -732,14 +778,17 @@ async function confirmFields(user, id, body) {
   if (source.customer_id != null && String(source.customer_id).trim() !== '') {
     const customerId = Number(source.customer_id);
     const customer = await get(
-      `SELECT id FROM users WHERE id = ? AND role = 'customer' AND COALESCE(is_active, 1) = 1`,
+      `SELECT id, location_id FROM users WHERE id = ? AND role = 'customer' AND COALESCE(is_active, 1) = 1`,
       [customerId]
     );
     if (!customer) throw httpError(400, 'customer_id must be an existing customer');
     await rememberConfirmation(emailId, 'customer', customerId, userId);
+    const locationId = customer.location_id != null ? customer.location_id : await shopLocations.defaultLocationId();
     await run(
-      `UPDATE inbound_emails SET match_status = 'approved', updated_at = datetime('now') WHERE id = ?`,
-      [emailId]
+      `UPDATE inbound_emails
+       SET match_status = 'approved', location_id = ?, location_confirmed = 1, updated_at = datetime('now')
+       WHERE id = ?`,
+      [locationId, emailId]
     );
   }
   if (source.recipient != null && String(source.recipient).trim() !== '') {

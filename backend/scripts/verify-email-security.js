@@ -39,6 +39,9 @@ const adminPassword = 'AdminPass123';
 const csrfByToken = new Map();
 let clamdPort = 0;
 let attachmentMode = 'placeholder';
+let deltaCalls = 0;
+const deltaQueries = [];
+const headerGets = [];
 
 function assert(condition, message) {
   if (!condition) {
@@ -187,6 +190,12 @@ function messageFor(mode) {
 }
 
 function startGraph() {
+  const headersFor = {
+    'msg-auto': [{ name: 'Auto-Submitted', value: 'auto-replied' }],
+    'msg-loop': [{ name: 'In-Reply-To', value: '<known-launchpad@accent.example>' }],
+    'msg-self': [],
+    'msg-placeholder': [],
+  };
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, graphBase);
     const send = (status, body) => {
@@ -199,31 +208,69 @@ function startGraph() {
       return;
     }
     if (url.pathname.endsWith('/messages/delta') || url.pathname === '/v1.0/delta') {
-      const message = messageFor(attachmentMode);
-      send(200, { value: [message, {
-        id: 'msg-auto',
-        subject: 'Automatic reply',
-        receivedDateTime: new Date().toISOString(),
-        hasAttachments: false,
-        from: { emailAddress: { address: 'person@security.example' } },
-        body: { contentType: 'text', content: 'Out of office' },
-        internetMessageHeaders: [{ name: 'Auto-Submitted', value: 'auto-replied' }],
-      }, {
-        id: 'msg-loop',
-        subject: 'Re: your order',
-        receivedDateTime: new Date().toISOString(),
-        hasAttachments: false,
-        from: { emailAddress: { address: 'person@security.example' } },
-        body: { contentType: 'text', content: 'Thanks' },
-        internetMessageHeaders: [{ name: 'In-Reply-To', value: '<known-launchpad@accent.example>' }],
-      }, {
-        id: 'msg-self',
-        subject: 'Copy',
-        receivedDateTime: new Date().toISOString(),
-        hasAttachments: false,
-        from: { emailAddress: { address: 'orders@accent.example' } },
-        body: { contentType: 'text', content: 'from us' },
-      }], '@odata.deltaLink': `${graphBase}/v1.0/delta` });
+      deltaCalls += 1;
+      deltaQueries.push(url.search);
+      if (deltaCalls > 1) {
+        send(200, { value: [], '@odata.deltaLink': `${graphBase}/v1.0/delta` });
+        return;
+      }
+      const message = messageFor('placeholder');
+      send(200, {
+        value: [
+          message,
+          {
+            id: 'msg-auto',
+            subject: 'Hello',
+            receivedDateTime: new Date().toISOString(),
+            hasAttachments: false,
+            from: { emailAddress: { address: 'person@security.example' } },
+            body: { contentType: 'text', content: 'Out of office' },
+          },
+          {
+            id: 'msg-loop',
+            subject: 'Re: your order',
+            receivedDateTime: new Date().toISOString(),
+            hasAttachments: false,
+            from: { emailAddress: { address: 'person@security.example' } },
+            body: { contentType: 'text', content: 'Thanks' },
+          },
+          {
+            id: 'msg-self',
+            subject: 'Copy',
+            receivedDateTime: new Date().toISOString(),
+            hasAttachments: false,
+            from: { emailAddress: { address: 'orders@accent.example' } },
+            body: { contentType: 'text', content: 'from us' },
+          },
+          {
+            id: 'msg-subject-auto',
+            subject: 'Automatic reply: away',
+            receivedDateTime: new Date().toISOString(),
+            hasAttachments: false,
+            from: { emailAddress: { address: 'person@security.example' } },
+            body: { contentType: 'text', content: 'away' },
+          },
+          {
+            id: 'msg-kept',
+            subject: 'Please print the posters',
+            receivedDateTime: new Date().toISOString(),
+            hasAttachments: false,
+            from: { emailAddress: { address: 'person@security.example' } },
+            body: { contentType: 'text', content: 'posters' },
+          },
+        ],
+        '@odata.deltaLink': `${graphBase}/v1.0/delta`,
+      });
+      return;
+    }
+    if (url.pathname.includes('/messages/') && !url.pathname.includes('/attachments') && url.searchParams.get('$select') === 'internetMessageHeaders') {
+      const id = decodeURIComponent(url.pathname.split('/messages/')[1] || '');
+      headerGets.push(id);
+      if (id === 'msg-subject-auto' || id === 'msg-kept') {
+        send(500, { error: { message: 'headers unavailable' } });
+        return;
+      }
+      send(200, { internetMessageHeaders: headersFor[id] || [] });
       return;
     }
     if (url.pathname.includes('/attachments')) {
@@ -364,6 +411,11 @@ async function main() {
   delete process.env.M365_LOGIN_BASE_URL;
   delete process.env.M365_GRAPH_BASE_URL;
   assert(refusedHttp, 'production must refuse an http mailbox address');
+  delete process.env.NODE_ENV;
+  process.env.M365_GRAPH_BASE_URL = 'http://127.0.0.1:9';
+  assert(graphMail.graphBase() === 'https://graph.microsoft.com', 'an unset NODE_ENV keeps the production Graph host');
+  process.env.NODE_ENV = 'test';
+  delete process.env.M365_GRAPH_BASE_URL;
 
   const fileMagic = require('../fileMagic');
   const pdf = Buffer.from('%PDF-1.4 hello');
@@ -458,6 +510,90 @@ async function main() {
     blocked = err.status === 403;
   }
   assert(blocked, 'a quarantined file cannot be downloaded');
+
+  const hang = net.createServer(() => {});
+  await new Promise((resolve) => hang.listen(0, '127.0.0.1', resolve));
+  process.env.CLAMD_HOST = '127.0.0.1';
+  process.env.CLAMD_PORT = String(hang.address().port);
+  process.env.CLAMD_TIMEOUT_MS = '400';
+  virusScan.resetScanner();
+  await inboundAttachments.storeAttachment(emailId, {
+    '@odata.type': '#microsoft.graph.fileAttachment',
+    id: 'timeout-pdf',
+    name: 'timeout.pdf',
+    contentType: 'application/pdf',
+    size: pdf.length,
+    isInline: false,
+    contentBytes: pdf.toString('base64'),
+  });
+  const timedOut = await db.get(`SELECT scan_status FROM inbound_email_attachments WHERE graph_attachment_id = 'timeout-pdf'`);
+  assert(timedOut && timedOut.scan_status !== 'clean', `a scan timeout stays quarantined, was ${timedOut && timedOut.scan_status}`);
+  await new Promise((resolve) => hang.close(() => resolve()));
+
+  process.env.CLAMD_PORT = '1';
+  await inboundAttachments.storeAttachment(emailId, {
+    '@odata.type': '#microsoft.graph.fileAttachment',
+    id: 'socket-pdf',
+    name: 'socket.pdf',
+    contentType: 'application/pdf',
+    size: pdf.length,
+    isInline: false,
+    contentBytes: pdf.toString('base64'),
+  });
+  const socketRow = await db.get(`SELECT scan_status FROM inbound_email_attachments WHERE graph_attachment_id = 'socket-pdf'`);
+  assert(socketRow && socketRow.scan_status !== 'clean', `a scanner socket error stays quarantined, was ${socketRow && socketRow.scan_status}`);
+  delete process.env.CLAMD_HOST;
+  delete process.env.CLAMD_PORT;
+
+  virusScan.setScanner(async () => ({ verdict: 'inconclusive', detail: 'no signature decision' }));
+  await inboundAttachments.storeAttachment(emailId, {
+    '@odata.type': '#microsoft.graph.fileAttachment',
+    id: 'maybe-pdf',
+    name: 'maybe.pdf',
+    contentType: 'application/pdf',
+    size: pdf.length,
+    isInline: false,
+    contentBytes: pdf.toString('base64'),
+  });
+  const maybe = await db.get(`SELECT scan_status FROM inbound_email_attachments WHERE graph_attachment_id = 'maybe-pdf'`);
+  assert(maybe && maybe.scan_status === 'inconclusive', `an inconclusive scan stays quarantined, was ${maybe && maybe.scan_status}`);
+
+  const scanAlerts = require('../inboundAlerts');
+  scanAlerts.resetCounts();
+  virusScan.setScanner(async () => ({ verdict: 'error', detail: 'scan broke' }));
+  for (let index = 0; index < 3; index += 1) {
+    await inboundAttachments.storeAttachment(emailId, {
+      '@odata.type': '#microsoft.graph.fileAttachment',
+      id: `scan-fail-${index}`,
+      name: `fail-${index}.pdf`,
+      contentType: 'application/pdf',
+      size: pdf.length,
+      isInline: false,
+      contentBytes: pdf.toString('base64'),
+    });
+  }
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const scanAlert = await db.get(`SELECT title FROM notifications WHERE type = 'inbound_mail_alert' AND title LIKE '%scanning%'`);
+  assert(scanAlert, 'repeated scan failures raise an admin bell notice');
+  virusScan.resetScanner();
+
+  process.env.INBOUND_ATTACHMENT_CAP_BYTES = '30';
+  await inboundAttachments.storeAttachment(emailId, {
+    '@odata.type': '#microsoft.graph.fileAttachment',
+    id: 'over-cap',
+    name: 'over.pdf',
+    contentType: 'application/pdf',
+    size: pdf.length,
+    isInline: false,
+    contentBytes: pdf.toString('base64'),
+  });
+  const capped = await db.get(`SELECT fetch_state, skipped_reason, stored_name FROM inbound_email_attachments WHERE graph_attachment_id = 'over-cap'`);
+  assert(capped && capped.fetch_state === 'skipped' && !capped.stored_name && /full/i.test(capped.skipped_reason || ''), `the storage cap should reject the file: ${JSON.stringify(capped)}`);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const storageAlert = await db.get(`SELECT title FROM notifications WHERE type = 'inbound_mail_alert' AND title LIKE '%storage%'`);
+  assert(storageAlert, 'a full attachment store raises an admin bell notice');
+  delete process.env.INBOUND_ATTACHMENT_CAP_BYTES;
+
   let releaseBlocked = false;
   try {
     await inboundAttachments.releaseAttachment(
@@ -591,6 +727,12 @@ async function main() {
     assert(ignored.auto && /Auto-Submitted/i.test(ignored.auto), ignored.auto);
     assert(ignored.loop && /Launchpad/i.test(ignored.loop), ignored.loop);
     assert(ignored.self && /outbound/i.test(ignored.self), ignored.self);
+    assert(ignored.subject && /subject/i.test(ignored.subject), ignored.subject);
+    assert(ignored.kept && /could not be read/i.test(ignored.kept), ignored.kept);
+    assert(deltaCalls === 1, `the first poll should read delta once, saw ${deltaCalls}`);
+    assert(deltaQueries.every((query) => !query.includes('internetMessageHeaders')), `delta must not select headers: ${deltaQueries.join(' ')}`);
+    assert(headerGets.includes('msg-auto') && headerGets.includes('msg-kept'), `headers are fetched per message: ${headerGets.join(',')}`);
+    assert(pending.fetch_state === 'pending', 'the first poll leaves the placeholder pending');
 
     const customer = await request({
       method: 'POST',
@@ -623,9 +765,17 @@ async function main() {
     });
     assert(blockedConvert.status === 409, `a pending attachment blocks conversion: ${blockedConvert.status} ${blockedConvert.text}`);
 
+    const pace = openDb(dbFile);
+    await pace.run(
+      `UPDATE inbound_email_attachments
+       SET next_fetch_at = datetime('now', '-1 minute')
+       WHERE fetch_state IN ('pending', 'failed')`
+    );
+    await pace.close();
     attachmentMode = 'ready';
     const secondSync = await request({ method: 'POST', path: '/api/inbound-emails/sync', token: admin.token });
     assert(secondSync.status === 200, secondSync.text);
+    assert(deltaCalls >= 2, 'a later poll reads delta again without the original message');
     const ready = await request({ method: 'GET', path: `/api/inbound-emails/${placeholder.id}`, token: admin.token });
     const arrived = (ready.json.attachments || []).find((file) => file.original_name === 'late.pdf');
     assert(arrived && arrived.fetch_state === 'fetched' && arrived.clean, `the real attachment should scan clean: ${JSON.stringify(arrived)}`);
@@ -638,6 +788,37 @@ async function main() {
     assert(download.status === 200 && /attachment/i.test(disposition) && !/inline/i.test(disposition), `download headers: ${download.status} ${disposition}`);
     assert(String(download.headers['x-content-type-options'] || '') === 'nosniff', 'download sends nosniff');
     assert(String(download.headers['content-type'] || '').includes('pdf'), download.headers['content-type']);
+
+    const noCsrfConvert = await request({
+      method: 'POST',
+      path: `/api/inbound-emails/${placeholder.id}/convert`,
+      token: admin.token,
+      skipCsrf: true,
+      json: payload,
+    });
+    assert(noCsrfConvert.status === 403, `convert without CSRF is rejected: ${noCsrfConvert.status}`);
+    const noCsrfConfirm = await request({
+      method: 'POST',
+      path: `/api/inbound-emails/${placeholder.id}/confirmations`,
+      token: admin.token,
+      skipCsrf: true,
+      json: { customer_id: customer.json.id, recipient: 'pat@security.example' },
+    });
+    assert(noCsrfConfirm.status === 403, `confirm without CSRF is rejected: ${noCsrfConfirm.status}`);
+    const partial = await request({
+      method: 'POST',
+      path: `/api/inbound-emails/${placeholder.id}/confirmations`,
+      token: admin.token,
+      json: { customer_id: customer.json.id, recipient: 'pat@security.example', attachment_ids: [] },
+    });
+    assert(partial.status === 200, partial.text);
+    const missingFile = await request({
+      method: 'POST',
+      path: `/api/inbound-emails/${placeholder.id}/convert`,
+      token: admin.token,
+      json: { ...payload, attachment_ids: [arrived.id] },
+    });
+    assert(missingFile.status >= 400 && missingFile.status < 500 && /attachment/i.test(missingFile.text), `an unconfirmed attachment blocks conversion: ${missingFile.status} ${missingFile.text}`);
 
     const direct = await request({
       method: 'POST',
@@ -732,6 +913,23 @@ async function main() {
       token: admin.token,
     });
     assert((orderView.json.order.customer_notices || []).some((row) => row.notice_type === 'confirmation'), 'the order history includes the confirmation');
+    const pickupNotify = require('../pickupNotify');
+    const deliveryNotify = require('../deliveryNotify');
+    await afterCrash.run(
+      `UPDATE users SET mobile_phone = '9195550199', sms_opt_in = 1 WHERE id = ?`,
+      [customer.json.id]
+    );
+    await afterCrash.run(
+      `UPDATE orders SET pickup_notified_generation = 1, delivery_notified_generation = 1 WHERE id = ?`,
+      [linked.order_id]
+    );
+    await pickupNotify.deliver(linked.order_id, 1);
+    await deliveryNotify.deliver(linked.order_id, 1);
+    const delivered = await customerNotices.orderNotices(linked.order_id);
+    for (const noticeType of ['ready_for_pickup', 'ready_for_delivery']) {
+      assert(delivered.some((row) => row.notice_type === noticeType && row.channel === 'email' && row.recipient && row.result), `${noticeType} email is on the order`);
+      assert(delivered.some((row) => row.notice_type === noticeType && row.channel === 'sms' && row.result), `${noticeType} text is on the order`);
+    }
     const auditApi = await request({ method: 'GET', path: '/api/account-audit', token: admin.token });
     assert(auditApi.status === 200 && (auditApi.json.entries || []).some((row) => row.notice_type === 'welcome'), auditApi.text);
     const operator = await request({
@@ -759,10 +957,14 @@ async function dbOpenIgnored() {
     const auto = await db.get(`SELECT ignore_reason FROM inbound_emails WHERE graph_message_id = 'msg-auto'`);
     const loop = await db.get(`SELECT ignore_reason FROM inbound_emails WHERE graph_message_id = 'msg-loop'`);
     const self = await db.get(`SELECT ignore_reason FROM inbound_emails WHERE graph_message_id = 'msg-self'`);
+    const subject = await db.get(`SELECT ignore_reason FROM inbound_emails WHERE graph_message_id = 'msg-subject-auto'`);
+    const kept = await db.get(`SELECT status, loop_check_note FROM inbound_emails WHERE graph_message_id = 'msg-kept'`);
     return {
       auto: auto && auto.ignore_reason,
       loop: loop && loop.ignore_reason,
       self: self && self.ignore_reason,
+      subject: subject && subject.ignore_reason,
+      kept: kept && kept.status !== 'ignored' ? kept.loop_check_note : '',
     };
   } finally {
     await db.close();

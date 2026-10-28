@@ -58,6 +58,7 @@ const pickupRequestsRouter = require('./routes/pickupRequests');
 const locationsRouter = require('./routes/locations');
 const inboundEmailPoller = require('./inboundEmailPoller');
 const inboundRetention = require('./inboundRetention');
+const inboundAttachments = require('./inboundAttachments');
 const accountAuditRouter = require('./routes/accountAudit');
 const systemSettings = require('./systemSettings');
 const mailer = require('./mailer');
@@ -329,5 +330,6 @@ systemSettings.loadRuntimeCache()
       startOrphanSweep();
       inboundEmailPoller.start();
       inboundRetention.start();
+      inboundAttachments.startRetryTimer();
     });
   });

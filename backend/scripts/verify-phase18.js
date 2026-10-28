@@ -29,6 +29,7 @@ const clientId = 'client-phase18';
 const mailbox = 'orders@phase18.example';
 
 process.env.DATABASE_FILE = dbFile;
+process.env.NODE_ENV = 'test';
 process.env.M365_TENANT_ID = tenantId;
 process.env.M365_CLIENT_ID = clientId;
 process.env.M365_CLIENT_SECRET = clientSecret;

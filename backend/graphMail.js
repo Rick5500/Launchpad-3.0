@@ -26,8 +26,13 @@ function isConfigured() {
 const PRODUCTION_LOGIN = 'https://login.microsoftonline.com';
 const PRODUCTION_GRAPH = 'https://graph.microsoft.com';
 
+function allowsEndpointOverrides() {
+  const env = String(process.env.NODE_ENV || '').trim();
+  return env === 'development' || env === 'test';
+}
+
 function isProduction() {
-  return String(process.env.NODE_ENV || '').trim() === 'production';
+  return !allowsEndpointOverrides();
 }
 
 function loginBase() {
@@ -214,7 +219,7 @@ function folderSegment() {
 
 function initialDeltaUrl(watermark) {
   const since = watermark || new Date().toISOString();
-  const select = 'id,subject,receivedDateTime,from,body,bodyPreview,hasAttachments,internetMessageHeaders';
+  const select = 'id,subject,receivedDateTime,from,body,bodyPreview,hasAttachments';
   const filter = `receivedDateTime ge ${since}`;
   const params = new URLSearchParams();
   params.set('$select', select);
@@ -227,6 +232,12 @@ function attachmentsUrl(messageId) {
   const user = encodeURIComponent(mailbox());
   const id = encodeURIComponent(messageId);
   return `${graphBase()}/v1.0/users/${user}/messages/${id}/attachments`;
+}
+
+function messageHeadersUrl(messageId) {
+  const user = encodeURIComponent(mailbox());
+  const id = encodeURIComponent(messageId);
+  return `${graphBase()}/v1.0/users/${user}/messages/${id}?$select=internetMessageHeaders`;
 }
 
 module.exports = {
@@ -243,4 +254,5 @@ module.exports = {
   clearTokenCache,
   initialDeltaUrl,
   attachmentsUrl,
+  messageHeadersUrl,
 };
