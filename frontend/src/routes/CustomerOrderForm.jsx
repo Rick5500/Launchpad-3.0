@@ -31,6 +31,7 @@ import { DivisionCredit } from '../components/AcgMark';
 import CustomerShell from '../components/CustomerShell';
 import BrandLogo from '../components/BrandLogo';
 import SmsOptInForm from '../components/SmsOptInForm';
+import { formatMobileDisplay, textingNeedsSave } from '../smsOptInState.mjs';
 import { useDocumentTitle } from '../useDocumentTitle';
 import { useAuth } from '../context/AuthContext';
 import { authFetch } from '../api';
@@ -607,6 +608,8 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
   const [openSteps, setOpenSteps] = useState(openAllSteps);
   const [mobilePhone, setMobilePhone] = useState('');
   const [smsOptIn, setSmsOptIn] = useState(false);
+  const [textingTouched, setTextingTouched] = useState(false);
+  const [textingExpanded, setTextingExpanded] = useState(false);
   const [textingSaving, setTextingSaving] = useState(false);
   const [textingError, setTextingError] = useState('');
   const [textingNotice, setTextingNotice] = useState('');
@@ -634,9 +637,13 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
         setMobilePhone(refreshed.mobile_phone || '');
         setSmsOptIn(Boolean(refreshed.sms_opt_in));
       }
+      setTextingTouched(false);
+      setTextingExpanded(false);
       setTextingNotice(smsOptIn ? 'Text updates are on for this mobile number.' : 'Text updates are off.');
+      return true;
     } catch (err) {
       setTextingError(err.message || 'Unable to save texting preferences');
+      return false;
     } finally {
       setTextingSaving(false);
     }
@@ -1116,6 +1123,11 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
 
     setSubmitting(true);
     try {
+      // An unsaved consent choice or mobile number is saved with the order.
+      // Show a profile error and still post the order when that save fails.
+      if (!isStaff && textingTouched && textingNeedsSave(user, mobilePhone, smsOptIn)) {
+        await saveTexting();
+      }
       const response = await authFetch(inboundEmail ? `/api/inbound-emails/${inboundEmail.id}/convert` : '/api/orders', {
         method: 'POST',
         body: JSON.stringify(payload),
@@ -1268,6 +1280,7 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
   }
 
 
+  const savedMobileLabel = formatMobileDisplay(user?.mobile_phone);
   const content = (
     <>
       <GlobalStyles styles={{
@@ -1304,6 +1317,9 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
               <Box sx={{ minWidth: 0 }}>
                 <Typography sx={{ color: brand.green, fontWeight: 800, fontSize: { xs: 20, sm: 24 }, lineHeight: 1.2 }}>{inboundEmail ? 'Order created from the email' : 'Order Submitted Successfully!'}</Typography>
                 <Typography data-testid="order-number" sx={{ mt: 0.5, fontWeight: 700, fontSize: 18 }}>Order #: {result.order_number}</Typography>
+                {textingError ? (
+                  <Alert severity="error" sx={{ mt: 1.5, '& .MuiAlert-message': { fontSize: '1.05rem' } }}>{textingError}</Alert>
+                ) : null}
               </Box>
             </Box>
             <Typography sx={{ color: brand.navy, fontWeight: 800, mt: 2 }}>Work Orders Created</Typography>
@@ -1357,16 +1373,74 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
           </Box>
 
           {!isStaff ? (
-            <SmsOptInForm
-              mobilePhone={mobilePhone}
-              onMobilePhoneChange={setMobilePhone}
-              smsOptIn={smsOptIn}
-              onSmsOptInChange={setSmsOptIn}
-              onSave={saveTexting}
-              saving={textingSaving}
-              error={textingError}
-              notice={textingNotice}
-            />
+            user?.sms_opt_in && !textingExpanded ? (
+              <Typography
+                data-testid="sms-opt-in-summary"
+                sx={{
+                  bgcolor: '#fff',
+                  border: `1px solid ${brand.border}`,
+                  borderLeft: `6px solid ${brand.navy}`,
+                  borderRadius: 2,
+                  px: { xs: 2, sm: 2.5 },
+                  py: 1.25,
+                  color: brand.navy,
+                  fontWeight: 700,
+                  fontSize: '1.15rem',
+                  lineHeight: 1.45,
+                }}
+              >
+                {savedMobileLabel ? `Text updates are on for ${savedMobileLabel}` : 'Text updates are on'}
+                {' · '}
+                <Box
+                  component="button"
+                  type="button"
+                  data-testid="sms-opt-in-change"
+                  onClick={() => {
+                    setTextingNotice('');
+                    setTextingError('');
+                    setTextingExpanded(true);
+                  }}
+                  sx={{
+                    border: 0,
+                    p: 0,
+                    bgcolor: 'transparent',
+                    color: 'inherit',
+                    font: 'inherit',
+                    fontWeight: 800,
+                    textDecoration: 'underline',
+                    textUnderlineOffset: '3px',
+                    cursor: 'pointer',
+                    ...focusRing,
+                  }}
+                >
+                  Change
+                </Box>
+              </Typography>
+            ) : (
+              <SmsOptInForm
+                mobilePhone={mobilePhone}
+                onMobilePhoneChange={(value) => {
+                  setTextingTouched(true);
+                  setTextingNotice('');
+                  setTextingError('');
+                  setMobilePhone(value);
+                }}
+                smsOptIn={smsOptIn}
+                onSmsOptInChange={(checked) => {
+                  setTextingTouched(true);
+                  setTextingNotice('');
+                  setTextingError('');
+                  setSmsOptIn(checked);
+                }}
+                onSave={saveTexting}
+                saving={textingSaving}
+                error={textingError}
+                notice={textingNotice}
+                pendingHint={smsOptIn && textingTouched && textingNeedsSave(user, mobilePhone, smsOptIn)
+                  ? 'This will be saved with your order.'
+                  : ''}
+              />
+            )
           ) : null}
 
           <Box

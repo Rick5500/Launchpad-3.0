@@ -8,6 +8,7 @@ const { withTransaction } = require('../dbAsync');
 const { parseUsername, updateCustomerAddress, updateCustomerTexting } = require('../userAdmin');
 const { parsePostalAddress } = require('../fields');
 const { resetUserPassword, passwordPolicyError } = require('../passwordReset');
+const accountMail = require('../accountMail');
 
 const router = express.Router();
 const BCRYPT_ROUNDS = 10;
@@ -195,6 +196,19 @@ router.post('/', auth.requireAuth, auth.requireRole('admin'), async (req, res) =
     if (!created) throw lastErr || new Error('Failed to create customer');
     const body = created.row || { username: created.uniqueUsername, display_name: String(display_name).trim() };
     if (generated) body.password = password;
+    let welcome = { status: 'failed' };
+    try {
+      welcome = await accountMail.sendStaffWelcome({
+        id: body.id,
+        email,
+        display_name: body.display_name,
+        username: body.username,
+      });
+    } catch (mailErr) {
+      console.error('WELCOME EMAIL ERROR:', mailErr && mailErr.message ? mailErr.message : 'failed');
+      welcome = { status: 'failed' };
+    }
+    body.welcome_email = accountMail.publicNotice(welcome);
     return res.status(201).json(body);
   } catch (err) {
     if (err && err.status && err.publicMessage) {

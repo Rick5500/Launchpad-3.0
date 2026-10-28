@@ -121,6 +121,21 @@ function insertNotifications(items, cb) {
   );
 }
 
+function notifyPickupRequested(item, cb) {
+  if (!item || !item.pickupId) return cb(null, []);
+  const who = item.company || item.contactName || 'A customer';
+  const order = item.orderNumber ? ` for order ${item.orderNumber}` : '';
+  insertNotifications([{
+    type: 'pickup_requested',
+    title: `Pickup request from ${who}`,
+    body: item.body || `${who} asked Dispatch to pick up originals${order}.`,
+    customerId: null,
+    orderId: item.orderId == null ? null : item.orderId,
+    locationId: item.locationId == null ? null : item.locationId,
+    dedupeKey: item.dedupeKey || `pickup_requested:${item.pickupId}`,
+  }], cb);
+}
+
 function notifyOrderCreated(item, cb) {
   if (!item || !item.orderId) return cb(null, []);
   const number = item.orderNumber || item.orderId;
@@ -400,6 +415,20 @@ function visibility(user, access) {
     const placeholders = MANAGER_ONLY_TYPES.map(() => '?').join(', ');
     clauses.push(`n.type NOT IN (${placeholders})`);
     params.push(...MANAGER_ONLY_TYPES);
+    // Originals pickups ring for Dispatch at that shop. A blank department
+    // still sees every department, matching the production board.
+    const department = access && access.department ? String(access.department).trim() : '';
+    if (department) {
+      clauses.push(`(n.type != 'pickup_requested' OR EXISTS (
+        SELECT 1 FROM departments d
+        WHERE lower(trim(d.name)) = lower(trim(?))
+          AND (
+            d.dept_key = 'dispatch'
+            OR ((d.dept_key IS NULL OR trim(d.dept_key) = '') AND lower(trim(d.name)) = 'dispatch')
+          )
+      ))`);
+      params.push(department);
+    }
   }
   if (access && !shopLocations.seesAll(access) && user && user.role !== 'customer') {
     const pred = shopLocations.predicate('n.location_id', access);
@@ -540,6 +569,7 @@ function markAllRead(user, cb) {
 module.exports = {
   dueSoonMinutes,
   notifyOrderCreated,
+  notifyPickupRequested,
   notifyWorkOrderCreated,
   notifyWorkOrderUpdated,
   notifyFilesShared,

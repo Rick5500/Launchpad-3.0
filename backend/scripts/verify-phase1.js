@@ -165,6 +165,8 @@ function baseEnv(databaseFile) {
     UPLOAD_ORPHAN_HOURS: '24',
     PORT: String(port),
     NODE_ENV: 'test',
+    SMTP_HOST: '',
+    SMTP_FROM: '',
     UV_THREADPOOL_SIZE: process.env.UV_THREADPOOL_SIZE || '32',
   };
 }
@@ -945,8 +947,8 @@ async function runApiChecks() {
     assert(created.status === 201, `order create failed: ${created.status} ${created.text}`);
     const todayKey = dateKey(utcDate(0));
     assert(created.json.order_number === `${todayKey}-041`, `expected ${todayKey}-041, got ${created.json.order_number}`);
-    assert(created.json.confirmation.email_sent === false, 'email must not be sent');
-    assert(created.json.confirmation.email_status === 'disabled', 'email status should be disabled');
+    assert(created.json.confirmation.email_sent === false, 'email must not be sent when mail is not configured');
+    assert(created.json.confirmation.email_status === 'not_configured', 'email status should be not configured');
     assert(!/confirmation email has been sent/i.test(created.text), 'response must not claim an email was sent');
     const suffixes = created.json.work_orders.map((row) => row.external_id);
     assert(suffixes.join(',') === `${todayKey}-041-A,${todayKey}-041-B,${todayKey}-041-C`, `work order suffixes were ${suffixes.join(',')}`);

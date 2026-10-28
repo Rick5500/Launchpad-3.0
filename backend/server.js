@@ -93,12 +93,15 @@ const activityRouter = require('./routes/activity');
 const searchRouter = require('./routes/search');
 const inboundEmailRouter = require('./routes/inboundEmails');
 const quotesRouter = require('./routes/quotes');
+const pickupRequestsRouter = require('./routes/pickupRequests');
 const locationsRouter = require('./routes/locations');
 const inboundEmailPoller = require('./inboundEmailPoller');
 const systemSettings = require('./systemSettings');
 const mailer = require('./mailer');
 const userAdmin = require('./userAdmin');
+const passwordSet = require('./passwordSet');
 const registerLimit = require('./registerLimit');
+const { createFixedWindowLimiter } = require('./rateLimit');
 const { sendError } = require('./httpError');
 const { mountProductionFrontend } = require('./productionStatic');
 const backup = require('./backup');
@@ -131,6 +134,32 @@ app.get('/api/auth/config', async (req, res) => {
     });
   } catch (err) {
     sendError(res, err, 'AUTH CONFIG ERROR:', 'Unable to load sign-in options');
+  }
+});
+
+const setPasswordLimiter = createFixedWindowLimiter({ windowMs: 15 * 60 * 1000, max: 30 });
+
+app.post('/api/auth/set-password', async (req, res) => {
+  try {
+    const limit = setPasswordLimiter.check(`set-password:${clientIp(req)}`);
+    if (!limit.allowed) {
+      res.set('Retry-After', String(limit.retryAfterSeconds));
+      return res.status(429).json({ error: 'Too many attempts. Try again later.' });
+    }
+    const body = req.body || {};
+    if (typeof body.password !== 'string' || body.password === '') {
+      return res.status(400).json({ error: 'password is required' });
+    }
+    if (typeof body.password_confirm !== 'string' || body.password_confirm === '') {
+      return res.status(400).json({ error: 'password_confirm is required' });
+    }
+    if (body.password_confirm !== body.password) {
+      return res.status(400).json({ error: 'password confirmation does not match' });
+    }
+    await passwordSet.consumeToken({ token: body.token, password: body.password });
+    return res.json({ ok: true });
+  } catch (err) {
+    return sendError(res, err, 'SET PASSWORD ERROR:', 'Unable to set the password');
   }
 });
 
@@ -312,6 +341,7 @@ app.use('/api/activity', activityRouter);
 app.use('/api/search', searchRouter);
 app.use('/api/inbound-emails', inboundEmailRouter);
 app.use('/api/quote-requests', quotesRouter);
+app.use('/api/pickup-requests', pickupRequestsRouter);
 
 // Admin placeholder
 app.get('/api/admin', auth.requireAuth, auth.requireRole('admin'), (req, res) => res.json({ message: 'admin endpoint (placeholder)', user: req.user }));
