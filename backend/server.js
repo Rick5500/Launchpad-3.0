@@ -325,6 +325,7 @@ function stopPollers() {
   inboundAttachments.stopRetryTimer();
   const uploadMaintenance = require('./uploadMaintenance');
   uploadMaintenance.stop();
+  mailSweep.stop();
 }
 
 lifecycle.install(() => {

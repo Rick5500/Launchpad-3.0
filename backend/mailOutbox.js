@@ -259,6 +259,7 @@ module.exports = {
   SCHEMA,
   ACTIVE_INDEX,
   claimant,
+  drainBoundMs,
   leaseMs,
   leaseSeconds,
   isSending,

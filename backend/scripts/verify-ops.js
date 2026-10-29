@@ -16,6 +16,7 @@ const sweepDb = path.join(tmp, 'sweep.db');
 const mobileDb = path.join(tmp, 'mobile.db');
 const drainDb = path.join(tmp, 'drain.db');
 const overlapDb = path.join(tmp, 'overlap.db');
+const killDb = path.join(tmp, 'kill.db');
 const adminPassword = 'AdminPass123';
 const customerPassword = 'CustomerPass123';
 const managerPassword = 'ManagerPass123';
@@ -849,6 +850,38 @@ async function runDrainChecks() {
   console.log('PASS a later start does not send the confirmation again');
 }
 
+function startOpsChild(childName, databaseFile, extra = {}) {
+  const child = spawn(process.execPath, ['scripts/verify-ops.js'], {
+    cwd: backendDir,
+    env: {
+      ...process.env,
+      OPS_CHILD: childName,
+      DATABASE_FILE: databaseFile,
+      NODE_ENV: 'test',
+      SMTP_HOST: '127.0.0.1',
+      SMTP_PORT: '2525',
+      SMTP_FROM: 'orders@example.com',
+      MAIL_TRANSPORT: 'json',
+      PUBLIC_APP_URL: 'https://launchpad.example',
+      DELIVERY_TIMEZONE: 'UTC',
+      INIT_ADMIN_PASSWORD: adminPassword,
+      MAIL_TEST_THROW: '',
+      EMAIL_NOTIFICATIONS: '',
+      MAIL_TEST_HOLD_MS: '',
+      ...extra,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let out = '';
+  let err = '';
+  child.stdout.on('data', (chunk) => { out += chunk; });
+  child.stderr.on('data', (chunk) => { err += chunk; });
+  const done = new Promise((resolve) => {
+    child.on('close', (code, signal) => resolve({ code, signal, out, err }));
+  });
+  return { child, done, logs: () => `${out}\n${err}` };
+}
+
 function spawnOps(childName, databaseFile, extra = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['scripts/verify-ops.js'], {
@@ -968,13 +1001,13 @@ async function runOverlapChecks() {
     [slowOrder.lastID]
   );
   const slowLease = {
-    DRAIN_TIMEOUT_MS: '1000',
+    DRAIN_TIMEOUT_MS: '3000',
     MAIL_SWEEP_LEASE_MARGIN_MS: '0',
   };
   const slowSender = spawnOps('deliver', overlapDb, {
     ...slowLease,
     OPS_ORDER_ID: String(slowOrder.lastID),
-    MAIL_TEST_HOLD_MS: '4000',
+    MAIL_TEST_HOLD_MS: '8000',
   });
   const slowClaimDeadline = Date.now() + 5000;
   let slowClaim = null;
@@ -987,7 +1020,7 @@ async function runOverlapChecks() {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   assert(slowClaim && slowClaim.claimed_by, 'the slow send should claim the row');
-  await new Promise((resolve) => setTimeout(resolve, 1500));
+  await new Promise((resolve) => setTimeout(resolve, 4000));
   const slowSweep = await spawnOps('sweep', overlapDb, slowLease);
   assert(slowSweep.code === 0, `slow-send sweep failed\n${slowSweep.err}\n${slowSweep.out}`);
   const slowResult = JSON.parse((slowSweep.out.match(/SWEEP (\{.*\})/) || [])[1] || 'null');
@@ -1087,6 +1120,78 @@ async function runSameProcessOverlap() {
   }
 }
 
+async function sentConfirmations(db, orderId) {
+  const row = await db.get(
+    `SELECT COUNT(*) AS count FROM order_notify_log
+     WHERE order_id = ? AND notice_type = 'confirmation' AND result = 'sent'`,
+    [orderId]
+  );
+  return row ? row.count : 0;
+}
+
+async function runAbandonedSend() {
+  const port = 3186;
+  const lease = { DRAIN_TIMEOUT_MS: '3000', MAIL_SWEEP_LEASE_MARGIN_MS: '0' };
+  await initDatabase(killDb);
+  fs.mkdirSync(path.join(tmp, `uploads-${port}`), { recursive: true });
+  const db = openDb(killDb);
+  const user = await db.run(
+    `INSERT INTO users (username, password_hash, role, display_name, email)
+     VALUES ('killed-customer', 'hash', 'customer', 'Killed', 'killed@example.com')`
+  );
+  const order = await db.run(
+    `INSERT INTO orders (
+       order_number, customer_id, company, contact_name, phone, email,
+       delivery_method, due_date, due_time
+     ) VALUES ('KILL-1', ?, 'Ops Co', 'Ops Contact', '919-555-3333', 'killed@example.com', 'Will Call', ?, '10:00')`,
+    [user.lastID, weekdayAhead()]
+  );
+  await db.run(
+    `INSERT INTO mail_outbox (scope, order_id, channel, notice_type, status, created_at)
+     VALUES ('order', ?, 'email', 'confirmation', 'queued', datetime('now'))`,
+    [order.lastID]
+  );
+  const holder = startOpsChild('deliver', killDb, {
+    ...lease,
+    OPS_ORDER_ID: String(order.lastID),
+    MAIL_TEST_HOLD_MS: '20000',
+  });
+  const claimDeadline = Date.now() + 5000;
+  let claimed = null;
+  while (Date.now() < claimDeadline) {
+    claimed = await db.get(
+      `SELECT claimed_by, status FROM mail_outbox WHERE order_id = ? AND notice_type = 'confirmation'`,
+      [order.lastID]
+    );
+    if (claimed && claimed.claimed_by && claimed.status === 'sending') break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert(claimed && claimed.status === 'sending', `A should be holding the send: ${JSON.stringify(claimed)}\n${holder.logs()}`);
+  const server = startServer(serverEnv(killDb, port, lease));
+  try {
+    await server.ready;
+    assert(await sentConfirmations(db, order.lastID) === 0, `B sent while A was still holding\n${server.logs()}`);
+    holder.child.kill('SIGKILL');
+    await holder.done;
+    let count = 0;
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline) {
+      count = await sentConfirmations(db, order.lastID);
+      if (count === 1 && server.logs().includes('MAIL RESEND:')) break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    assert(count === 1, `B should deliver the abandoned send once after the lease expires, got ${count}\n${server.logs()}`);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    assert(await sentConfirmations(db, order.lastID) === 1, 'B must not deliver the abandoned send a second time');
+    console.log('PASS a killed peer\'s send is delivered once after the lease expires');
+  } finally {
+    await db.close();
+    try { holder.child.kill('SIGKILL'); } catch (err) { /* already gone */ }
+    const stopped = await server.stop();
+    assert(stopped.code === 0, `the surviving server should drain cleanly, got ${stopped.code} ${stopped.signal}`);
+  }
+}
+
 async function runChild() {
   if (process.env.OPS_CHILD === 'enqueue') {
     const mailOutbox = require('../mailOutbox');
@@ -1128,6 +1233,7 @@ async function main() {
   await runSweepChecks();
   await runSameProcessOverlap();
   await runOverlapChecks();
+  await runAbandonedSend();
   await runMobileChecks();
   await runDrainChecks();
   console.log('All ops checks passed');

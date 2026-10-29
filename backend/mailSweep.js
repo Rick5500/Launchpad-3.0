@@ -199,22 +199,49 @@ async function sweepOnce() {
   return { resent, skipped };
 }
 
+let tail = Promise.resolve();
+let repeatTimer = null;
+let stopped = false;
+
+function sweepOnceSerialized() {
+  const run = tail.then(() => sweepOnce(), () => sweepOnce());
+  tail = run.then(() => {}, () => {});
+  return run;
+}
+
+function repeatDelayMs() {
+  return Math.max(1000, Math.min(mailOutbox.leaseMs(), 5000));
+}
+
+// Keeps looking for a lease the previous process abandoned. One follow-up
+// is not enough: that process renews the lease until its drain ends, which
+// can be later than a single timer. The interval is unref'd and stops when
+// this process itself drains.
+function startRepeating() {
+  if (repeatTimer || stopped) return;
+  repeatTimer = setInterval(() => {
+    if (stopped) return;
+    sweepOnceSerialized().catch((err) => {
+      console.error('MAIL SWEEP ERROR:', err && err.message ? err.message : 'failed');
+    });
+  }, repeatDelayMs());
+  if (typeof repeatTimer.unref === 'function') repeatTimer.unref();
+}
+
+function stop() {
+  stopped = true;
+  if (repeatTimer) clearInterval(repeatTimer);
+  repeatTimer = null;
+}
+
 function sweep(options = {}) {
-  const promise = sweepOnce();
-  if (options.followUp) {
-    promise.then(() => {
-      const timer = setTimeout(() => {
-        sweepOnce().catch((err) => {
-          console.error('MAIL SWEEP ERROR:', err && err.message ? err.message : 'failed');
-        });
-      }, mailOutbox.leaseMs() + 1000);
-      if (typeof timer.unref === 'function') timer.unref();
-    }).catch(() => {});
-  }
+  const promise = sweepOnceSerialized();
+  if (options.followUp) promise.finally(() => startRepeating());
   return promise;
 }
 
 module.exports = {
   sweep,
+  stop,
   recorded,
 };

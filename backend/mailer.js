@@ -155,9 +155,10 @@ function smtpTimeoutMs() {
   let timeout = 12000;
   if (Number.isInteger(parsed) && parsed >= 1000 && parsed <= 120000) timeout = parsed;
   // Connect, greeting, and socket each use this budget. Together they stay
-  // under the outbox lease so a slow server cannot outlive the claim.
-  const budget = mailOutbox.leaseMs() - 2000;
-  if (budget >= 3000) timeout = Math.min(timeout, Math.floor(budget / 3));
+  // inside the drain bound, so a slow server is finished before shutdown
+  // gives up on the send.
+  const bound = mailOutbox.drainBoundMs();
+  if (bound >= 3000) timeout = Math.min(timeout, Math.floor(bound / 3));
   return timeout;
 }
 
