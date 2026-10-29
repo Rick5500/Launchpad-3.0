@@ -1,0 +1,42 @@
+# Example Render blueprint for one web service and a persistent disk.
+# Do not put secrets in this file. Fill those in the Render dashboard.
+services:
+  - type: web
+    name: launchpad
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_PATH
+        value: /var/data/launchpad.db
+      - key: UPLOADS_DIR
+        value: /var/data/uploads
+      - key: TRUST_PROXY
+        value: "1"
+      - key: PUBLIC_APP_URL
+        value: https://launchpad.acgprinting.com
+      - key: DELIVERY_TIMEZONE
+        value: America/New_York
+      - key: BACKUP_ENABLED
+        value: "false"
+      - key: FILE_STORAGE_DRIVER
+        value: local
+      # Set this in the dashboard before the first boot if you want a chosen admin password.
+      # A copied launchpad.db already has its admin user, and this value is ignored then.
+      # init_db.js never updates an existing password.
+      - key: INIT_ADMIN_PASSWORD
+        sync: false
+      # Optional Ready for Pickup texts. Leave all three unset to log the text (dry-run) and not send it.
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM_NUMBER
+        sync: false
+    disk:
+      name: launchpad-data
+      mountPath: /var/data
+      sizeGB: 10

@@ -761,7 +761,7 @@ async function prepareFile(user, rawId) {
       throw httpError(404, 'File not found');
     }
   }
-  const opened = openStored(file.stored_name, file.storage_root);
+  const opened = await Promise.resolve(openStored(file.stored_name, file.storage_root));
   if (!opened) throw httpError(404, 'File not found');
   return {
     fullPath: opened.fullPath,

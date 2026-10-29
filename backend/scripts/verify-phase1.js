@@ -180,6 +180,15 @@ function isoDate(date) {
   return date.toISOString().slice(0, 10);
 }
 
+function nextWeekdayIso() {
+  for (let offset = 0; offset <= 6; offset += 1) {
+    const date = utcDate(offset);
+    const day = date.getUTCDay();
+    if (day !== 0 && day !== 6) return isoDate(date);
+  }
+  return isoDate(utcDate(0));
+}
+
 function dateKey(date) {
   return isoDate(date).replace(/-/g, '');
 }
@@ -598,7 +607,7 @@ function orderBody(overrides = {}) {
     delivery_method: 'Accent Truck',
     ship_to: 'Acme Construction\n1234 Builder Way\nRaleigh, NC 27601',
     attention: 'Receiving Dock',
-    due_date: isoDate(utcDate(0)),
+    due_date: nextWeekdayIso(),
     due_time: '13:30',
     service_ids: [],
     line_items: [{ description: 'Default line', quantity: '1' }],
@@ -1235,6 +1244,15 @@ async function runApiChecks() {
     const legacyAfterEdit = await request({ method: 'GET', path: `/api/orders/${legacyOrder.lastID}`, token: adminToken });
     assert(legacyAfterEdit.json.order.delivery_method === 'Customer Pickup' && legacyAfterEdit.json.order.due_time === '18:00', 'editing a legacy order must not rewrite the method');
 
+    const shopDay = utcDate(0).getUTCDay();
+    if (shopDay === 0 || shopDay === 6) {
+      const reportDb = openDb(freshDb);
+      await reportDb.run(
+        'UPDATE deliveries SET due_time = ? WHERE work_order_id = ?',
+        [`${isoDate(utcDate(0))} 12:00:00`, upsSaved.json.work_orders[0].id]
+      );
+      await reportDb.close();
+    }
     const deliveryCsv = await request({ method: 'GET', path: '/api/reports/deliveries?format=csv', token: adminToken });
     assert(deliveryCsv.status === 200 && /ups_account_number/.test(deliveryCsv.text), `delivery CSV should include the account column: ${deliveryCsv.status} ${deliveryCsv.text.slice(0, 300)}`);
     assert(deliveryCsv.text.includes('AB-12 9'), 'delivery CSV should include the stored UPS account');

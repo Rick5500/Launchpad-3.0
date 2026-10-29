@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const contentDisposition = require('content-disposition');
 const multer = require('multer');
 const { httpError } = require('./httpError');
 const { MARKER_FILE, getStorageDriver } = require('./storage/localFolder');
@@ -52,6 +53,11 @@ function activeDriver() {
   const found = getStorageDriver();
   if (found.error) throw storageDown(found.error);
   return found.driver;
+}
+
+function asyncDriverActive() {
+  const found = getStorageDriver();
+  return Boolean(found.driver && found.driver.async);
 }
 
 function isWinStyle(value) {
@@ -313,17 +319,12 @@ function directoryHoldsFiles(root) {
 }
 
 function canPlantOriginalMarker(root) {
+  if (asyncDriverActive()) return canPlantOriginalMarkerAsync(root);
   const isDefault = rootsEqual(root, defaultRoot());
   const env = environmentRoot();
   const isEnv = Boolean(env && rootsEqual(root, env));
   if (!isDefault && !isEnv) return false;
-  let stat;
-  try {
-    stat = fs.statSync(root);
-  } catch (err) {
-    return false;
-  }
-  if (!stat.isDirectory()) return false;
+  if (!directoryExists(root)) return false;
   // The directory is already there. UPLOAD_DIR is marked even when it is
   // empty, because that folder is the one this process was given. A missing
   // UPLOAD_DIR is not created here. The shipped default is created separately,
@@ -334,6 +335,7 @@ function canPlantOriginalMarker(root) {
 }
 
 function createDefaultFolderOnce() {
+  if (asyncDriverActive()) return createDefaultFolderOnceAsync();
   // A saved folder is never created here. A custom UPLOAD_DIR is never
   // created here. The example env file sets UPLOAD_DIR to the shipped
   // default, and that path is the default.
@@ -364,6 +366,7 @@ function createDefaultFolderOnce() {
 }
 
 function plantOriginalMarker() {
+  if (asyncDriverActive()) return plantOriginalMarkerAsync();
   const root = uploadDir();
   if (markerIdFor(root)) {
     rememberKnownRoot(root);
@@ -382,6 +385,7 @@ function plantOriginalMarker() {
 }
 
 function writeStorageMarker(root, id) {
+  if (asyncDriverActive()) return writeStorageMarkerAsync(root, id);
   activeDriver().writeMarkerSync(root, id);
   rememberMarker(root, id);
   rememberKnownRoot(root);
@@ -460,6 +464,7 @@ function contentTypeFor(storedName) {
 }
 
 function storageStatus(root) {
+  if (asyncDriverActive()) return storageStatusAsync(root);
   // First use of the implicit folder plants its marker in this process.
   // A folder that already has an id is never given a new one.
   if (root && rootsEqual(root, uploadDir()) && !markerIdFor(root)) plantOriginalMarker();
@@ -473,6 +478,7 @@ function storageStatus(root) {
 }
 
 function ensureUploadDir() {
+  if (asyncDriverActive()) return ensureUploadDirAsync();
   const root = uploadDir();
   try {
     const status = storageStatus(root);
@@ -494,6 +500,15 @@ function storageRootOfUpload(file) {
 }
 
 function directoryExists(root) {
+  if (asyncDriverActive()) return directoryExistsAsync(root);
+  try {
+    const driver = activeDriver();
+    if (driver && typeof driver.directoryExistsSync === 'function') {
+      return driver.directoryExistsSync(root);
+    }
+  } catch (err) {
+    return false;
+  }
   try {
     return fs.statSync(root).isDirectory();
   } catch (err) {
@@ -502,6 +517,7 @@ function directoryExists(root) {
 }
 
 function openStored(storedName, storageRoot) {
+  if (asyncDriverActive()) return openStoredAsync(storedName, storageRoot);
   const root = rootForStored(storageRoot);
   if (!root) return null;
   const full = safeStoredPath(storedName, storageRoot);
@@ -520,25 +536,51 @@ function openStored(storedName, storageRoot) {
   }
 }
 
-function finishStoredDownload(res, err, root) {
+function respondDownloadError(res, err, exists) {
   if (!err || err.code === 'ECONNABORTED') return;
   if (res.headersSent) return;
   const missing = err.status === 404 || err.statusCode === 404 || err.code === 'ENOENT' || err.code === 'ENOTDIR';
   if (missing) {
-    if (!root || !directoryExists(root)) {
-      return res.status(503).json({ error: STORAGE_DOWN_MESSAGE });
-    }
+    if (!exists) return res.status(503).json({ error: STORAGE_DOWN_MESSAGE });
     return res.status(404).json({ error: 'File not found' });
   }
   console.error('DOWNLOAD ERROR:', err);
   return res.status(500).json({ error: 'Failed to download file' });
 }
 
+function finishStoredDownload(res, err, root) {
+  if (!err || err.code === 'ECONNABORTED') return;
+  if (res.headersSent) return;
+  if (asyncDriverActive()) {
+    directoryExistsAsync(root).then(
+      (exists) => respondDownloadError(res, err, exists),
+      () => respondDownloadError(res, err, false)
+    );
+    return;
+  }
+  return respondDownloadError(res, err, Boolean(root) && directoryExists(root));
+}
+
 function createStoredReadStream(fullPath) {
   return activeDriver().createReadStream(fullPath);
 }
 
+function sendStoredDownload(res, fullPath, filename, root) {
+  if (asyncDriverActive()) return sendStoredDownloadAsync(res, fullPath, filename, root);
+  let driver;
+  try {
+    driver = activeDriver();
+  } catch (err) {
+    return finishStoredDownload(res, err, root);
+  }
+  if (!driver || driver.id === 'local') {
+    return res.download(fullPath, filename, (err) => finishStoredDownload(res, err, root));
+  }
+  return finishStoredDownload(res, storageDown(), root);
+}
+
 function removeStored(storedName, storageRoot) {
+  if (asyncDriverActive()) return removeStoredAsync(storedName, storageRoot);
   const root = rootForStored(storageRoot);
   if (!root) return 'invalid';
   const full = safeStoredPath(storedName, storageRoot);
@@ -556,10 +598,13 @@ function removeStored(storedName, storageRoot) {
 }
 
 function removeMovingTemps(root) {
+  if (asyncDriverActive()) return removeMovingTempsAsync(root);
   if (!root) return;
   let names;
   try {
-    names = fs.readdirSync(root);
+    const driver = activeDriver();
+    if (driver && typeof driver.listNamesSync === 'function') names = driver.listNamesSync(root);
+    else names = fs.readdirSync(root);
   } catch (err) {
     return;
   }
@@ -575,10 +620,13 @@ function removeMovingTemps(root) {
 }
 
 function removeUploaded(files) {
+  if (asyncDriverActive()) return removeUploadedAsync(files);
   for (const file of files || []) {
     if (!file || !file.path) continue;
     try {
-      fs.unlinkSync(file.path);
+      const driver = activeDriver();
+      if (driver && driver.id !== 'local') driver.unlinkSync(file.path);
+      else fs.unlinkSync(file.path);
     } catch (err) {
       if (err.code !== 'ENOENT') console.error('FILE CLEANUP ERROR:', err.message);
     }
@@ -586,6 +634,7 @@ function removeUploaded(files) {
 }
 
 function writeNewFile(ext, buffer) {
+  if (asyncDriverActive()) return writeNewFileAsync(ext, buffer);
   if (!ALLOWED_EXTENSIONS.has(ext)) throw httpError(400, 'This file type is not allowed');
   const ready = ensureUploadDir();
   if (!ready.ok) throw storageDown();
@@ -601,6 +650,7 @@ function writeNewFile(ext, buffer) {
 }
 
 function copyToCurrentRoot(storedName, storageRoot) {
+  if (asyncDriverActive()) return copyToCurrentRootAsync(storedName, storageRoot);
   const sourceRoot = rootForStored(storageRoot);
   if (!sourceRoot) return null;
   const sourceStatus = storageStatus(sourceRoot);
@@ -641,6 +691,7 @@ function copyToCurrentRoot(storedName, storageRoot) {
 }
 
 function inspectStored(fullPath, recordSize) {
+  if (asyncDriverActive()) return inspectStoredAsync(fullPath, recordSize);
   const root = pathApi(fullPath).dirname(fullPath);
   const status = storageStatus(root);
   if (!status.reachable) return { ok: false, unavailable: true };
@@ -658,6 +709,7 @@ function inspectStored(fullPath, recordSize) {
 }
 
 function filesMatch(sourcePath, targetPath) {
+  if (asyncDriverActive()) return filesMatchAsync(sourcePath, targetPath);
   const driver = activeDriver();
   const source = driver.statSync(sourcePath);
   const target = driver.statSync(targetPath);
@@ -666,6 +718,7 @@ function filesMatch(sourcePath, targetPath) {
 }
 
 function copyVerified(sourcePath, targetPath, expectedSize) {
+  if (asyncDriverActive()) return copyVerifiedAsync(sourcePath, targetPath, expectedSize);
   const api = pathApi(targetPath);
   const tmp = api.join(api.dirname(targetPath), `.${api.basename(targetPath)}.moving-${crypto.randomBytes(6).toString('hex')}`);
   const driver = activeDriver();
@@ -713,7 +766,7 @@ async function validateStoragePath(input) {
     await found.driver.checkNewFolder(parsed.path);
     if (resolvesInsideCode(parsed.path)) return { error: CODE_FOLDER_MESSAGE };
     if (resolvesInsideVirtual(parsed.path)) return { error: VIRTUAL_PATH_MESSAGE };
-    const status = found.driver.status(parsed.path);
+    const status = await Promise.resolve(found.driver.status(parsed.path));
     if (!status.reachable) return { error: status.error || NOT_WRITABLE_MESSAGE };
   } catch (err) {
     if (err && err.code === 'ETIMEDOUT') {
@@ -742,6 +795,7 @@ function formatBytes(bytes) {
 }
 
 function describeStorage() {
+  if (asyncDriverActive()) return describeStorageAsync();
   const found = getStorageDriver();
   const root = uploadDir();
   const source = configuredRoot
@@ -764,7 +818,7 @@ function describeStorage() {
     };
   }
   const status = storageStatus(root);
-  return {
+  const described = {
     driver: found.driver.id,
     driver_label: found.driver.label,
     path: root,
@@ -777,6 +831,11 @@ function describeStorage() {
     environment_path: environmentRoot(),
     default_path: defaultRoot(),
   };
+  if (found.driver.id === 's3') {
+    described.bucket = found.driver.bucket || null;
+    described.object_prefix = found.driver.prefix || '';
+  }
+  return described;
 }
 
 const storage = multer.diskStorage({
@@ -811,10 +870,75 @@ function fileFilter(req, file, cb) {
   cb(null, true);
 }
 
+function objectStorageEngine() {
+  return {
+    _handleFile(req, file, cb) {
+      let settled = false;
+      const finish = (err, info) => {
+        if (settled) return;
+        settled = true;
+        if (err) cb(err);
+        else cb(null, info);
+      };
+      Promise.resolve()
+        .then(() => ensureUploadDir())
+        .then(async (ready) => {
+          if (!ready || !ready.ok) {
+            const error = new Error((ready && ready.error) || STORAGE_DOWN_MESSAGE);
+            error.status = 503;
+            error.code = 'STORAGE_UNAVAILABLE';
+            throw error;
+          }
+          const ext = extensionOf(file.originalname);
+          if (!ALLOWED_EXTENSIONS.has(ext)) {
+            throw new Error('Allowed file types are pdf, images, dwg, zip, and plt');
+          }
+          const filename = `${crypto.randomBytes(16).toString('hex')}.${ext}`;
+          const full = safeStoredPath(filename, ready.path);
+          if (!full) throw new Error('Allowed file types are pdf, images, dwg, zip, and plt');
+          const uploaded = await activeDriver().uploadStream(full, file.stream);
+          finish(null, { path: full, filename, size: uploaded.size });
+        })
+        .catch((err) => {
+          if (err && (err.status === 503 || err.code === 'STORAGE_UNAVAILABLE')) return finish(err);
+          if (err && /not allowed|Allowed file types/.test(String(err.message || ''))) return finish(err);
+          const error = new Error(STORAGE_DOWN_MESSAGE);
+          error.status = 503;
+          error.code = 'STORAGE_UNAVAILABLE';
+          error.cause = err;
+          finish(error);
+        });
+    },
+    _removeFile(req, file, cb) {
+      Promise.resolve()
+        .then(async () => {
+          if (file && file.path) await activeDriver().unlink(file.path);
+        })
+        .then(() => cb(null), () => cb(null));
+    },
+  };
+}
+
+function finishRemoveUploaded(files, done) {
+  let pending = null;
+  try {
+    pending = removeUploaded(files);
+  } catch (err) {
+    pending = null;
+  }
+  if (pending && typeof pending.then === 'function') {
+    pending.then(() => done(), () => done());
+    return;
+  }
+  done();
+}
+
 function uploadMiddleware() {
   const limit = maxFilesPerRequest();
+  const found = getStorageDriver();
+  const engine = found.driver && found.driver.id === 's3' ? objectStorageEngine() : storage;
   return multer({
-    storage,
+    storage: engine,
     fileFilter,
     limits: {
       fileSize: maxUploadBytes(),
@@ -841,6 +965,344 @@ function uploadErrorMessage(err) {
     return `You can upload up to ${maxFilesPerRequest()} files at a time`;
   }
   return err.message || 'Upload failed';
+}
+
+async function directoryExistsAsync(root) {
+  try {
+    const driver = activeDriver();
+    if (driver && typeof driver.directoryExists === 'function') {
+      return Boolean(await driver.directoryExists(root));
+    }
+  } catch (err) {
+    return false;
+  }
+  try {
+    return fs.statSync(root).isDirectory();
+  } catch (err) {
+    return false;
+  }
+}
+
+async function canPlantOriginalMarkerAsync(root) {
+  const isDefault = rootsEqual(root, defaultRoot());
+  const env = environmentRoot();
+  const isEnv = Boolean(env && rootsEqual(root, env));
+  if (!isDefault && !isEnv) return false;
+  if (!await directoryExistsAsync(root)) return false;
+  if (isDefault) return true;
+  if (directoryHoldsFiles(root)) return true;
+  return isEnv;
+}
+
+async function createDefaultFolderOnceAsync() {
+  if (configuredRoot) return false;
+  const env = environmentRoot();
+  if (env && !rootsEqual(env, defaultRoot())) return false;
+  const root = defaultRoot();
+  if (!rootsEqual(uploadDir(), root)) return false;
+  if (markerIdFor(root)) return false;
+  try {
+    const stat = fs.statSync(root);
+    if (stat.isDirectory()) return false;
+    return false;
+  } catch (err) {
+    if (err.code !== 'ENOENT') return false;
+  }
+  try {
+    const parent = path.dirname(root);
+    if (!parent || parent === root) return false;
+    fs.mkdirSync(parent, { recursive: true });
+    await activeDriver().ensure(root);
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+async function plantOriginalMarkerAsync() {
+  const root = uploadDir();
+  if (markerIdFor(root)) {
+    rememberKnownRoot(root);
+    return null;
+  }
+  if (!await canPlantOriginalMarkerAsync(root)) return null;
+  const id = crypto.randomBytes(16).toString('hex');
+  try {
+    await activeDriver().writeMarker(root, id);
+  } catch (err) {
+    return null;
+  }
+  rememberMarker(root, id);
+  rememberKnownRoot(root);
+  return { path: root, markerId: id };
+}
+
+async function writeStorageMarkerAsync(root, id) {
+  await activeDriver().writeMarker(root, id);
+  rememberMarker(root, id);
+  rememberKnownRoot(root);
+}
+
+async function storageStatusAsync(root) {
+  if (root && rootsEqual(root, uploadDir()) && !markerIdFor(root)) await plantOriginalMarkerAsync();
+  const id = markerIdFor(root);
+  const requireMarker = Boolean(id) || rootsEqual(root, uploadDir());
+  try {
+    return await activeDriver().status(root, requireMarker ? (id || '') : undefined);
+  } catch (err) {
+    return { reachable: false, free_bytes: null, error: STORAGE_DOWN_MESSAGE };
+  }
+}
+
+async function ensureUploadDirAsync() {
+  const root = uploadDir();
+  try {
+    const status = await storageStatusAsync(root);
+    if (!status.reachable) return { ok: false, path: root, error: status.error || STORAGE_DOWN_MESSAGE };
+    return { ok: true, path: root };
+  } catch (err) {
+    if (err && err.status === 503) return { ok: false, path: root, error: err.publicMessage || err.message };
+    return { ok: false, path: root, error: STORAGE_DOWN_MESSAGE };
+  }
+}
+
+async function openStoredAsync(storedName, storageRoot) {
+  const root = rootForStored(storageRoot);
+  if (!root) return null;
+  const full = safeStoredPath(storedName, storageRoot);
+  if (!full) return null;
+  const status = await storageStatusAsync(root);
+  if (!status.reachable || !await directoryExistsAsync(root)) throw storageDown();
+  try {
+    const stat = await activeDriver().stat(full);
+    if (!stat || !stat.isFile()) return null;
+    return { fullPath: full, size: stat.size };
+  } catch (err) {
+    if ((err.code === 'ENOENT' || err.code === 'ENOTDIR') && await directoryExistsAsync(root)) return null;
+    throw storageDown(err);
+  }
+}
+
+async function sendStoredDownloadAsync(res, fullPath, filename, root) {
+  try {
+    const driver = activeDriver();
+    const stat = await driver.stat(fullPath);
+    if (stat && stat.size != null) res.set('Content-Length', String(stat.size));
+    res.set('Content-Disposition', contentDisposition(filename || 'download'));
+    const stream = await driver.createReadStream(fullPath);
+    stream.on('error', (err) => finishStoredDownload(res, err, root));
+    return stream.pipe(res);
+  } catch (err) {
+    return finishStoredDownload(res, err, root);
+  }
+}
+
+async function removeStoredAsync(storedName, storageRoot) {
+  const root = rootForStored(storageRoot);
+  if (!root) return 'invalid';
+  const full = safeStoredPath(storedName, storageRoot);
+  if (!full) return 'invalid';
+  const status = await storageStatusAsync(root);
+  if (!status.reachable) return 'unavailable';
+  try {
+    await activeDriver().unlink(full);
+    return 'removed';
+  } catch (err) {
+    if (err.code === 'ENOENT') return 'missing';
+    console.error('FILE CLEANUP ERROR:', err.message);
+    return 'unavailable';
+  }
+}
+
+async function removeMovingTempsAsync(root) {
+  if (!root) return;
+  let names;
+  try {
+    names = await activeDriver().listNames(root);
+  } catch (err) {
+    return;
+  }
+  const api = pathApi(root);
+  for (const name of names) {
+    if (!/^\..+\.moving-[a-f0-9]+$/i.test(name)) continue;
+    try {
+      await activeDriver().unlink(api.join(root, name));
+    } catch (err) {
+      if (!err || err.code !== 'ENOENT') console.error('FILE STORAGE MOVE CLEANUP ERROR:', err && err.message ? err.message : err);
+    }
+  }
+}
+
+async function removeUploadedAsync(files) {
+  for (const file of files || []) {
+    if (!file || !file.path) continue;
+    try {
+      await activeDriver().unlink(file.path);
+    } catch (err) {
+      if (err.code !== 'ENOENT') console.error('FILE CLEANUP ERROR:', err.message);
+    }
+  }
+}
+
+async function writeNewFileAsync(ext, buffer) {
+  if (!ALLOWED_EXTENSIONS.has(ext)) throw httpError(400, 'This file type is not allowed');
+  const ready = await ensureUploadDirAsync();
+  if (!ready.ok) throw storageDown();
+  const storedName = `${crypto.randomBytes(16).toString('hex')}.${ext}`;
+  const full = safeStoredPath(storedName, ready.path);
+  if (!full) throw httpError(400, 'This file type is not allowed');
+  try {
+    await activeDriver().writeFile(full, buffer);
+  } catch (err) {
+    throw storageDown(err);
+  }
+  return { storedName, storageRoot: ready.path, size: buffer.length };
+}
+
+async function copyToCurrentRootAsync(storedName, storageRoot) {
+  const sourceRoot = rootForStored(storageRoot);
+  if (!sourceRoot) return null;
+  const sourceStatus = await storageStatusAsync(sourceRoot);
+  if (!sourceStatus.reachable) throw storageDown();
+  const source = safeStoredPath(storedName, storageRoot);
+  if (!source) return null;
+  const ext = extensionOf(storedName);
+  if (!ALLOWED_EXTENSIONS.has(ext)) return null;
+  let sourceStat;
+  try {
+    sourceStat = await activeDriver().stat(source);
+  } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    throw storageDown(err);
+  }
+  if (!sourceStat.isFile()) return null;
+  const ready = await ensureUploadDirAsync();
+  if (!ready.ok) throw storageDown();
+  const stored = `${crypto.randomBytes(16).toString('hex')}.${ext}`;
+  const dest = safeStoredPath(stored, ready.path);
+  if (!dest) return null;
+  const driver = activeDriver();
+  try {
+    await driver.copyFile(source, dest);
+    const copied = await driver.stat(dest);
+    if (!copied.isFile() || copied.size !== sourceStat.size) {
+      try { await driver.unlink(dest); } catch (cleanupErr) { /* leave the failed copy out of the record */ }
+      return null;
+    }
+    if (await driver.hashFile(source) !== await driver.hashFile(dest)) {
+      try { await driver.unlink(dest); } catch (cleanupErr) { /* leave the failed copy out of the record */ }
+      return null;
+    }
+    return { storedName: stored, storageRoot: ready.path, size: copied.size };
+  } catch (err) {
+    try { await driver.unlink(dest); } catch (cleanupErr) { /* copy never finished */ }
+    throw storageDown(err);
+  }
+}
+
+async function inspectStoredAsync(fullPath, recordSize) {
+  const root = pathApi(fullPath).dirname(fullPath);
+  const status = await storageStatusAsync(root);
+  if (!status.reachable) return { ok: false, unavailable: true };
+  try {
+    const stat = await activeDriver().stat(fullPath);
+    if (!stat || !stat.isFile()) return { ok: false, missing: true };
+    if (recordSize != null && Number.isFinite(recordSize) && stat.size !== recordSize) {
+      return { ok: false, mismatch: true, size: stat.size };
+    }
+    return { ok: true, size: stat.size };
+  } catch (err) {
+    if (err.code === 'ENOENT') return { ok: false, missing: true };
+    return { ok: false, unavailable: true };
+  }
+}
+
+async function filesMatchAsync(sourcePath, targetPath) {
+  const driver = activeDriver();
+  const source = await driver.stat(sourcePath);
+  const target = await driver.stat(targetPath);
+  if (!source.isFile() || !target.isFile() || source.size !== target.size) return false;
+  return await driver.hashFile(sourcePath) === await driver.hashFile(targetPath);
+}
+
+async function copyVerifiedAsync(sourcePath, targetPath, expectedSize) {
+  const api = pathApi(targetPath);
+  const tmp = api.join(api.dirname(targetPath), `.${api.basename(targetPath)}.moving-${crypto.randomBytes(6).toString('hex')}`);
+  const driver = activeDriver();
+  try {
+    await driver.copyFile(sourcePath, tmp);
+    const copied = await driver.stat(tmp);
+    const source = await driver.stat(sourcePath);
+    if (!copied.isFile() || copied.size !== source.size || (expectedSize != null && copied.size !== expectedSize)) {
+      const error = new Error('size mismatch');
+      error.code = 'ESIZE';
+      throw error;
+    }
+    if (await driver.hashFile(sourcePath) !== await driver.hashFile(tmp)) {
+      const error = new Error('checksum mismatch');
+      error.code = 'ECHECKSUM';
+      throw error;
+    }
+    await driver.rename(tmp, targetPath);
+    const finalStat = await driver.stat(targetPath);
+    if (!finalStat.isFile() || finalStat.size !== source.size) {
+      const error = new Error('size mismatch');
+      error.code = 'ESIZE';
+      throw error;
+    }
+    if (await driver.hashFile(sourcePath) !== await driver.hashFile(targetPath)) {
+      const error = new Error('checksum mismatch');
+      error.code = 'ECHECKSUM';
+      throw error;
+    }
+    return finalStat.size;
+  } catch (err) {
+    try { await driver.unlink(tmp); } catch (cleanupErr) { /* temp copy is removed when it is still there */ }
+    throw err;
+  }
+}
+
+async function describeStorageAsync() {
+  const found = getStorageDriver();
+  const root = uploadDir();
+  const source = configuredRoot
+    ? 'settings'
+    : (environmentRoot() ? 'environment' : 'default');
+  const caution = pathCaution(root);
+  if (found.error) {
+    return {
+      driver: null,
+      driver_label: null,
+      path: root,
+      free_bytes: null,
+      free_label: null,
+      reachable: false,
+      warning: found.error.message,
+      caution,
+      source,
+      environment_path: environmentRoot(),
+      default_path: defaultRoot(),
+    };
+  }
+  const status = await storageStatusAsync(root);
+  const described = {
+    driver: found.driver.id,
+    driver_label: found.driver.label,
+    path: root,
+    free_bytes: status.reachable ? status.free_bytes : null,
+    free_label: status.reachable ? formatBytes(status.free_bytes) : null,
+    reachable: Boolean(status.reachable),
+    warning: status.reachable ? null : (status.error || STORAGE_DOWN_MESSAGE),
+    caution,
+    source,
+    environment_path: environmentRoot(),
+    default_path: defaultRoot(),
+  };
+  if (found.driver.id === 's3') {
+    described.bucket = found.driver.bucket || null;
+    described.object_prefix = found.driver.prefix || '';
+  }
+  return described;
 }
 
 module.exports = {
@@ -887,6 +1349,7 @@ module.exports = {
   openStored,
   finishStoredDownload,
   createStoredReadStream,
+  sendStoredDownload,
   removeStored,
   removeUploaded,
   writeNewFile,
@@ -896,6 +1359,8 @@ module.exports = {
   copyVerified,
   rootForStored,
   uploadMiddleware,
+  objectStorageEngine,
+  finishRemoveUploaded,
   uploadErrorStatus,
   uploadErrorMessage,
   getStorageDriver,
