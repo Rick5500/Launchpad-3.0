@@ -36,6 +36,9 @@ npm start
 
 Frontend:
 - `frontend/` is a Vite + React app. From that folder, run `npm install` and `npm run dev`.
+
+Functional tests:
+- From the repo root, `npm install`, then `npm run test:e2e`. The command installs nothing by itself: install `backend/` and `frontend/` first, and install the Playwright browser with `npx playwright install chromium`. The suite writes a throwaway database under `e2e/.runtime/`, starts the API with `NODE_ENV=test`, and serves the frontend build. It does not use `database/launchpad.db` or send mail. How to run it, and which privacy checks wait on PR #51, is in `TESTING.md`.
 - Navigation follows the signed-in role. Customers see their own work orders and deliveries. The production board, barcode scan page, customer directory, and admin pages are hidden from roles that cannot use them.
 
 Security notes:
