@@ -3,6 +3,7 @@
 
 const { get, run } = require('./dbAsync');
 const mailer = require('./mailer');
+const mailOutbox = require('./mailOutbox');
 const systemSettings = require('./systemSettings');
 const { loadLetterhead, letterheadFromMap } = require('./shopProfile');
 
@@ -62,7 +63,32 @@ async function deliver(orderId) {
     result = { status: 'failed', email_sent: false };
   }
   noteFinished(orderId, result);
+  try {
+    await mailOutbox.completeMatching({
+      scope: 'order',
+      orderId,
+      channel: 'email',
+      noticeType: 'confirmation',
+    });
+  } catch (err) {
+    console.error('MAIL OUTBOX ERROR:', err && err.message ? err.message : 'failed');
+  }
   return result;
+}
+
+// Startup sweep entry. A crash leaves confirmation_email_status pending and
+// no sent row in the order notification log. Clearing that claim lets the
+// normal send run once. A later call still sees the log and does not repeat.
+async function deliverQueued(orderId) {
+  await run(
+    `UPDATE orders
+     SET confirmation_email_status = NULL, updated_at = datetime('now')
+     WHERE id = ?
+       AND confirmation_email_sent_at IS NULL
+       AND confirmation_email_status = 'pending'`,
+    [orderId]
+  );
+  return deliver(orderId);
 }
 
 async function deliverOnce(orderId) {
@@ -173,6 +199,7 @@ async function deliverOnce(orderId) {
 
 module.exports = {
   deliver,
+  deliverQueued,
   publicConfirmation,
   noteScheduled,
   outcomeFor,

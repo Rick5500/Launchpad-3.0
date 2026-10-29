@@ -21,6 +21,7 @@ const pickupNotify = require('./pickupNotify');
 const customerNotices = require('./customerNotices');
 const orderConfirm = require('./orderConfirm');
 const { afterResponse, holdSideEffects } = require('./afterResponse');
+const mailOutbox = require('./mailOutbox');
 const pickupRequests = require('./pickupRequests');
 const { parsePostalAddress } = require('./fields');
 const {
@@ -1189,6 +1190,13 @@ async function createOrderNow(user, body, now = new Date(), options = {}) {
     if (payload.quote_request_id != null && String(payload.quote_request_id).trim() !== '') {
       await quotes.attachConversion(tx, user, quoteRequestId == null ? payload.quote_request_id : quoteRequestId, newOrderId, customerId);
     }
+
+    await mailOutbox.enqueue({
+      scope: 'order',
+      orderId: newOrderId,
+      channel: 'email',
+      noticeType: 'confirmation',
+    }, tx);
 
     return newOrderId;
   });

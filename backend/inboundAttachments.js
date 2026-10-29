@@ -6,6 +6,7 @@
 const crypto = require('crypto');
 const activityLog = require('./activityLog');
 const { get, all, run } = require('./dbAsync');
+const lifecycle = require('./lifecycle');
 const fileMagic = require('./fileMagic');
 const {
   ALLOWED_EXTENSIONS,
@@ -632,12 +633,16 @@ function startRetryTimer() {
   if (retryTimer) return;
   const seconds = Number(process.env.INBOUND_ATTACHMENT_RETRY_SECONDS);
   const interval = (Number.isFinite(seconds) && seconds >= 5 ? seconds : 60) * 1000;
-  retryTimer = setInterval(() => {
-    retryDueAttachments().catch((err) => {
-      console.error('INBOUND ATTACHMENT ERROR:', safeErrorText(err));
-    });
-  }, interval);
+  const tick = () => lifecycle.trackTick(() => retryDueAttachments().catch((err) => {
+    console.error('INBOUND ATTACHMENT ERROR:', safeErrorText(err));
+  }));
+  retryTimer = setInterval(tick, interval);
   if (typeof retryTimer.unref === 'function') retryTimer.unref();
+}
+
+function stopRetryTimer() {
+  if (retryTimer) clearInterval(retryTimer);
+  retryTimer = null;
 }
 
 async function attachmentDownload(user, emailId, attachmentId) {
@@ -780,6 +785,7 @@ module.exports = {
   refreshAttachments,
   retryDueAttachments,
   startRetryTimer,
+  stopRetryTimer,
   attachmentDownload,
   assertConvertible,
   releaseAttachment,

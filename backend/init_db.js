@@ -1094,6 +1094,18 @@ async function ensureInboundEmails() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
   await run('CREATE INDEX IF NOT EXISTS idx_account_audit_log_user ON account_audit_log(user_id, id)');
+  await run(`CREATE TABLE IF NOT EXISTS mail_outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope TEXT NOT NULL,
+    order_id INTEGER,
+    user_id INTEGER,
+    channel TEXT NOT NULL,
+    notice_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME
+  )`);
+  await run('CREATE INDEX IF NOT EXISTS idx_mail_outbox_status ON mail_outbox(status, id)');
   await run(`CREATE TABLE IF NOT EXISTS outbound_message_ids (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     message_id TEXT NOT NULL UNIQUE,

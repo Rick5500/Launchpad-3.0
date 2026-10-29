@@ -4,10 +4,33 @@
 
 const { loadLetterhead, letterheadFromMap } = require('./shopProfile');
 const mailer = require('./mailer');
+const mailOutbox = require('./mailOutbox');
 const passwordSet = require('./passwordSet');
 const systemSettings = require('./systemSettings');
 const customerNotices = require('./customerNotices');
 const { get } = require('./dbAsync');
+
+async function withOutbox(noticeType, user, fn) {
+  let outboxId = null;
+  try {
+    if (user && user.id) {
+      outboxId = await mailOutbox.enqueue({
+        scope: 'account',
+        userId: user.id,
+        channel: 'email',
+        noticeType,
+      });
+    }
+    return await fn();
+  } finally {
+    if (!outboxId) return;
+    try {
+      await mailOutbox.complete(outboxId);
+    } catch (err) {
+      console.error('MAIL OUTBOX ERROR:', err && err.message ? err.message : 'failed');
+    }
+  }
+}
 
 async function letterhead() {
   try {
@@ -41,6 +64,10 @@ function forcedFailure() {
 }
 
 async function sendStaffWelcome(user) {
+  return withOutbox('password_set', user, () => sendStaffWelcomeNow(user));
+}
+
+async function sendStaffWelcomeNow(user) {
   try {
     if (forcedFailure()) throw new Error('forced');
     const enabled = await systemSettings.emailWelcomeOnAccount();
@@ -76,6 +103,10 @@ async function sendStaffWelcome(user) {
 }
 
 async function sendSignupWelcome(user) {
+  return withOutbox('welcome', user, () => sendSignupWelcomeNow(user));
+}
+
+async function sendSignupWelcomeNow(user) {
   try {
     if (forcedFailure()) throw new Error('forced');
     const enabled = await systemSettings.emailWelcomeOnAccount();
@@ -110,6 +141,10 @@ async function sendSignupWelcome(user) {
 }
 
 async function sendPasswordResetNotice(user) {
+  return withOutbox('password_reset', user, () => sendPasswordResetNoticeNow(user));
+}
+
+async function sendPasswordResetNoticeNow(user) {
   try {
     const row = user && user.email
       ? user

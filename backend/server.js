@@ -59,6 +59,9 @@ const locationsRouter = require('./routes/locations');
 const inboundEmailPoller = require('./inboundEmailPoller');
 const inboundRetention = require('./inboundRetention');
 const inboundAttachments = require('./inboundAttachments');
+const lifecycle = require('./lifecycle');
+const mailSweep = require('./mailSweep');
+const { whenSettled } = require('./afterResponse');
 const accountAuditRouter = require('./routes/accountAudit');
 const systemSettings = require('./systemSettings');
 const mailer = require('./mailer');
@@ -315,6 +318,23 @@ app.get('/api/customer', auth.requireAuth, (req, res) => res.json({ message: 'cu
 
 const frontendHosting = mountFrontend(app);
 
+function stopPollers() {
+  notificationScheduler.stop();
+  inboundEmailPoller.stop();
+  inboundRetention.stop();
+  inboundAttachments.stopRetryTimer();
+  const uploadMaintenance = require('./uploadMaintenance');
+  uploadMaintenance.stop();
+}
+
+lifecycle.install(() => {
+  stopPollers();
+  return Promise.all([
+    lifecycle.whenIdle(),
+    whenSettled(),
+  ]);
+});
+
 systemSettings.loadRuntimeCache()
   .catch((err) => {
     console.error('SETTINGS CACHE ERROR:', err);
@@ -323,13 +343,18 @@ systemSettings.loadRuntimeCache()
     const storageReady = ensureUploadDir();
     if (!storageReady.ok) console.error('UPLOAD DIR ERROR:', storageReady.error);
     mailer.warnTestJsonTransport();
-    app.listen(port, () => {
-      console.log(`Launchpad backend listening on port ${port}`);
-      if (frontendHosting.mode === 'spa') console.log('Serving the frontend build');
-      notificationScheduler.start();
-      startOrphanSweep();
-      inboundEmailPoller.start();
-      inboundRetention.start();
-      inboundAttachments.startRetryTimer();
+    lifecycle.track(() => mailSweep.sweep().catch((err) => {
+      console.error('MAIL SWEEP ERROR:', err && err.message ? err.message : 'failed');
+    })).finally(() => {
+      const server = app.listen(port, () => {
+        console.log(`Launchpad backend listening on port ${port}`);
+        if (frontendHosting.mode === 'spa') console.log('Serving the frontend build');
+        notificationScheduler.start();
+        startOrphanSweep();
+        inboundEmailPoller.start();
+        inboundRetention.start();
+        inboundAttachments.startRetryTimer();
+      });
+      lifecycle.attach(server);
     });
   });

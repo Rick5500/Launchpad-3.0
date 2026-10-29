@@ -12,6 +12,7 @@ const notifications = require('./notifications');
 const shopLocations = require('./shopLocations');
 const { loadLetterhead, letterheadFromMap } = require('./shopProfile');
 const { afterResponse } = require('./afterResponse');
+const mailOutbox = require('./mailOutbox');
 
 const ORIGINALS_VEHICLE = 'Send a vehicle to pick up originals';
 const STATUSES = Object.freeze(['new', 'scheduled', 'picked_up', 'cancelled']);
@@ -174,6 +175,39 @@ function withMail(row) {
 }
 
 async function sendConfirmation(row) {
+  try {
+    return await sendConfirmationNow(row);
+  } finally {
+    if (row && row.order_id) {
+      try {
+        await mailOutbox.completeMatching({
+          scope: 'order',
+          orderId: row.order_id,
+          channel: 'email',
+          noticeType: 'pickup_request',
+        });
+      } catch (err) {
+        console.error('MAIL OUTBOX ERROR:', err && err.message ? err.message : 'failed');
+      }
+    }
+  }
+}
+
+async function sendQueuedConfirmation(orderId) {
+  const existing = await get(
+    `SELECT id FROM pickup_requests
+     WHERE order_id = ? AND source = 'order'
+     ORDER BY id DESC
+     LIMIT 1`,
+    [orderId]
+  );
+  if (!existing) return { status: 'skipped' };
+  const row = await loadRow(existing.id);
+  if (!row) return { status: 'skipped' };
+  return sendConfirmation(row);
+}
+
+async function sendConfirmationNow(row) {
   const to = customerEmail(row);
   if (!to) {
     await run(`UPDATE pickup_requests SET confirmation_email_status = 'skipped' WHERE id = ?`, [row.id]);
@@ -276,6 +310,14 @@ async function insertRequest(fields, options = {}) {
         ? `Pickup request for originals on order ${fields.orderNumber}`
         : 'Pickup request for customer originals',
     });
+    if (fields.orderId) {
+      await mailOutbox.enqueue({
+        scope: 'order',
+        orderId: fields.orderId,
+        channel: 'email',
+        noticeType: 'pickup_request',
+      }, tx);
+    }
     return result.lastID;
   });
   const row = await loadRow(inserted);
@@ -544,4 +586,5 @@ module.exports = {
   getOne,
   updateStatus,
   present,
+  sendQueuedConfirmation,
 };

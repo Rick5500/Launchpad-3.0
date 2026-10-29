@@ -1,5 +1,6 @@
 const db = require('./db');
 const { removeStored } = require('./fileStore');
+const lifecycle = require('./lifecycle');
 
 const DEFAULT_UNATTACHED_LIMIT = 30;
 const DEFAULT_ORPHAN_HOURS = 24;
@@ -75,13 +76,22 @@ async function sweepOrphanUploads() {
   return rows.length;
 }
 
+let sweepTimer = null;
+
 function startOrphanSweep() {
-  const timer = setInterval(() => {
-    sweepOrphanUploads().catch((err) => console.error('UPLOAD SWEEP ERROR:', err));
-  }, sweepIntervalSeconds() * 1000);
-  if (typeof timer.unref === 'function') timer.unref();
-  sweepOrphanUploads().catch((err) => console.error('UPLOAD SWEEP ERROR:', err));
-  return timer;
+  if (sweepTimer) return sweepTimer;
+  const tick = () => lifecycle.trackTick(() => sweepOrphanUploads().catch((err) => {
+    console.error('UPLOAD SWEEP ERROR:', err);
+  }));
+  sweepTimer = setInterval(tick, sweepIntervalSeconds() * 1000);
+  if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
+  tick();
+  return sweepTimer;
+}
+
+function stop() {
+  if (sweepTimer) clearInterval(sweepTimer);
+  sweepTimer = null;
 }
 
 module.exports = {
@@ -89,4 +99,5 @@ module.exports = {
   countUnattachedUploads,
   sweepOrphanUploads,
   startOrphanSweep,
+  stop,
 };
