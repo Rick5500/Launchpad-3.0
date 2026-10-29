@@ -3,6 +3,7 @@
 
 const { get, run } = require('./dbAsync');
 const mailer = require('./mailer');
+const mailOutbox = require('./mailOutbox');
 const systemSettings = require('./systemSettings');
 const { loadLetterhead, letterheadFromMap } = require('./shopProfile');
 
@@ -53,16 +54,68 @@ function isPending(orderId) {
   return pendingIds.has(Number(orderId));
 }
 
-async function deliver(orderId) {
-  let result;
+function confirmationKey(orderId) {
+  return {
+    scope: 'order',
+    orderId,
+    channel: 'email',
+    noticeType: 'confirmation',
+  };
+}
+
+function skippedLease() {
+  return { status: 'skipped', email_sent: false, leased: true };
+}
+
+async function deliver(orderId, options = {}) {
+  const key = confirmationKey(orderId);
+  const nested = Boolean(options.held);
+  if (!nested && !mailOutbox.reserve(key)) return skippedLease();
+  let owned = false;
+  let result = skippedLease();
   try {
-    result = await deliverOnce(orderId);
-  } catch (err) {
-    console.error('ORDER CONFIRM ERROR:', err && err.message ? err.message : 'failed');
-    result = { status: 'failed', email_sent: false };
+    const gate = await mailOutbox.acquire(key);
+    if (gate === 'leased') return result;
+    owned = gate === 'owned';
+    try {
+      result = await deliverOnce(orderId);
+    } catch (err) {
+      console.error('ORDER CONFIRM ERROR:', err && err.message ? err.message : 'failed');
+      result = { status: 'failed', email_sent: false };
+    }
+    return result;
+  } finally {
+    noteFinished(orderId, result || skippedLease());
+    try {
+      if (owned) {
+        if (mailOutbox.deliverySettled(result)) await mailOutbox.completeMatching(key);
+        else await mailOutbox.releaseMatching(key);
+      }
+    } catch (err) {
+      console.error('MAIL OUTBOX ERROR:', err && err.message ? err.message : 'failed');
+    } finally {
+      if (!nested) mailOutbox.release(key);
+    }
   }
-  noteFinished(orderId, result);
-  return result;
+}
+
+// Startup sweep entry. A crash leaves confirmation_email_status pending and
+// no sent row in the order notification log. Clearing that claim lets the
+// normal send run once. A send already running in this process is left alone,
+// including its pending lock.
+async function deliverQueued(orderId) {
+  if (mailOutbox.isSending(confirmationKey(orderId))) {
+    return skippedLease();
+  }
+  await run(
+    `UPDATE orders
+     SET confirmation_email_status = NULL, updated_at = datetime('now')
+     WHERE id = ?
+       AND confirmation_email_sent_at IS NULL
+       AND confirmation_email_status = 'pending'`,
+    [orderId]
+  );
+  return deliver(orderId);
 }
 
 async function deliverOnce(orderId) {
@@ -173,6 +226,7 @@ async function deliverOnce(orderId) {
 
 module.exports = {
   deliver,
+  deliverQueued,
   publicConfirmation,
   noteScheduled,
   outcomeFor,

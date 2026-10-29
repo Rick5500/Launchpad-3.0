@@ -93,6 +93,9 @@ jobs:
       - name: Verify email order security
         working-directory: backend
         run: npm run verify:email-security
+      - name: Verify mail sweep, drain, and mobile scope
+        working-directory: backend
+        run: npm run verify:ops
       - name: Verify cloud deploy
         working-directory: backend
         run: npm run verify:cloud
@@ -101,3 +104,32 @@ jobs:
         run: |
           npm ci
           npm run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Install the end-to-end runner
+        run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Functional end-to-end tests
+        run: npm run test:e2e
+      - name: Upload the Playwright HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
