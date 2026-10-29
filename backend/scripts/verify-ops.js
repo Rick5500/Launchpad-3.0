@@ -15,23 +15,26 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-ops-'));
 const sweepDb = path.join(tmp, 'sweep.db');
 const mobileDb = path.join(tmp, 'mobile.db');
 const drainDb = path.join(tmp, 'drain.db');
+const overlapDb = path.join(tmp, 'overlap.db');
 const adminPassword = 'AdminPass123';
 const customerPassword = 'CustomerPass123';
 const managerPassword = 'ManagerPass123';
 const operatorPassword = 'OperatorPass123';
 
-process.env.DATABASE_FILE = sweepDb;
-process.env.NODE_ENV = 'test';
-process.env.SMTP_HOST = '127.0.0.1';
-process.env.SMTP_PORT = '2525';
-process.env.SMTP_FROM = 'orders@example.com';
-process.env.MAIL_TRANSPORT = 'json';
-process.env.PUBLIC_APP_URL = 'https://launchpad.example';
-process.env.DELIVERY_TIMEZONE = 'UTC';
-process.env.INIT_ADMIN_PASSWORD = adminPassword;
-delete process.env.MAIL_TEST_HOLD_MS;
-delete process.env.MAIL_TEST_THROW;
-delete process.env.EMAIL_NOTIFICATIONS;
+if (!process.env.OPS_CHILD) {
+  process.env.DATABASE_FILE = sweepDb;
+  process.env.NODE_ENV = 'test';
+  process.env.SMTP_HOST = '127.0.0.1';
+  process.env.SMTP_PORT = '2525';
+  process.env.SMTP_FROM = 'orders@example.com';
+  process.env.MAIL_TRANSPORT = 'json';
+  process.env.PUBLIC_APP_URL = 'https://launchpad.example';
+  process.env.DELIVERY_TIMEZONE = 'UTC';
+  process.env.INIT_ADMIN_PASSWORD = adminPassword;
+  delete process.env.MAIL_TEST_HOLD_MS;
+  delete process.env.MAIL_TEST_THROW;
+  delete process.env.EMAIL_NOTIFICATIONS;
+}
 
 function assert(condition, message) {
   if (!condition) {
@@ -298,8 +301,12 @@ async function runSweepChecks() {
   const keptDb = openDb(sweepDb);
   const kept = await keptDb.get(`SELECT id, status FROM mail_outbox WHERE id = ?`, [marker.lastID]);
   const table = await keptDb.get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'mail_outbox'`);
+  const activeIndex = await keptDb.get(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_mail_outbox_active'`);
+  const claimColumn = await keptDb.get(`SELECT name FROM pragma_table_info('mail_outbox') WHERE name = 'claimed_by'`);
   await keptDb.close();
   assert(table, 'mail_outbox should exist after init');
+  assert(activeIndex, 'mail_outbox should have one active row per notice');
+  assert(claimColumn, 'mail_outbox should record who claimed a row');
   assert(kept && kept.status === 'done', 'a second init should keep mail_outbox rows');
   console.log('PASS mail_outbox migration is idempotent');
 
@@ -453,6 +460,40 @@ async function runSweepChecks() {
   );
   assert(resetAfter.count === 2, 'a new password reset is a new notice and is not suppressed by the earlier one');
   console.log('PASS a later password reset is sent without repeating the earlier one');
+
+  const leasedCustomer = customerId;
+  const freshLease = await insertOrder(db, {
+    orderNumber: 'SWEEP-LEASED',
+    customerId: leasedCustomer,
+    email: 'leased@example.com',
+  });
+  await db.run(
+    `INSERT INTO mail_outbox (scope, order_id, channel, notice_type, status, claimed_by, claimed_at, created_at)
+     VALUES ('order', ?, 'email', 'confirmation', 'sending', 'other-process', datetime('now'), datetime('now'))`,
+    [freshLease]
+  );
+  const freshLog = captureLog();
+  const fresh = await mailSweep.sweep();
+  freshLog.restore();
+  assert(fresh.resent === 0, `a live lease must not be resent, got ${fresh.resent}`);
+  assert(await noticeCount(db, freshLease, 'confirmation') === 0, 'a live lease must not write a confirmation log');
+  const expired = await insertOrder(db, {
+    orderNumber: 'SWEEP-EXPIRED',
+    customerId: leasedCustomer,
+    email: 'expired@example.com',
+  });
+  await db.run(
+    `INSERT INTO mail_outbox (scope, order_id, channel, notice_type, status, claimed_by, claimed_at, created_at)
+     VALUES ('order', ?, 'email', 'confirmation', 'sending', 'dead-process', datetime('now', '-2 hours'), datetime('now', '-2 hours'))`,
+    [expired]
+  );
+  const expiredLog = captureLog();
+  const expiredSweep = await mailSweep.sweep();
+  expiredLog.restore();
+  assert(expiredSweep.resent === 1, `an expired lease should be sent once, got ${expiredSweep.resent}: ${expiredLog.lines.join(' | ')}`);
+  assert(await noticeCount(db, expired, 'confirmation') === 1, 'an expired lease should send one confirmation');
+  assert(await noticeCount(db, freshLease, 'confirmation') === 0, 'the live lease must still be untouched');
+  console.log('PASS a live mail lease is left alone and an expired lease is sent once');
 }
 
 async function runMobileChecks() {
@@ -464,8 +505,10 @@ async function runMobileChecks() {
   const db = openDb(mobileDb);
   try {
     const customersSource = fs.readFileSync(path.join(backendDir, '..', 'frontend', 'src', 'routes', 'Customers.jsx'), 'utf8');
+    const orderSource = fs.readFileSync(path.join(backendDir, '..', 'frontend', 'src', 'routes', 'OrderDetail.jsx'), 'utf8');
     assert(customersSource.includes('mobile_phone_visible === false'), 'the customers page should withhold a number the API did not return');
     assert(customersSource.includes('disabled={customer.mobile_phone_visible === false}'), 'Text updates should be disabled when the number is withheld');
+    assert(orderSource.includes("notice.recipient || 'hidden'"), 'an order notice should mask a text recipient the API omitted');
 
     const admin = await login(port, 'admin', adminPassword);
     const config = await request(port, { method: 'GET', path: '/api/auth/config' });
@@ -518,6 +561,20 @@ async function runMobileChecks() {
     });
     assert(hickoryText.status === 200 && hickoryText.json.mobile_phone === hickoryMobile, hickoryText.text);
 
+    const raleighManager = await request(port, {
+      method: 'POST',
+      path: '/api/users',
+      token: admin.token,
+      json: {
+        username: 'raleighmgr',
+        display_name: 'Raleigh Manager',
+        role: 'manager',
+        password: managerPassword,
+        email: 'raleighmgr@example.com',
+        location_id: raleigh.id,
+      },
+    });
+    assert(raleighManager.status === 201, raleighManager.text);
     const hickoryManager = await request(port, {
       method: 'POST',
       path: '/api/users',
@@ -582,6 +639,7 @@ async function runMobileChecks() {
 
     const raleighOrder = await place(raleigh.id, raleighCustomer, 'Raleigh job');
     const hickoryOrder = await place(hickory.id, hickoryCustomer, 'Hickory job');
+    const transferred = await place(raleigh.id, hickoryCustomer, 'Transferred job');
     await db.run(
       `INSERT INTO order_notify_log (order_id, channel, notice_type, recipient, result, created_at)
        VALUES (?, 'sms', 'ready_for_pickup', ?, 'sent', datetime('now'))`,
@@ -591,6 +649,12 @@ async function runMobileChecks() {
       `INSERT INTO order_notify_log (order_id, channel, notice_type, recipient, result, created_at)
        VALUES (?, 'sms', 'ready_for_pickup', ?, 'sent', datetime('now'))`,
       [hickoryOrder.order.id, hickoryMobile]
+    );
+    await db.run(
+      `INSERT INTO order_notify_log (order_id, channel, notice_type, recipient, result, created_at)
+       VALUES (?, 'email', 'ready_for_pickup', 'transfer@example.com', 'sent', datetime('now')),
+              (?, 'sms', 'ready_for_pickup', ?, 'sent', datetime('now'))`,
+      [transferred.order.id, transferred.order.id, hickoryMobile]
     );
 
     const mgr = await login(port, 'hickorymgr', managerPassword);
@@ -627,17 +691,39 @@ async function runMobileChecks() {
     assert(!hiddenOrder.text.includes(raleighMobile), hiddenOrder.text);
     const ownOrder = await request(port, { method: 'GET', path: `/api/orders/${hickoryOrder.order.id}`, token: mgr.token });
     assert(ownOrder.status === 200 && ownOrder.text.includes(hickoryMobile), ownOrder.text);
+    const ownSms = (ownOrder.json.order.customer_notices || []).find((row) => row.channel === 'sms');
+    assert(ownSms && ownSms.recipient === hickoryMobile, 'a manager sees the text recipient for a customer at their shop');
     const orderList = await request(port, { method: 'GET', path: '/api/orders', token: mgr.token });
     assert(orderList.status === 200 && !orderList.text.includes(raleighMobile), orderList.text);
 
+    const shopA = await login(port, 'raleighmgr', managerPassword);
+    const transferredView = await request(port, { method: 'GET', path: `/api/orders/${transferred.order.id}`, token: shopA.token });
+    assert(transferredView.status === 200, transferredView.text);
+    assert(transferredView.text.includes('transfer@example.com'), 'the email recipient stays on a transferred order');
+    assert(!transferredView.text.includes(hickoryMobile), `the shop that holds the order must not see the other shop's mobile: ${transferredView.text}`);
+    const transferredSms = (transferredView.json.order.customer_notices || []).find((row) => row.channel === 'sms');
+    assert(transferredSms && transferredSms.recipient == null, 'the SMS recipient is omitted when the customer is at another shop');
+    const homeShop = await request(port, { method: 'GET', path: `/api/orders/${transferred.order.id}`, token: mgr.token });
+    assert(homeShop.status === 404 && !homeShop.text.includes(hickoryMobile), homeShop.text);
+
     const adminList = await request(port, { method: 'GET', path: '/api/customers', token: admin.token });
     assert(adminList.text.includes(raleighMobile) && adminList.text.includes(hickoryMobile), 'an admin should see both mobile numbers');
-    const adminOrder = await request(port, { method: 'GET', path: `/api/orders/${raleighOrder.order.id}`, token: admin.token });
-    assert(adminOrder.status === 200 && adminOrder.text.includes(raleighMobile), 'an admin should see the order text recipient');
+    const adminOrder = await request(port, { method: 'GET', path: `/api/orders/${transferred.order.id}`, token: admin.token });
+    assert(adminOrder.status === 200 && adminOrder.text.includes(hickoryMobile), 'an admin should see the order text recipient');
 
     const everyShop = await login(port, 'allmgr', managerPassword);
     const everyList = await request(port, { method: 'GET', path: '/api/customers', token: everyShop.token });
-    assert(everyList.text.includes(raleighMobile) && everyList.text.includes(hickoryMobile), 'a manager with no shop still sees every mobile number');
+    assert(everyList.status === 200 && everyList.json.every((row) => row.mobile_phone_visible === false && !Object.prototype.hasOwnProperty.call(row, 'mobile_phone')), 'a manager with no shop sees no mobile numbers');
+    assert(!everyList.text.includes(raleighMobile) && !everyList.text.includes(hickoryMobile), everyList.text);
+    const everyOrder = await request(port, { method: 'GET', path: `/api/orders/${hickoryOrder.order.id}`, token: everyShop.token });
+    assert(everyOrder.status === 200 && !everyOrder.text.includes(hickoryMobile), 'a manager with no shop does not see a text recipient');
+    const everyEdit = await request(port, {
+      method: 'PUT',
+      path: `/api/customers/${hickoryCustomer.id}/texting`,
+      token: everyShop.token,
+      json: { mobile_phone: '919-555-0199', sms_opt_in: false },
+    });
+    assert(everyEdit.status === 404 && !everyEdit.text.includes(hickoryMobile), everyEdit.text);
     const usersForbidden = await request(port, { method: 'GET', path: '/api/users', token: mgr.token });
     assert(usersForbidden.status === 403, 'managers still cannot open the users API');
 
@@ -653,6 +739,11 @@ async function runMobileChecks() {
     assert(opText.status === 403, 'operators still cannot edit texting');
     const opOrder = await request(port, { method: 'GET', path: `/api/orders/${raleighOrder.order.id}`, token: op.token });
     assert(opOrder.status === 200 && opOrder.text.includes('919-555-3333'), 'an operator still receives the order contact phone');
+    assert(!opOrder.text.includes(raleighMobile), 'an operator must not see the SMS recipient');
+    const opSms = (opOrder.json.order.customer_notices || []).find((row) => row.channel === 'sms');
+    assert(opSms && opSms.recipient == null, 'the SMS recipient is omitted for an operator');
+    const opTransferred = await request(port, { method: 'GET', path: `/api/orders/${transferred.order.id}`, token: op.token });
+    assert(opTransferred.status === 200 && opTransferred.text.includes('transfer@example.com') && !opTransferred.text.includes(hickoryMobile), opTransferred.text);
     console.log('PASS manager mobile numbers are limited to that manager\'s shop');
   } finally {
     await db.close();
@@ -667,9 +758,13 @@ async function runDrainChecks() {
   const port = 3185;
   await initDatabase(drainDb);
   fs.mkdirSync(path.join(tmp, `uploads-${port}`), { recursive: true });
-  const held = startServer(serverEnv(drainDb, port, {
-    MAIL_TEST_HOLD_MS: '5000',
+  const leaseEnv = {
     DRAIN_TIMEOUT_MS: '800',
+    MAIL_SWEEP_LEASE_MARGIN_MS: '400',
+  };
+  const held = startServer(serverEnv(drainDb, port, {
+    ...leaseEnv,
+    MAIL_TEST_HOLD_MS: '5000',
   }));
   await held.ready;
   try {
@@ -700,7 +795,7 @@ async function runDrainChecks() {
     throw err;
   }
   const stopped = await held.stop();
-  assert(stopped.code === 0 && !stopped.signal, `drain should exit 0, got code ${stopped.code} signal ${stopped.signal}\n${stopped.logs}`);
+  assert(stopped.code === 1 && !stopped.signal, `a forced drain should exit non-zero, got code ${stopped.code} signal ${stopped.signal}\n${stopped.logs}`);
   assert(stopped.elapsed >= 500 && stopped.elapsed < 2500, `drain elapsed ${stopped.elapsed}ms; expected the bounded timeout rather than the 5s hold or an immediate kill`);
   assert(!stopped.logs.includes('MAIL RESEND:'), 'the interrupted process should not have finished the send');
   console.log('PASS SIGTERM abandons an in-flight send at the drain bound');
@@ -717,18 +812,24 @@ async function runDrainChecks() {
   assert(queued.queued_rows >= 1 || queued.confirmation_email_status === 'pending', `the notice should stay queued: ${JSON.stringify(queued)}`);
   await db.close();
 
-  const resumed = startServer(serverEnv(drainDb, port));
+  const resumed = startServer(serverEnv(drainDb, port, leaseEnv));
   await resumed.ready;
-  const resumedLogs = resumed.logs();
-  assert(resumedLogs.includes('MAIL RESEND:') && resumedLogs.includes('confirmation') && resumedLogs.includes('result=sent'), resumedLogs);
-  const after = openDb(drainDb);
-  const sent = await after.get(
-    `SELECT COUNT(*) AS count FROM order_notify_log l
-     JOIN orders o ON o.id = l.order_id
-     WHERE o.email = 'drain@example.com' AND l.notice_type = 'confirmation' AND l.channel = 'email' AND l.result = 'sent'`
-  );
-  assert(sent.count === 1, `startup should send the interrupted confirmation once, got ${sent.count}`);
-  await after.close();
+  let sentCount = 0;
+  const resumeDeadline = Date.now() + 6000;
+  while (Date.now() < resumeDeadline) {
+    const probe = openDb(drainDb);
+    const sent = await probe.get(
+      `SELECT COUNT(*) AS count FROM order_notify_log l
+       JOIN orders o ON o.id = l.order_id
+       WHERE o.email = 'drain@example.com' AND l.notice_type = 'confirmation' AND l.channel = 'email' AND l.result = 'sent'`
+    );
+    await probe.close();
+    sentCount = sent ? sent.count : 0;
+    if (sentCount === 1 && resumed.logs().includes('MAIL RESEND:')) break;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  assert(sentCount === 1, `startup should send the interrupted confirmation once, got ${sentCount}\n${resumed.logs()}`);
+  assert(resumed.logs().includes('MAIL RESEND:') && resumed.logs().includes('confirmation') && resumed.logs().includes('result=sent'), resumed.logs());
   const resumeStop = await resumed.stop();
   assert(resumeStop.code === 0, 'the resumed server should still drain');
   console.log('PASS the next start sends the interrupted confirmation once');
@@ -748,14 +849,152 @@ async function runDrainChecks() {
   console.log('PASS a later start does not send the confirmation again');
 }
 
+function spawnOps(childName, databaseFile, extra = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['scripts/verify-ops.js'], {
+      cwd: backendDir,
+      env: {
+        ...process.env,
+        OPS_CHILD: childName,
+        DATABASE_FILE: databaseFile,
+        NODE_ENV: 'test',
+        SMTP_HOST: '127.0.0.1',
+        SMTP_PORT: '2525',
+        SMTP_FROM: 'orders@example.com',
+        MAIL_TRANSPORT: 'json',
+        PUBLIC_APP_URL: 'https://launchpad.example',
+        DELIVERY_TIMEZONE: 'UTC',
+        INIT_ADMIN_PASSWORD: adminPassword,
+        MAIL_TEST_THROW: '',
+        EMAIL_NOTIFICATIONS: '',
+        ...extra,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (chunk) => { out += chunk; });
+    child.stderr.on('data', (chunk) => { err += chunk; });
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ code, out, err }));
+  });
+}
+
+async function runOverlapChecks() {
+  await initDatabase(overlapDb);
+  const db = openDb(overlapDb);
+  const user = await db.run(
+    `INSERT INTO users (username, password_hash, role, display_name, email)
+     VALUES ('overlap-customer', 'hash', 'customer', 'Overlap', 'overlap@example.com')`
+  );
+  const order = await db.run(
+    `INSERT INTO orders (
+       order_number, customer_id, company, contact_name, phone, email,
+       delivery_method, due_date, due_time
+     ) VALUES ('OVERLAP-1', ?, 'Ops Co', 'Ops Contact', '919-555-3333', 'overlap@example.com', 'Will Call', ?, '10:00')`,
+    [user.lastID, weekdayAhead()]
+  );
+  await db.run(
+    `INSERT INTO mail_outbox (scope, order_id, channel, notice_type, status, created_at)
+     VALUES ('order', ?, 'email', 'confirmation', 'queued', datetime('now'))`,
+    [order.lastID]
+  );
+  const sender = spawnOps('deliver', overlapDb, { OPS_ORDER_ID: String(order.lastID), MAIL_TEST_HOLD_MS: '3000' });
+  const claimDeadline = Date.now() + 5000;
+  let claimed = null;
+  while (Date.now() < claimDeadline) {
+    claimed = await db.get(
+      `SELECT claimed_by, status FROM mail_outbox WHERE order_id = ? AND notice_type = 'confirmation'`,
+      [order.lastID]
+    );
+    if (claimed && claimed.claimed_by) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert(claimed && claimed.claimed_by, `the in-flight send should claim the row: ${JSON.stringify(claimed)}`);
+  const during = await spawnOps('sweep', overlapDb);
+  assert(during.code === 0, `sweep during a send failed\n${during.err}\n${during.out}`);
+  const duringResult = JSON.parse((during.out.match(/SWEEP (\{.*\})/) || [])[1] || 'null');
+  assert(duringResult && duringResult.resent === 0, `an overlapping sweep resent mail: ${during.out}`);
+  const finished = await sender;
+  assert(finished.code === 0, `in-flight send failed\n${finished.err}\n${finished.out}`);
+  assert(/"status":"sent"/.test(finished.out), finished.out);
+  const sent = await db.get(
+    `SELECT COUNT(*) AS count FROM order_notify_log
+     WHERE order_id = ? AND notice_type = 'confirmation' AND result = 'sent'`,
+    [order.lastID]
+  );
+  assert(sent.count === 1, `overlapping processes should send once, got ${sent.count}`);
+  const after = await spawnOps('sweep', overlapDb);
+  assert(after.code === 0, after.err);
+  const afterResult = JSON.parse((after.out.match(/SWEEP (\{.*\})/) || [])[1] || 'null');
+  assert(afterResult && afterResult.resent === 0, `the sweep after the send resent mail: ${after.out}`);
+  const still = await db.get(
+    `SELECT COUNT(*) AS count FROM order_notify_log
+     WHERE order_id = ? AND notice_type = 'confirmation' AND result = 'sent'`,
+    [order.lastID]
+  );
+  assert(still.count === 1, 'the second sweep must not add another confirmation');
+
+  const raced = await Promise.all([
+    spawnOps('enqueue', overlapDb, { OPS_ORDER_ID: '77' }),
+    spawnOps('enqueue', overlapDb, { OPS_ORDER_ID: '77' }),
+  ]);
+  assert(raced.every((row) => row.code === 0), raced.map((row) => row.err).join('\n'));
+  const ids = raced.map((row) => {
+    const match = row.out.match(/ENQUEUE (\d+)/);
+    return match ? match[1] : '';
+  });
+  assert(ids[0] && ids[0] === ids[1], `concurrent enqueue should return one row, got ${ids.join(' and ')}\n${raced.map((row) => row.out).join('\n')}`);
+  const active = await db.get(
+    `SELECT COUNT(*) AS count FROM mail_outbox
+     WHERE order_id = 77 AND notice_type = 'confirmation' AND status IN ('queued', 'sending')`
+  );
+  assert(active.count === 1, `the unique outbox index should keep one active row, got ${active.count}`);
+  await db.close();
+  console.log('PASS overlapping processes do not double-send, and enqueue is atomic');
+}
+
+async function runChild() {
+  if (process.env.OPS_CHILD === 'enqueue') {
+    const mailOutbox = require('../mailOutbox');
+    const id = await mailOutbox.enqueue({
+      scope: 'order',
+      orderId: Number(process.env.OPS_ORDER_ID),
+      channel: 'email',
+      noticeType: 'confirmation',
+    });
+    console.log(`ENQUEUE ${id}`);
+    return;
+  }
+  if (process.env.OPS_CHILD === 'sweep') {
+    const mailSweep = require('../mailSweep');
+    const result = await mailSweep.sweep();
+    console.log(`SWEEP ${JSON.stringify(result)}`);
+    return;
+  }
+  if (process.env.OPS_CHILD === 'deliver') {
+    const orderConfirm = require('../orderConfirm');
+    const result = await orderConfirm.deliver(Number(process.env.OPS_ORDER_ID));
+    console.log(`DELIVER ${JSON.stringify({ status: result.status, leased: Boolean(result.leased) })}`);
+  }
+}
+
+if (process.env.OPS_CHILD) {
+  runChild().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+} else {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
 async function main() {
   await runSweepChecks();
+  await runOverlapChecks();
   await runMobileChecks();
   await runDrainChecks();
   console.log('All ops checks passed');
 }
-
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});

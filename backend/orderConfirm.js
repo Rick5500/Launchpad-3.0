@@ -54,7 +54,22 @@ function isPending(orderId) {
   return pendingIds.has(Number(orderId));
 }
 
+function confirmationKey(orderId) {
+  return {
+    scope: 'order',
+    orderId,
+    channel: 'email',
+    noticeType: 'confirmation',
+  };
+}
+
 async function deliver(orderId) {
+  const gate = await mailOutbox.acquire(confirmationKey(orderId));
+  if (gate === 'leased') {
+    const skipped = { status: 'skipped', email_sent: false, leased: true };
+    noteFinished(orderId, skipped);
+    return skipped;
+  }
   let result;
   try {
     result = await deliverOnce(orderId);
@@ -63,15 +78,12 @@ async function deliver(orderId) {
     result = { status: 'failed', email_sent: false };
   }
   noteFinished(orderId, result);
-  try {
-    await mailOutbox.completeMatching({
-      scope: 'order',
-      orderId,
-      channel: 'email',
-      noticeType: 'confirmation',
-    });
-  } catch (err) {
-    console.error('MAIL OUTBOX ERROR:', err && err.message ? err.message : 'failed');
+  if (gate === 'owned') {
+    try {
+      await mailOutbox.completeMatching(confirmationKey(orderId));
+    } catch (err) {
+      console.error('MAIL OUTBOX ERROR:', err && err.message ? err.message : 'failed');
+    }
   }
   return result;
 }

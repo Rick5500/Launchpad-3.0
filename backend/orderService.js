@@ -683,6 +683,7 @@ async function loadOrderRecord(orderId, user) {
   const order = await getOn(
     db,
     `SELECT o.*, u.username AS customer_username, u.display_name AS customer_display_name,
+            u.location_id AS customer_location_id,
             loc.name AS location_name, loc.address AS location_address, loc.phone AS location_phone
      FROM orders o
      LEFT JOIN users u ON u.id = o.customer_id
@@ -691,10 +692,12 @@ async function loadOrderRecord(orderId, user) {
     params
   );
   if (!order) return null;
+  let access = null;
   if (user && user.role && user.role !== 'customer') {
-    const access = await shopLocations.loadAccess(Number(user.userId || user.id));
+    access = await shopLocations.loadAccess(Number(user.userId || user.id));
     if (!shopLocations.matches(access, order.location_id)) return null;
   }
+  const showSmsRecipient = shopLocations.seesCustomerMobile(access, order.customer_location_id);
 
   const lineItems = await allOn(
     db,
@@ -786,7 +789,7 @@ async function loadOrderRecord(orderId, user) {
       id: row.id,
       channel: row.channel,
       notice_type: row.notice_type,
-      recipient: row.recipient,
+      recipient: row.channel === 'sms' && !showSmsRecipient ? null : row.recipient,
       result: row.result,
       created_at: row.created_at,
     })),

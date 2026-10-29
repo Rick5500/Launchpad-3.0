@@ -11,21 +11,25 @@ const customerNotices = require('./customerNotices');
 const { get } = require('./dbAsync');
 
 async function withOutbox(noticeType, user, fn) {
-  let outboxId = null;
+  const fields = {
+    scope: 'account',
+    userId: user && user.id,
+    channel: 'email',
+    noticeType,
+  };
+  let owned = false;
   try {
     if (user && user.id) {
-      outboxId = await mailOutbox.enqueue({
-        scope: 'account',
-        userId: user.id,
-        channel: 'email',
-        noticeType,
-      });
+      await mailOutbox.enqueue(fields);
+      const gate = await mailOutbox.acquire(fields);
+      if (gate === 'leased') return { status: 'skipped', leased: true };
+      owned = gate === 'owned';
     }
     return await fn();
   } finally {
-    if (!outboxId) return;
+    if (!owned) return;
     try {
-      await mailOutbox.complete(outboxId);
+      await mailOutbox.completeMatching(fields);
     } catch (err) {
       console.error('MAIL OUTBOX ERROR:', err && err.message ? err.message : 'failed');
     }

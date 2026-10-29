@@ -135,7 +135,7 @@ async function dispatch(row) {
   return { status: 'skipped' };
 }
 
-async function sweep() {
+async function sweepOnce() {
   try {
     await mailOutbox.ensureSchema();
   } catch (err) {
@@ -144,7 +144,7 @@ async function sweep() {
   }
   await adoptPendingConfirmations();
   const rows = await all(
-    `SELECT id, scope, order_id, user_id, channel, notice_type, status
+    `SELECT id, scope, order_id, user_id, channel, notice_type, status, claimed_by, claimed_at, created_at
      FROM mail_outbox
      WHERE status IN ('queued', 'sending')
      ORDER BY id`
@@ -152,22 +152,29 @@ async function sweep() {
   let resent = 0;
   let skipped = 0;
   for (const row of rows) {
-    const claimed = await run(
-      `UPDATE mail_outbox SET status = 'sending', updated_at = datetime('now')
-       WHERE id = ? AND status IN ('queued', 'sending')`,
-      [row.id]
-    );
-    if (!claimed.changes) continue;
+    const fields = {
+      scope: row.scope,
+      orderId: row.order_id,
+      userId: row.user_id,
+      channel: row.channel,
+      noticeType: row.notice_type,
+    };
     try {
       const prior = await recorded(row);
       if (prior) {
         if (prior.result === 'sent') await repairSent(row);
+        const gate = await mailOutbox.acquire(fields);
+        if (gate === 'owned') await mailOutbox.complete(row.id);
         skipped += 1;
         console.log(`MAIL SWEEP: ${label(row)} already recorded (${prior.result})`);
-        await mailOutbox.complete(row.id);
         continue;
       }
       const outcome = await dispatch(row);
+      if (outcome && outcome.leased) {
+        skipped += 1;
+        console.log(`MAIL SWEEP: ${label(row)} leased by another process`);
+        continue;
+      }
       const status = outcome && outcome.status ? outcome.status : 'failed';
       if (status === 'sent' || status === 'failed') {
         resent += 1;
@@ -175,17 +182,31 @@ async function sweep() {
       } else {
         console.log(`MAIL SWEEP: ${label(row)} result=${status}`);
       }
-      await mailOutbox.complete(row.id);
     } catch (err) {
       console.error('MAIL SWEEP ERROR:', err && err.message ? err.message : 'failed');
-      await run(
-        `UPDATE mail_outbox SET status = 'queued', updated_at = datetime('now')
-         WHERE id = ? AND status = 'sending'`,
-        [row.id]
-      );
+      try {
+        await mailOutbox.releaseMatching(fields);
+      } catch (releaseErr) {
+        console.error('MAIL SWEEP ERROR:', releaseErr && releaseErr.message ? releaseErr.message : 'failed');
+      }
     }
   }
   return { resent, skipped };
+}
+
+function sweep(options = {}) {
+  const promise = sweepOnce();
+  if (options.followUp) {
+    promise.then(() => {
+      const timer = setTimeout(() => {
+        sweepOnce().catch((err) => {
+          console.error('MAIL SWEEP ERROR:', err && err.message ? err.message : 'failed');
+        });
+      }, mailOutbox.leaseMs() + 1000);
+      if (typeof timer.unref === 'function') timer.unref();
+    }).catch(() => {});
+  }
+  return promise;
 }
 
 module.exports = {

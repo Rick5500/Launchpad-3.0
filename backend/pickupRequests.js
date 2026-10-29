@@ -174,18 +174,29 @@ function withMail(row) {
   return decorated;
 }
 
+function pickupKey(orderId) {
+  return {
+    scope: 'order',
+    orderId,
+    channel: 'email',
+    noticeType: 'pickup_request',
+  };
+}
+
 async function sendConfirmation(row) {
+  const key = row && row.order_id ? pickupKey(row.order_id) : null;
+  let owned = false;
+  if (key) {
+    const gate = await mailOutbox.acquire(key);
+    if (gate === 'leased') return { status: 'skipped', leased: true };
+    owned = gate === 'owned';
+  }
   try {
     return await sendConfirmationNow(row);
   } finally {
-    if (row && row.order_id) {
+    if (owned && key) {
       try {
-        await mailOutbox.completeMatching({
-          scope: 'order',
-          orderId: row.order_id,
-          channel: 'email',
-          noticeType: 'pickup_request',
-        });
+        await mailOutbox.completeMatching(key);
       } catch (err) {
         console.error('MAIL OUTBOX ERROR:', err && err.message ? err.message : 'failed');
       }

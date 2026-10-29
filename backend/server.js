@@ -343,7 +343,7 @@ systemSettings.loadRuntimeCache()
     const storageReady = ensureUploadDir();
     if (!storageReady.ok) console.error('UPLOAD DIR ERROR:', storageReady.error);
     mailer.warnTestJsonTransport();
-    lifecycle.track(() => mailSweep.sweep().catch((err) => {
+    lifecycle.track(() => mailSweep.sweep({ followUp: true }).catch((err) => {
       console.error('MAIL SWEEP ERROR:', err && err.message ? err.message : 'failed');
     })).finally(() => {
       const server = app.listen(port, () => {

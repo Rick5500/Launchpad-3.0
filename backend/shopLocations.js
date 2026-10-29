@@ -181,6 +181,18 @@ function matches(access, locationId) {
   return Number(access.location_id) === Number(record);
 }
 
+// Mobile numbers fail closed. An admin sees every number. A manager sees a
+// number only when shopLocations.matches says the customer is at that
+// manager's shop. A manager with no shop is not treated as every shop here.
+// Operators and customers do not see another person's mobile number.
+function seesCustomerMobile(access, customerLocationId) {
+  if (!access || access.role === 'operator' || access.role === 'customer') return false;
+  if (access.role === 'admin') return true;
+  if (access.role !== 'manager') return false;
+  if (access.stored_location_id == null) return false;
+  return matches(access, customerLocationId);
+}
+
 function assertVisible(access, locationId, message = 'Not found') {
   if (!matches(access, locationId)) throw httpError(404, message);
 }
@@ -472,6 +484,7 @@ module.exports = {
   predicate,
   andPredicate,
   matches,
+  seesCustomerMobile,
   assertVisible,
   boardFilter,
   filterSql,

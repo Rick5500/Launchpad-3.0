@@ -84,7 +84,7 @@ router.get('/', auth.requireAuth, auth.requireRole('admin', 'manager'), async (r
        WHERE role = 'customer'
        ORDER BY display_name ASC`
     );
-    res.json((rows || []).map((row) => presentCustomer(row, shopLocations.matches(access, row.location_id))));
+    res.json((rows || []).map((row) => presentCustomer(row, shopLocations.seesCustomerMobile(access, row.location_id))));
   } catch (err) {
     console.error('CUSTOMERS LIST ERROR:', err);
     return res.status(500).json({ error: 'Failed to load customers' });
@@ -253,7 +253,7 @@ router.put('/:id/texting', auth.requireAuth, auth.requireRole('admin', 'manager'
       `SELECT id, role, location_id FROM users WHERE id = ?`,
       [req.params.id]
     );
-    if (!customer || customer.role !== 'customer' || !shopLocations.matches(access, customer.location_id)) {
+    if (!customer || customer.role !== 'customer' || !shopLocations.seesCustomerMobile(access, customer.location_id)) {
       return res.status(404).json({ error: 'Customer not found' });
     }
     const updated = await updateCustomerTexting(req.user.userId, req.params.id, req.body || {});
