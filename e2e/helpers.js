@@ -25,14 +25,24 @@ function openDb() {
   return { get, all, close };
 }
 
+async function clearStoredSession(page) {
+  const origin = new URL(c.BASE_URL).origin;
+  const client = await page.context().newCDPSession(page);
+  try {
+    await client.send('Storage.clearDataForOrigin', {
+      origin,
+      storageTypes: 'local_storage,session_storage',
+    });
+  } finally {
+    await client.detach();
+  }
+}
+
 async function login(page, user) {
-  await page.goto('/login');
-  // A signed-in visit to /login is sent back to the dashboard. Clear the
-  // stored session so a later login in the same tab can use the form.
-  await page.evaluate(() => {
-    localStorage.removeItem('lp_token');
-    sessionStorage.removeItem('lp_csrf');
-  });
+  // Clear the saved session before any navigation. A signed-in visit to
+  // /login redirects to the dashboard, and a second goto while that redirect
+  // is in flight is aborted.
+  await clearStoredSession(page);
   await page.goto('/login');
   await page.getByLabel('Username').fill(user.username);
   await page.getByLabel('Password').fill(user.password);

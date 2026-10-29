@@ -25,9 +25,10 @@ test('a production operator sees only work orders at their shop', async ({ page 
   const ids = (list.body || []).map((row) => row.external_id);
   expect(ids).toContain(c.RALEIGH_EXTERNAL_ID);
   expect(ids).not.toContain(c.HICKORY_EXTERNAL_ID);
-  for (const row of list.body || []) {
+  expect(list.body.length).toBeGreaterThan(0);
+  for (const row of list.body) {
     const shop = row.location_id != null ? row.location_id : row.order_location_id;
-    expect(shop == null || shop === data.locations.raleigh).toBe(true);
+    expect(shop).toBe(data.locations.raleigh);
   }
 });
 
@@ -72,7 +73,7 @@ test('another shop work order is refused from the page, the scan, and the API', 
     method: 'POST',
     data: { department: 'Quality' },
   });
-  expect([403, 404]).toContain(move.status);
+  expect(move.status).toBe(403);
 
   const ownMove = await api(page, `/api/workorders/${data.raleigh.workOrderId}/move`, {
     method: 'POST',

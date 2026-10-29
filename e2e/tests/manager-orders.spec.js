@@ -1,8 +1,6 @@
 const { test, expect } = require('@playwright/test');
 const { c, login, api, runtime, openDb, fillStaffOrder } = require('../helpers');
 
-const EDITED = 'E2E edited description for the Raleigh manager';
-
 test('a manager can create an order, edit it, and see the values after reload', async ({ page }) => {
   await login(page, c.MANAGER_RALEIGH);
   await page.goto('/order');
@@ -27,21 +25,23 @@ test('a manager can create an order, edit it, and see the values after reload', 
   await expect(page.getByText(project).first()).toBeVisible();
   await expect(page.getByText(notes).first()).toBeVisible();
 
-  await page.getByRole('button', { name: 'View' }).click();
-  await page.getByRole('button', { name: 'Edit' }).click();
-  await expect(page.getByRole('heading', { name: 'Edit Work Order' })).toBeVisible();
-  await page.getByRole('textbox', { name: /^Description\b/ }).fill(EDITED);
-  await page.getByRole('button', { name: 'Update Work Order' }).click();
-  await expect(page.getByText(EDITED)).toBeVisible();
+  await page.getByRole('combobox', { name: /^Order status\b/ }).click();
+  await page.getByRole('option', { name: 'Ready for Pickup', exact: true }).click();
+  await page.getByTestId('pickup-status-save').click();
+  await expect(page.getByTestId('order-ready-banner')).toHaveText('Ready for pickup');
 
   await page.reload();
-  await expect(page.getByText(EDITED)).toBeVisible();
+  await expect(page.getByTestId('order-ready-banner')).toHaveText('Ready for pickup');
   await expect(page.getByText(project).first()).toBeVisible();
+  await expect(page.getByText(notes).first()).toBeVisible();
 
-  const workOrderId = new URL(page.url()).pathname.split('/').pop();
-  const loaded = await api(page, `/api/workorders/${workOrderId}`);
+  const orderId = new URL(page.url()).pathname.split('/').pop();
+  const loaded = await api(page, `/api/orders/${orderId}`);
   expect(loaded.status).toBe(200);
-  expect(loaded.body.description).toBe(EDITED);
+  expect(loaded.body.order.status).toBe('Ready for Pickup');
+  expect(loaded.body.order.project_name).toBe(project);
+  expect(loaded.body.order.notes).toBe(notes);
+  expect(loaded.body.order.payment_method).toBe('Cash');
 });
 
 test('a manager cannot edit an order at another shop', async ({ page }) => {

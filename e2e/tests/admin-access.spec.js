@@ -29,7 +29,8 @@ test('an admin can open users, locations, and settings', async ({ page }) => {
 
   const settings = await api(page, '/api/settings');
   expect(settings.status).toBe(200);
-  expect(settings.body.letterhead || settings.body.company_name || settings.body).toBeTruthy();
+  expect(settings.body.letterhead.company_name).toBe('Accent Imaging, Inc.');
+  expect(settings.body.letterhead.company_phone).toBe('919-782-3332');
 
   const locations = await api(page, '/api/locations');
   expect(locations.status).toBe(200);
@@ -37,7 +38,7 @@ test('an admin can open users, locations, and settings', async ({ page }) => {
   expect(names).toEqual(expect.arrayContaining(['Raleigh', 'Hickory']));
 });
 
-for (const staff of [c.MANAGER_RALEIGH, c.OPERATOR]) {
+for (const staff of [c.MANAGER_RALEIGH, c.MANAGER_NONE, c.OPERATOR]) {
   test(`${staff.username} is refused the admin screens and the admin APIs`, async ({ page }) => {
     await login(page, staff);
     for (const item of PAGES) {
@@ -50,7 +51,28 @@ for (const staff of [c.MANAGER_RALEIGH, c.OPERATOR]) {
     }
 
     expect((await api(page, '/api/users')).status).toBe(403);
+    expect((await api(page, '/api/users', {
+      method: 'POST',
+      data: {
+        username: 'should-not-create',
+        display_name: 'Should Not Create',
+        role: 'operator',
+        password: 'E2e-staff-pass-1',
+      },
+    })).status).toBe(403);
+    expect((await api(page, '/api/users/1', {
+      method: 'PUT',
+      data: { display_name: 'Should Not Rename' },
+    })).status).toBe(403);
     expect((await api(page, '/api/settings')).status).toBe(403);
+    expect((await api(page, '/api/settings', {
+      method: 'PUT',
+      data: { company_name: 'Should Not Save' },
+    })).status).toBe(403);
+    expect((await api(page, '/api/settings/test-email', {
+      method: 'POST',
+      data: { to: 'nobody@e2e.launchpad.test' },
+    })).status).toBe(403);
     expect((await api(page, '/api/services')).status).toBe(403);
     expect((await api(page, '/api/activity')).status).toBe(403);
     expect((await api(page, '/api/notifications/settings')).status).toBe(403);

@@ -155,6 +155,7 @@ test('order detail hides SMS recipients from an operator, another shop, and a ma
     expect(order.text).not.toContain(c.TRANSFER_SMS);
     expect(order.text).not.toContain(c.CUSTOMER_HICKORY.mobile);
     const sms = noticesOf(order.body).filter((row) => row.channel === 'sms');
+    expect(sms.length).toBeGreaterThan(0);
     expect(sms.every((row) => !row.recipient)).toBe(true);
     expect(noticesOf(order.body).some((row) => row.channel === 'email' && row.recipient === c.EMAIL_RECIPIENT)).toBe(true);
   }

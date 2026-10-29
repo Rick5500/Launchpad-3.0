@@ -1,4 +1,6 @@
+const { spawnSync } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { test, expect } = require('@playwright/test');
 const { c, login, api, runtime, openDb, fillStaffOrder, checkMailbox } = require('../helpers');
@@ -48,9 +50,78 @@ async function ordersForEmail(graphId) {
   }
 }
 
-test('the production seed leaves mailbox polling off', async () => {
-  const source = fs.readFileSync(path.join(__dirname, '..', '..', 'backend', 'init_db.js'), 'utf8');
-  expect(source).toContain("['inbound_email_polling_enabled', '0']");
+test('a fresh database leaves mailbox polling off and the poller imports nothing', async ({ request }) => {
+  const root = path.join(__dirname, '..', '..');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lp-poll-off-'));
+  const dbFile = path.join(dir, 'launchpad.db');
+  const init = spawnSync(process.execPath, [path.join(root, 'backend', 'init_db.js')], {
+    cwd: path.join(root, 'backend'),
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      DATABASE_FILE: dbFile,
+      INIT_ADMIN_PASSWORD: c.ADMIN.password,
+    },
+    encoding: 'utf8',
+  });
+  expect(init.status, `${init.stdout}\n${init.stderr}`).toBe(0);
+
+  const sqlite3 = require(path.join(root, 'backend', 'node_modules', 'sqlite3')).verbose();
+  const setting = await new Promise((resolve, reject) => {
+    const db = new sqlite3.Database(dbFile);
+    db.get(
+      `SELECT value FROM system_settings WHERE key = 'inbound_email_polling_enabled'`,
+      (err, row) => {
+        db.close();
+        if (err) reject(err);
+        else resolve(row);
+      }
+    );
+  });
+  expect(setting.value).toBe('0');
+
+  const graph = runtime();
+  await pushMessages(request, [
+    message({
+      id: 'e2e-poll-off',
+      subject: 'Must not be imported while polling is off',
+      from: { name: 'Pat Buyer', address: 'pat@customer-orders.example' },
+      body: 'This message stays in the mailbox.',
+    }),
+  ]);
+
+  const poll = spawnSync(process.execPath, ['-e', `
+    process.env.DATABASE_FILE = ${JSON.stringify(dbFile)};
+    process.env.NODE_ENV = 'test';
+    process.env.M365_TENANT_ID = 'e2e-tenant';
+    process.env.M365_CLIENT_ID = 'e2e-client';
+    process.env.M365_CLIENT_SECRET = 'e2e-secret-not-real';
+    process.env.M365_MAILBOX = ${JSON.stringify(c.MAILBOX)};
+    process.env.M365_LOGIN_BASE_URL = ${JSON.stringify(graph.graphBase)};
+    process.env.M365_GRAPH_BASE_URL = ${JSON.stringify(graph.graphBase)};
+    const poller = require(${JSON.stringify(path.join(root, 'backend', 'inboundEmailPoller.js'))});
+    poller.runScheduledPoll().then((result) => {
+      process.stdout.write(JSON.stringify(result));
+    }).catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
+  `], { encoding: 'utf8' });
+  expect(poll.status, `${poll.stdout}\n${poll.stderr}`).toBe(0);
+  expect(JSON.parse(poll.stdout)).toEqual({ skipped: 'disabled' });
+
+  const imported = await new Promise((resolve, reject) => {
+    const db = new sqlite3.Database(dbFile);
+    db.get(
+      `SELECT COUNT(*) AS count FROM inbound_emails WHERE graph_message_id = 'e2e-poll-off'`,
+      (err, row) => {
+        db.close();
+        if (err) reject(err);
+        else resolve(row.count);
+      }
+    );
+  });
+  expect(imported).toBe(0);
 });
 
 test('the same inbound email is stored once', async ({ page, request }) => {
@@ -229,6 +300,62 @@ test('converting an email twice, including a double submit, creates one order', 
   expect(raced.orders).toHaveLength(1);
   expect(raced.workOrders).toHaveLength(1);
   expect(raced.email.status).toBe('converted');
+});
+
+test('converting without the stored confirmations is refused', async ({ page, request }) => {
+  const subject = 'E2E mailbox order unconfirmed';
+  await pushMessages(request, [
+    message({
+      id: 'e2e-order-unconfirmed',
+      subject,
+      from: { name: 'Pat Buyer', address: 'pat@customer-orders.example' },
+      body: 'Project: unconfirmed archived drawings',
+    }),
+  ]);
+  await login(page, c.ADMIN);
+  await page.goto('/email-orders');
+  await expect(page.getByRole('button', { name: 'Check now' })).toBeEnabled();
+  await checkMailbox(page);
+  const listed = await api(page, '/api/inbound-emails?status=new');
+  const email = (listed.body.emails || []).find((row) => row.subject === subject);
+  expect(email).toBeTruthy();
+
+  const data = runtime();
+  const { nextWeekday } = require('../dates');
+  const services = await api(page, '/api/orders/options');
+  const archive = (services.body.services || []).find((row) => row.name === 'Archive File Request');
+  expect(archive).toBeTruthy();
+  const refused = await api(page, `/api/inbound-emails/${email.id}/convert`, {
+    method: 'POST',
+    data: {
+      customer_id: data.users.customerRaleigh,
+      company: c.CUSTOMER_RALEIGH.company,
+      contact_name: c.CUSTOMER_RALEIGH.contact,
+      phone: c.CUSTOMER_RALEIGH.phone,
+      email: c.CUSTOMER_RALEIGH.email,
+      project_name: 'Unconfirmed archived drawings',
+      notes: 'These confirmations were not stored.',
+      originals_source: 'Hardcopy or digital media provided',
+      address_line1: c.CUSTOMER_RALEIGH.address1,
+      city: c.CUSTOMER_RALEIGH.city,
+      state: c.CUSTOMER_RALEIGH.state,
+      zip: c.CUSTOMER_RALEIGH.zip,
+      delivery_method: 'Will Call',
+      due_date: nextWeekday(),
+      due_time: '10:00',
+      return_to: 'To Me',
+      payment_method: 'Cash',
+      service_ids: [archive.id],
+      line_items: [],
+      location_id: data.locations.raleigh,
+    },
+  });
+  expect(refused.status).toBe(400);
+  expect(refused.body.error).toMatch(/confirm/i);
+
+  const stored = await ordersForEmail('e2e-order-unconfirmed');
+  expect(stored.orders).toHaveLength(0);
+  expect(stored.email.status).toBe('new');
 });
 
 test('two concurrent converts create one order and one set of work orders', async ({ page, request }) => {
