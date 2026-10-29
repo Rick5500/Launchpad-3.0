@@ -1,5 +1,6 @@
 const graphMail = require('./graphMail');
 const inboundEmail = require('./inboundEmail');
+const lifecycle = require('./lifecycle');
 const { inboundEmailPollingEnabled } = require('./systemSettings');
 
 const MAX_BACKOFF_MS = 30 * 60 * 1000;
@@ -39,6 +40,12 @@ async function runScheduledPoll() {
   }
 }
 
+function tick() {
+  return lifecycle.trackTick(() => runScheduledPoll().catch((err) => {
+    console.error('INBOUND MAIL ERROR:', inboundEmail.safeErrorText(err));
+  }));
+}
+
 function start() {
   if (started) return;
   started = true;
@@ -47,19 +54,19 @@ function start() {
     return;
   }
   const seconds = graphMail.pollSeconds();
-  timer = setInterval(() => {
-    runScheduledPoll().catch((err) => {
-      console.error('INBOUND MAIL ERROR:', inboundEmail.safeErrorText(err));
-    });
-  }, seconds * 1000);
+  timer = setInterval(tick, seconds * 1000);
   if (typeof timer.unref === 'function') timer.unref();
-  runScheduledPoll().catch((err) => {
-    console.error('INBOUND MAIL ERROR:', inboundEmail.safeErrorText(err));
-  });
+  tick();
+}
+
+function stop() {
+  if (timer) clearInterval(timer);
+  timer = null;
 }
 
 module.exports = {
   start,
+  stop,
   runScheduledPoll,
   backoffDelay,
 };

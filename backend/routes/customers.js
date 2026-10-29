@@ -4,11 +4,12 @@ const bcrypt = require('bcryptjs');
 const auth = require('../auth');
 const db = require('../db');
 const activityLog = require('../activityLog');
-const { withTransaction } = require('../dbAsync');
+const { all, get, withTransaction } = require('../dbAsync');
 const { parseUsername, updateCustomerAddress, updateCustomerTexting } = require('../userAdmin');
 const { parsePostalAddress } = require('../fields');
 const { resetUserPassword, passwordPolicyError } = require('../passwordReset');
 const accountMail = require('../accountMail');
+const shopLocations = require('../shopLocations');
 
 const router = express.Router();
 const BCRYPT_ROUNDS = 10;
@@ -48,27 +49,46 @@ router.get('/lookup', auth.requireAuth, auth.requireRole('admin', 'manager', 'op
   );
 });
 
-router.get('/', auth.requireAuth, auth.requireRole('admin', 'manager'), (req, res) => {
-  db.all(
-    `SELECT id, username, display_name, role, company, contact_name, phone, email,
-            mobile_phone, sms_opt_in,
-            address_line1, address_line2, city, state, zip, created_at
-     FROM users
-     WHERE role = 'customer'
-     ORDER BY display_name ASC`,
-    [],
-    (err, rows) => {
-      if (err) {
-        console.error('CUSTOMERS LIST ERROR:', err);
-        return res.status(500).json({ error: 'Failed to load customers' });
-      }
-      res.json((rows || []).map((row) => ({
-        ...row,
-        mobile_phone: row.mobile_phone || '',
-        sms_opt_in: Number(row.sms_opt_in) === 1,
-      })));
-    }
-  );
+function presentCustomer(row, mobileVisible) {
+  const body = {
+    id: row.id,
+    username: row.username,
+    display_name: row.display_name,
+    role: row.role,
+    company: row.company,
+    contact_name: row.contact_name,
+    phone: row.phone,
+    email: row.email,
+    sms_opt_in: Number(row.sms_opt_in) === 1,
+    address_line1: row.address_line1,
+    address_line2: row.address_line2,
+    city: row.city,
+    state: row.state,
+    zip: row.zip,
+    location_id: row.location_id == null ? null : row.location_id,
+    created_at: row.created_at,
+    mobile_phone_visible: mobileVisible,
+  };
+  if (mobileVisible) body.mobile_phone = row.mobile_phone || '';
+  return body;
+}
+
+router.get('/', auth.requireAuth, auth.requireRole('admin', 'manager'), async (req, res) => {
+  try {
+    const access = await shopLocations.loadAccess(req.user.userId);
+    const rows = await all(
+      `SELECT id, username, display_name, role, company, contact_name, phone, email,
+              mobile_phone, sms_opt_in, location_id,
+              address_line1, address_line2, city, state, zip, created_at
+       FROM users
+       WHERE role = 'customer'
+       ORDER BY display_name ASC`
+    );
+    res.json((rows || []).map((row) => presentCustomer(row, shopLocations.seesCustomerMobile(access, row.location_id))));
+  } catch (err) {
+    console.error('CUSTOMERS LIST ERROR:', err);
+    return res.status(500).json({ error: 'Failed to load customers' });
+  }
 });
 
 function optionalProfile(value, field, max) {
@@ -228,6 +248,14 @@ router.post('/', auth.requireAuth, auth.requireRole('admin'), async (req, res) =
 // Mobile number and order-status text consent. Admins and managers can edit the number and turn texts off. Only the customer can opt in.
 router.put('/:id/texting', auth.requireAuth, auth.requireRole('admin', 'manager'), async (req, res) => {
   try {
+    const access = await shopLocations.loadAccess(req.user.userId);
+    const customer = await get(
+      `SELECT id, role, location_id FROM users WHERE id = ?`,
+      [req.params.id]
+    );
+    if (!customer || customer.role !== 'customer' || !shopLocations.seesCustomerMobile(access, customer.location_id)) {
+      return res.status(404).json({ error: 'Customer not found' });
+    }
     const updated = await updateCustomerTexting(req.user.userId, req.params.id, req.body || {});
     res.json(updated);
   } catch (err) {

@@ -3,6 +3,7 @@
 
 const { all, get, run } = require('./dbAsync');
 const { removeStored } = require('./fileStore');
+const lifecycle = require('./lifecycle');
 
 const DEFAULT_DAYS = 90;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -76,14 +77,17 @@ async function cleanupExpired() {
 function start() {
   if (started) return;
   started = true;
-  const runOnce = () => {
-    cleanupExpired().catch((err) => {
-      console.error('INBOUND RETENTION ERROR:', err && err.message ? err.message : 'failed');
-    });
-  };
+  const runOnce = () => lifecycle.trackTick(() => cleanupExpired().catch((err) => {
+    console.error('INBOUND RETENTION ERROR:', err && err.message ? err.message : 'failed');
+  }));
   timer = setInterval(runOnce, DAY_MS);
   if (typeof timer.unref === 'function') timer.unref();
   runOnce();
+}
+
+function stop() {
+  if (timer) clearInterval(timer);
+  timer = null;
 }
 
 module.exports = {
@@ -95,4 +99,5 @@ module.exports = {
   usedAttachmentBytes,
   cleanupExpired,
   start,
+  stop,
 };

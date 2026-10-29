@@ -4,10 +4,46 @@
 
 const { loadLetterhead, letterheadFromMap } = require('./shopProfile');
 const mailer = require('./mailer');
+const mailOutbox = require('./mailOutbox');
 const passwordSet = require('./passwordSet');
 const systemSettings = require('./systemSettings');
 const customerNotices = require('./customerNotices');
 const { get } = require('./dbAsync');
+
+async function withOutbox(noticeType, user, fn) {
+  const fields = {
+    scope: 'account',
+    userId: user && user.id,
+    channel: 'email',
+    noticeType,
+  };
+  if (user && user.id && !mailOutbox.reserve(fields)) {
+    return { status: 'skipped', leased: true };
+  }
+  let owned = false;
+  let result = { status: 'skipped', leased: true };
+  try {
+    if (user && user.id) {
+      await mailOutbox.enqueue(fields);
+      const gate = await mailOutbox.acquire(fields);
+      if (gate === 'leased') return result;
+      owned = gate === 'owned';
+    }
+    result = await fn();
+    return result;
+  } finally {
+    try {
+      if (owned) {
+        if (mailOutbox.deliverySettled(result)) await mailOutbox.completeMatching(fields);
+        else await mailOutbox.releaseMatching(fields);
+      }
+    } catch (err) {
+      console.error('MAIL OUTBOX ERROR:', err && err.message ? err.message : 'failed');
+    } finally {
+      if (user && user.id) mailOutbox.release(fields);
+    }
+  }
+}
 
 async function letterhead() {
   try {
@@ -41,6 +77,10 @@ function forcedFailure() {
 }
 
 async function sendStaffWelcome(user) {
+  return withOutbox('password_set', user, () => sendStaffWelcomeNow(user));
+}
+
+async function sendStaffWelcomeNow(user) {
   try {
     if (forcedFailure()) throw new Error('forced');
     const enabled = await systemSettings.emailWelcomeOnAccount();
@@ -76,6 +116,10 @@ async function sendStaffWelcome(user) {
 }
 
 async function sendSignupWelcome(user) {
+  return withOutbox('welcome', user, () => sendSignupWelcomeNow(user));
+}
+
+async function sendSignupWelcomeNow(user) {
   try {
     if (forcedFailure()) throw new Error('forced');
     const enabled = await systemSettings.emailWelcomeOnAccount();
@@ -110,6 +154,10 @@ async function sendSignupWelcome(user) {
 }
 
 async function sendPasswordResetNotice(user) {
+  return withOutbox('password_reset', user, () => sendPasswordResetNoticeNow(user));
+}
+
+async function sendPasswordResetNoticeNow(user) {
   try {
     const row = user && user.email
       ? user

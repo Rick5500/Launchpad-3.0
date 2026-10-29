@@ -12,6 +12,7 @@ const notifications = require('./notifications');
 const shopLocations = require('./shopLocations');
 const { loadLetterhead, letterheadFromMap } = require('./shopProfile');
 const { afterResponse } = require('./afterResponse');
+const mailOutbox = require('./mailOutbox');
 
 const ORIGINALS_VEHICLE = 'Send a vehicle to pick up originals';
 const STATUSES = Object.freeze(['new', 'scheduled', 'picked_up', 'cancelled']);
@@ -173,7 +174,84 @@ function withMail(row) {
   return decorated;
 }
 
-async function sendConfirmation(row) {
+function pickupKey(orderId) {
+  return {
+    scope: 'order',
+    orderId,
+    channel: 'email',
+    noticeType: 'pickup_request',
+  };
+}
+
+async function sendConfirmation(row, options = {}) {
+  const key = row && row.order_id ? pickupKey(row.order_id) : null;
+  const nested = Boolean(options.held);
+  if (key && !nested && !mailOutbox.reserve(key)) return { status: 'skipped', leased: true };
+  let owned = false;
+  let result = { status: 'skipped', leased: true };
+  try {
+    if (key) {
+      const gate = await mailOutbox.acquire(key);
+      if (gate === 'leased') return result;
+      owned = gate === 'owned';
+    }
+    result = await sendConfirmationNow(row);
+    return result;
+  } finally {
+    try {
+      if (owned && key) {
+        if (mailOutbox.deliverySettled(result)) await mailOutbox.completeMatching(key);
+        else await mailOutbox.releaseMatching(key);
+      }
+    } catch (err) {
+      console.error('MAIL OUTBOX ERROR:', err && err.message ? err.message : 'failed');
+    } finally {
+      if (key && !nested) mailOutbox.release(key);
+    }
+  }
+}
+
+async function sendQueuedConfirmation(orderId) {
+  const key = pickupKey(orderId);
+  if (mailOutbox.isSending(key)) return { status: 'skipped', leased: true };
+  await run(
+    `UPDATE pickup_requests
+     SET confirmation_email_status = NULL
+     WHERE order_id = ?
+       AND confirmation_email_sent_at IS NULL
+       AND confirmation_email_status = 'pending'`,
+    [orderId]
+  );
+  const existing = await get(
+    `SELECT id FROM pickup_requests
+     WHERE order_id = ? AND source = 'order'
+     ORDER BY id DESC
+     LIMIT 1`,
+    [orderId]
+  );
+  if (!existing) return { status: 'skipped' };
+  const row = await loadRow(existing.id);
+  if (!row) return { status: 'skipped' };
+  return sendConfirmation(row);
+}
+
+async function sendConfirmationNow(row) {
+  const claimed = await run(
+    `UPDATE pickup_requests
+     SET confirmation_email_status = 'pending'
+     WHERE id = ?
+       AND confirmation_email_sent_at IS NULL
+       AND COALESCE(confirmation_email_status, '') != 'pending'`,
+    [row.id]
+  );
+  if (!claimed.changes) {
+    const current = await get(
+      `SELECT confirmation_email_sent_at FROM pickup_requests WHERE id = ?`,
+      [row.id]
+    );
+    if (current && current.confirmation_email_sent_at) return { status: 'sent', skipped: true };
+    return { status: 'skipped', leased: true };
+  }
   const to = customerEmail(row);
   if (!to) {
     await run(`UPDATE pickup_requests SET confirmation_email_status = 'skipped' WHERE id = ?`, [row.id]);
@@ -242,8 +320,19 @@ function notifyStaff(row) {
   });
 }
 
+let beforeSendForTest = null;
+
+function setBeforeSendForTest(fn) {
+  if (process.env.NODE_ENV === 'test') beforeSendForTest = fn;
+}
+
 async function insertRequest(fields, options = {}) {
-  const inserted = await withTransaction(async (tx) => {
+  const key = fields.orderId ? pickupKey(fields.orderId) : null;
+  const held = key ? mailOutbox.reserve(key) : false;
+  let handoff = false;
+  let inserted;
+  try {
+    inserted = await withTransaction(async (tx) => {
     const result = await tx.run(
       `INSERT INTO pickup_requests (
          customer_id, location_id, order_id, contact_name, contact_phone,
@@ -276,36 +365,50 @@ async function insertRequest(fields, options = {}) {
         ? `Pickup request for originals on order ${fields.orderNumber}`
         : 'Pickup request for customer originals',
     });
+    if (fields.orderId) {
+      await mailOutbox.enqueue({
+        scope: 'order',
+        orderId: fields.orderId,
+        channel: 'email',
+        noticeType: 'pickup_request',
+      }, tx);
+    }
     return result.lastID;
-  });
-  const row = await loadRow(inserted);
-  try {
-    await notifyStaff(row);
-  } catch (err) {
-    console.error('PICKUP REQUEST NOTIFY ERROR:', err && err.message ? err.message : 'failed');
-  }
-  if (options.deferMail) {
-    afterResponse('PICKUP REQUEST EMAIL', async () => {
-      let email = { status: 'failed' };
-      try {
-        email = await sendConfirmation(row);
-      } catch (err) {
-        console.error('PICKUP REQUEST EMAIL ERROR:', err && err.message ? err.message : 'failed');
-      }
-      noteMail(row.id, publicEmail(email));
     });
-    return { pickup_request: present(row), email: { status: 'pending' } };
+    const row = await loadRow(inserted);
+    try {
+      await notifyStaff(row);
+    } catch (err) {
+      console.error('PICKUP REQUEST NOTIFY ERROR:', err && err.message ? err.message : 'failed');
+    }
+    if (beforeSendForTest) await beforeSendForTest(row);
+    if (options.deferMail) {
+      handoff = true;
+      afterResponse('PICKUP REQUEST EMAIL', async () => {
+        let email = { status: 'failed' };
+        try {
+          email = await sendConfirmation(row, { held });
+        } catch (err) {
+          console.error('PICKUP REQUEST EMAIL ERROR:', err && err.message ? err.message : 'failed');
+        }
+        noteMail(row.id, publicEmail(email));
+        if (held && key) mailOutbox.release(key);
+      });
+      return { pickup_request: present(row), email: { status: 'pending' } };
+    }
+    let email = { status: 'failed' };
+    try {
+      email = await sendConfirmation(row, { held });
+    } catch (err) {
+      console.error('PICKUP REQUEST EMAIL ERROR:', err && err.message ? err.message : 'failed');
+      email = { status: 'failed' };
+    }
+    const notice = publicEmail(email);
+    noteMail(row.id, notice);
+    return { pickup_request: present(await loadRow(inserted)), email: notice };
+  } finally {
+    if (held && key && !handoff) mailOutbox.release(key);
   }
-  let email = { status: 'failed' };
-  try {
-    email = await sendConfirmation(row);
-  } catch (err) {
-    console.error('PICKUP REQUEST EMAIL ERROR:', err && err.message ? err.message : 'failed');
-    email = { status: 'failed' };
-  }
-  const notice = publicEmail(email);
-  noteMail(row.id, notice);
-  return { pickup_request: present(await loadRow(inserted)), email: notice };
 }
 
 async function createFromOrder(orderId) {
@@ -544,4 +647,6 @@ module.exports = {
   getOne,
   updateStatus,
   present,
+  sendQueuedConfirmation,
+  setBeforeSendForTest,
 };

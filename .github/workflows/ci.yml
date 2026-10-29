@@ -93,6 +93,9 @@ jobs:
       - name: Verify email order security
         working-directory: backend
         run: npm run verify:email-security
+      - name: Verify mail sweep, drain, and mobile scope
+        working-directory: backend
+        run: npm run verify:ops
       - name: Build frontend
         working-directory: frontend
         run: |

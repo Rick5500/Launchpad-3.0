@@ -374,6 +374,9 @@ async function main() {
     console.log('PASS public terms, privacy, and opt-in pages');
 
     const admin = await login('admin', adminPassword);
+    const shopConfig = await request({ method: 'GET', path: '/api/auth/config', token: admin.token });
+    const raleighShop = (shopConfig.json.locations || []).find((row) => row.name === 'Raleigh');
+    assert(raleighShop, 'Raleigh should be listed for the manager');
     const created = await request({
       method: 'POST',
       path: '/api/customers',
@@ -414,6 +417,7 @@ async function main() {
         role: 'manager',
         password: 'ManagerPass123',
         email: 'manager@pickup.example',
+        location_id: raleighShop.id,
       },
     });
     assert(manager.status === 201, manager.text);

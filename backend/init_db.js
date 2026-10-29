@@ -1094,6 +1094,39 @@ async function ensureInboundEmails() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
   await run('CREATE INDEX IF NOT EXISTS idx_account_audit_log_user ON account_audit_log(user_id, id)');
+  await run(`CREATE TABLE IF NOT EXISTS mail_outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope TEXT NOT NULL,
+    order_id INTEGER,
+    user_id INTEGER,
+    channel TEXT NOT NULL,
+    notice_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    claimed_by TEXT,
+    claimed_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME
+  )`);
+  await ensureColumns('mail_outbox', [
+    { name: 'claimed_by', definition: 'TEXT' },
+    { name: 'claimed_at', definition: 'DATETIME' },
+  ]);
+  await run('CREATE INDEX IF NOT EXISTS idx_mail_outbox_status ON mail_outbox(status, id)');
+  const duplicateOutbox = await get(
+    `SELECT scope, channel, notice_type
+     FROM mail_outbox
+     WHERE status IN ('queued', 'sending')
+     GROUP BY scope, channel, notice_type, ifnull(order_id, -1), ifnull(user_id, -1)
+     HAVING COUNT(*) > 1
+     LIMIT 1`
+  );
+  if (duplicateOutbox) {
+    console.warn('Skipping unique mail_outbox index because duplicate queued rows exist');
+  } else {
+    await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_mail_outbox_active
+      ON mail_outbox(scope, channel, notice_type, ifnull(order_id, -1), ifnull(user_id, -1))
+      WHERE status IN ('queued', 'sending')`);
+  }
   await run(`CREATE TABLE IF NOT EXISTS outbound_message_ids (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     message_id TEXT NOT NULL UNIQUE,
@@ -1705,6 +1738,8 @@ async function main() {
   await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_source_inbound_email
     ON orders(source_inbound_email_id)
     WHERE source_inbound_email_id IS NOT NULL`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_orders_confirmation_pending
+    ON orders(confirmation_email_status, confirmation_email_sent_at)`);
   await run(`UPDATE orders SET status = 'In Production' WHERE status IS NULL OR trim(status) = ''`);
   await run('UPDATE orders SET pickup_ready_generation = 0 WHERE pickup_ready_generation IS NULL');
   await run('UPDATE orders SET delivery_ready_generation = 0 WHERE delivery_ready_generation IS NULL');
