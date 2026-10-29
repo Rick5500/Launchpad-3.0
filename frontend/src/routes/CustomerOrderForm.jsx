@@ -575,6 +575,7 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
   const [email, setEmail] = useState('');
   const [ackHeaders, setAckHeaders] = useState(false);
   const [ackExpired, setAckExpired] = useState({});
+  const [confirmCustomer, setConfirmCustomer] = useState(false);
   const [confirmRecipient, setConfirmRecipient] = useState(false);
   const [confirmedAttachments, setConfirmedAttachments] = useState({});
   const [emailFields, setEmailFields] = useState(() => new Set());

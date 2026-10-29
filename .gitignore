@@ -78,6 +78,7 @@ desktop.ini
 # =========================
 test-results/
 playwright-report/
+e2e/.runtime/
 
 # =========================
 # Misc
