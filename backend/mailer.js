@@ -7,6 +7,8 @@ const { httpError } = require('./httpError');
 const { createFixedWindowLimiter } = require('./rateLimit');
 const { loadLetterhead } = require('./shopProfile');
 const emailLoop = require('./emailLoop');
+const lifecycle = require('./lifecycle');
+const mailOutbox = require('./mailOutbox');
 
 const ADDRESS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ON = new Set(['1', 'true', 'yes', 'on']);
@@ -150,8 +152,14 @@ function transportMode() {
 
 function smtpTimeoutMs() {
   const parsed = Number(process.env.SMTP_TIMEOUT_MS);
-  if (!Number.isInteger(parsed) || parsed < 1000 || parsed > 120000) return 12000;
-  return parsed;
+  let timeout = 12000;
+  if (Number.isInteger(parsed) && parsed >= 1000 && parsed <= 120000) timeout = parsed;
+  // Connect, greeting, and socket each use this budget. Together they stay
+  // inside the drain bound, so a slow server is finished before shutdown
+  // gives up on the send.
+  const bound = mailOutbox.drainBoundMs();
+  if (bound >= 3000) timeout = Math.min(timeout, Math.floor(bound / 3));
+  return timeout;
 }
 
 function createTransport() {
@@ -935,10 +943,23 @@ function previewFrom(captured) {
   };
 }
 
-async function deliver({ to, cc, subject, text, html, noticeType }) {
+function testHoldMs() {
+  if (process.env.NODE_ENV !== 'test') return 0;
+  const parsed = Number(process.env.MAIL_TEST_HOLD_MS);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return parsed;
+}
+
+async function deliver(message) {
+  return lifecycle.track(() => deliverMessage(message));
+}
+
+async function deliverMessage({ to, cc, subject, text, html, noticeType }) {
   if (!isConfigured()) {
     return { status: 'not_configured', recipients: [], replyTo: emailLoop.replyToAddress() || null, messageId: null };
   }
+  const holdMs = testHoldMs();
+  if (holdMs) await new Promise((resolve) => setTimeout(resolve, holdMs));
   const addresses = [to, ...(cc || [])].filter(Boolean);
   const messageId = emailLoop.newMessageId();
   const replyTo = emailLoop.replyToAddress();

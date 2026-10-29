@@ -21,6 +21,7 @@ const pickupNotify = require('./pickupNotify');
 const customerNotices = require('./customerNotices');
 const orderConfirm = require('./orderConfirm');
 const { afterResponse, holdSideEffects } = require('./afterResponse');
+const mailOutbox = require('./mailOutbox');
 const pickupRequests = require('./pickupRequests');
 const { parsePostalAddress } = require('./fields');
 const {
@@ -682,6 +683,7 @@ async function loadOrderRecord(orderId, user) {
   const order = await getOn(
     db,
     `SELECT o.*, u.username AS customer_username, u.display_name AS customer_display_name,
+            u.location_id AS customer_location_id,
             loc.name AS location_name, loc.address AS location_address, loc.phone AS location_phone
      FROM orders o
      LEFT JOIN users u ON u.id = o.customer_id
@@ -690,10 +692,12 @@ async function loadOrderRecord(orderId, user) {
     params
   );
   if (!order) return null;
+  let access = null;
   if (user && user.role && user.role !== 'customer') {
-    const access = await shopLocations.loadAccess(Number(user.userId || user.id));
+    access = await shopLocations.loadAccess(Number(user.userId || user.id));
     if (!shopLocations.matches(access, order.location_id)) return null;
   }
+  const showSmsRecipient = shopLocations.seesCustomerMobile(access, order.customer_location_id);
 
   const lineItems = await allOn(
     db,
@@ -785,7 +789,7 @@ async function loadOrderRecord(orderId, user) {
       id: row.id,
       channel: row.channel,
       notice_type: row.notice_type,
-      recipient: row.recipient,
+      recipient: row.channel === 'sms' && !showSmsRecipient ? null : row.recipient,
       result: row.result,
       created_at: row.created_at,
     })),
@@ -875,7 +879,11 @@ async function createOrderNow(user, body, now = new Date(), options = {}) {
     ? options.sourceInboundEmailId
     : null;
 
-  const orderId = await withTransaction(async (tx) => {
+  let heldConfirmation = null;
+  let handedOff = false;
+  let orderId;
+  try {
+  orderId = await withTransaction(async (tx) => {
     const customer = await tx.get(
       'SELECT id, role, is_active FROM users WHERE id = ?',
       [customerId]
@@ -1190,6 +1198,20 @@ async function createOrderNow(user, body, now = new Date(), options = {}) {
       await quotes.attachConversion(tx, user, quoteRequestId == null ? payload.quote_request_id : quoteRequestId, newOrderId, customerId);
     }
 
+    const confirmKey = {
+      scope: 'order',
+      orderId: newOrderId,
+      channel: 'email',
+      noticeType: 'confirmation',
+    };
+    if (mailOutbox.reserve(confirmKey)) heldConfirmation = confirmKey;
+    await mailOutbox.enqueue({
+      scope: 'order',
+      orderId: newOrderId,
+      channel: 'email',
+      noticeType: 'confirmation',
+    }, tx);
+
     return newOrderId;
   });
 
@@ -1213,7 +1235,14 @@ async function createOrderNow(user, body, now = new Date(), options = {}) {
     console.error('PICKUP REQUEST ERROR:', err && err.message ? err.message : 'failed');
   }
   orderConfirm.noteScheduled(orderId);
-  afterResponse('ORDER CONFIRM', () => orderConfirm.deliver(orderId));
+  afterResponse('ORDER CONFIRM', async () => {
+    try {
+      await orderConfirm.deliver(orderId, { held: Boolean(heldConfirmation) });
+    } finally {
+      if (heldConfirmation) mailOutbox.release(heldConfirmation);
+    }
+  });
+  handedOff = true;
   const presented = presentOrder(record);
   if (pickupRequest && pickupRequest.pickup_request) {
     presented.pickup_request = {
@@ -1226,6 +1255,10 @@ async function createOrderNow(user, body, now = new Date(), options = {}) {
     }
   }
   return presented;
+  } catch (err) {
+    if (heldConfirmation && !handedOff) mailOutbox.release(heldConfirmation);
+    throw err;
+  }
 }
 
 async function listOrders(user, query) {

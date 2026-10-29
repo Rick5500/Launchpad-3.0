@@ -95,12 +95,13 @@ async function resolveLocationId(executor, value, options = {}) {
   return { value: row.id, name: row.name };
 }
 
-async function loadAccess(userId) {
-  const row = await get(
+async function loadAccess(userId, executor) {
+  const db = dbOf(executor);
+  const row = await db.get(
     `SELECT id, role, department, location_id FROM users WHERE id = ?`,
     [userId]
   );
-  const raleighId = await defaultLocationId();
+  const raleighId = await defaultLocationId(db);
   if (!row) {
     return {
       userId: null,
@@ -128,7 +129,7 @@ async function loadAccess(userId) {
   }
   let location = null;
   if (locationId) {
-    location = present(await get(`SELECT * FROM locations WHERE id = ?`, [locationId]));
+    location = present(await db.get(`SELECT * FROM locations WHERE id = ?`, [locationId]));
   }
   return {
     userId: row.id,
@@ -179,6 +180,18 @@ function matches(access, locationId) {
   if (seesAll(access)) return true;
   const record = locationId == null ? access.raleigh_id : Number(locationId);
   return Number(access.location_id) === Number(record);
+}
+
+// Mobile numbers fail closed. An admin sees every number. A manager sees a
+// number only when shopLocations.matches says the customer is at that
+// manager's shop. A manager with no shop is not treated as every shop here.
+// Operators and customers do not see another person's mobile number.
+function seesCustomerMobile(access, customerLocationId) {
+  if (!access || access.role === 'operator' || access.role === 'customer') return false;
+  if (access.role === 'admin') return true;
+  if (access.role !== 'manager') return false;
+  if (access.stored_location_id == null) return false;
+  return matches(access, customerLocationId);
 }
 
 function assertVisible(access, locationId, message = 'Not found') {
@@ -361,9 +374,7 @@ async function locationForRole(executor, source, role, existingId) {
 
 async function resolveOrderLocation(executor, user, rawLocationId, customerId) {
   const db = dbOf(executor);
-  const access = user && user.userId
-    ? await loadAccess(user.userId)
-    : await loadAccess(user && (user.id || user.userId));
+  const access = await loadAccess(user && (user.userId || user.id), db);
   const customer = customerId
     ? await db.get(`SELECT id, location_id, role FROM users WHERE id = ?`, [customerId])
     : null;
@@ -472,6 +483,7 @@ module.exports = {
   predicate,
   andPredicate,
   matches,
+  seesCustomerMobile,
   assertVisible,
   boardFilter,
   filterSql,

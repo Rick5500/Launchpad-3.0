@@ -239,13 +239,19 @@ export default function Customers() {
                       <TableCell>{customer.display_name || '-'}</TableCell>
                       <TableCell>{customer.username}</TableCell>
                       <TableCell>{formatCreated(customer.created_at)}</TableCell>
-                      <TableCell>{customer.mobile_phone || '—'}</TableCell>
+                      <TableCell>{customer.mobile_phone_visible === false ? '—' : (customer.mobile_phone || '—')}</TableCell>
                       <TableCell>{customer.sms_opt_in ? 'Opted in' : 'Off'}</TableCell>
                       <TableCell>
                         {[customer.address_line1, customer.city, customer.state, customer.zip].filter(Boolean).join(', ') || '—'}
                       </TableCell>
                       <TableCell align="right">
-                        <Button variant="outlined" size="small" onClick={() => openTexting(customer)} sx={{ mr: 1 }}>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          onClick={() => openTexting(customer)}
+                          disabled={customer.mobile_phone_visible === false}
+                          sx={{ mr: 1 }}
+                        >
                           Text updates
                         </Button>
                         {isAdmin ? (
