@@ -188,16 +188,21 @@ async function sendConfirmation(row, options = {}) {
   const nested = Boolean(options.held);
   if (key && !nested && !mailOutbox.reserve(key)) return { status: 'skipped', leased: true };
   let owned = false;
+  let result = { status: 'skipped', leased: true };
   try {
     if (key) {
       const gate = await mailOutbox.acquire(key);
-      if (gate === 'leased') return { status: 'skipped', leased: true };
+      if (gate === 'leased') return result;
       owned = gate === 'owned';
     }
-    return await sendConfirmationNow(row);
+    result = await sendConfirmationNow(row);
+    return result;
   } finally {
     try {
-      if (owned && key) await mailOutbox.completeMatching(key);
+      if (owned && key) {
+        if (mailOutbox.deliverySettled(result)) await mailOutbox.completeMatching(key);
+        else await mailOutbox.releaseMatching(key);
+      }
     } catch (err) {
       console.error('MAIL OUTBOX ERROR:', err && err.message ? err.message : 'failed');
     } finally {
@@ -207,6 +212,16 @@ async function sendConfirmation(row, options = {}) {
 }
 
 async function sendQueuedConfirmation(orderId) {
+  const key = pickupKey(orderId);
+  if (mailOutbox.isSending(key)) return { status: 'skipped', leased: true };
+  await run(
+    `UPDATE pickup_requests
+     SET confirmation_email_status = NULL
+     WHERE order_id = ?
+       AND confirmation_email_sent_at IS NULL
+       AND confirmation_email_status = 'pending'`,
+    [orderId]
+  );
   const existing = await get(
     `SELECT id FROM pickup_requests
      WHERE order_id = ? AND source = 'order'

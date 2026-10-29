@@ -72,13 +72,10 @@ async function deliver(orderId, options = {}) {
   const nested = Boolean(options.held);
   if (!nested && !mailOutbox.reserve(key)) return skippedLease();
   let owned = false;
-  let result;
+  let result = skippedLease();
   try {
     const gate = await mailOutbox.acquire(key);
-    if (gate === 'leased') {
-      result = skippedLease();
-      return result;
-    }
+    if (gate === 'leased') return result;
     owned = gate === 'owned';
     try {
       result = await deliverOnce(orderId);
@@ -90,7 +87,10 @@ async function deliver(orderId, options = {}) {
   } finally {
     noteFinished(orderId, result || skippedLease());
     try {
-      if (owned) await mailOutbox.completeMatching(key);
+      if (owned) {
+        if (mailOutbox.deliverySettled(result)) await mailOutbox.completeMatching(key);
+        else await mailOutbox.releaseMatching(key);
+      }
     } catch (err) {
       console.error('MAIL OUTBOX ERROR:', err && err.message ? err.message : 'failed');
     } finally {

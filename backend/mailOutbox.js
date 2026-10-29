@@ -254,6 +254,15 @@ async function completeMatching(fields, executor) {
   );
 }
 
+// Sent and failed are finished. A skipped or disabled notice was refused on
+// purpose (no address, or that mail is turned off). A leased or pending
+// result did not send, so the row stays queued for a later sweep.
+function deliverySettled(result) {
+  if (!result || result.leased) return false;
+  const status = result.status;
+  return status === 'sent' || status === 'failed' || status === 'skipped' || status === 'disabled' || status === 'not_configured';
+}
+
 async function releaseMatching(fields, executor) {
   const db = dbOf(executor);
   const key = keyOf(fields);
@@ -280,6 +289,7 @@ module.exports = {
   reserve,
   release,
   ensureSchema,
+  deliverySettled,
   enqueue,
   claim,
   acquire,

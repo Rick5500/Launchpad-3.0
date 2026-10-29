@@ -880,6 +880,7 @@ async function createOrderNow(user, body, now = new Date(), options = {}) {
     : null;
 
   let heldConfirmation = null;
+  let handedOff = false;
   let orderId;
   try {
   orderId = await withTransaction(async (tx) => {
@@ -1213,11 +1214,6 @@ async function createOrderNow(user, body, now = new Date(), options = {}) {
 
     return newOrderId;
   });
-  } catch (err) {
-    if (heldConfirmation) mailOutbox.release(heldConfirmation);
-    heldConfirmation = null;
-    throw err;
-  }
 
   const record = await loadOrderRecord(orderId, user);
   try {
@@ -1246,6 +1242,7 @@ async function createOrderNow(user, body, now = new Date(), options = {}) {
       if (heldConfirmation) mailOutbox.release(heldConfirmation);
     }
   });
+  handedOff = true;
   const presented = presentOrder(record);
   if (pickupRequest && pickupRequest.pickup_request) {
     presented.pickup_request = {
@@ -1258,6 +1255,10 @@ async function createOrderNow(user, body, now = new Date(), options = {}) {
     }
   }
   return presented;
+  } catch (err) {
+    if (heldConfirmation && !handedOff) mailOutbox.release(heldConfirmation);
+    throw err;
+  }
 }
 
 async function listOrders(user, query) {

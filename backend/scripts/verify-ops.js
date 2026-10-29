@@ -17,6 +17,8 @@ const mobileDb = path.join(tmp, 'mobile.db');
 const drainDb = path.join(tmp, 'drain.db');
 const overlapDb = path.join(tmp, 'overlap.db');
 const killDb = path.join(tmp, 'kill.db');
+const killPickupDb = path.join(tmp, 'kill-pickup.db');
+const killAccountDb = path.join(tmp, 'kill-account.db');
 const adminPassword = 'AdminPass123';
 const customerPassword = 'CustomerPass123';
 const managerPassword = 'ManagerPass123';
@@ -1234,6 +1236,141 @@ async function runAbandonedSend() {
   }
 }
 
+async function runKilledPeer({
+  port,
+  databaseFile,
+  childName,
+  childEnv,
+  claimSql,
+  claimParams,
+  countSent,
+  logNeedle,
+  passLine,
+}) {
+  const lease = { DRAIN_TIMEOUT_MS: '3000', MAIL_SWEEP_LEASE_MARGIN_MS: '0' };
+  const holder = startOpsChild(childName, databaseFile, {
+    ...lease,
+    ...childEnv,
+    MAIL_TEST_HOLD_MS: '20000',
+  });
+  const db = openDb(databaseFile);
+  const claimDeadline = Date.now() + 5000;
+  let claimed = null;
+  while (Date.now() < claimDeadline) {
+    claimed = await db.get(claimSql, claimParams);
+    if (claimed && claimed.claimed_by && claimed.status === 'sending') break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert(claimed && claimed.status === 'sending', `A should be holding the send: ${JSON.stringify(claimed)}\n${holder.logs()}`);
+  const server = startServer(serverEnv(databaseFile, port, lease));
+  try {
+    await server.ready;
+    assert(await countSent(db) === 0, `B sent while A was still holding\n${server.logs()}`);
+    holder.child.kill('SIGKILL');
+    await holder.done;
+    let count = 0;
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline) {
+      count = await countSent(db);
+      if (count === 1 && server.logs().includes('MAIL RESEND:') && server.logs().includes(logNeedle)) break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    assert(count === 1, `B should deliver the abandoned send once after the lease expires, got ${count}\n${server.logs()}`);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    assert(await countSent(db) === 1, 'B must not deliver the abandoned send a second time');
+    const outbox = await db.get(claimSql, claimParams);
+    assert(!outbox || outbox.status === 'done', `the outbox row should be finished after the send: ${JSON.stringify(outbox)}`);
+    console.log(passLine);
+  } finally {
+    await db.close();
+    try { holder.child.kill('SIGKILL'); } catch (err) { /* already gone */ }
+    const stopped = await server.stop();
+    assert(stopped.code === 0, `the surviving server should drain cleanly, got ${stopped.code} ${stopped.signal}`);
+  }
+}
+
+async function runAbandonedPickup() {
+  const port = 3187;
+  await initDatabase(killPickupDb);
+  fs.mkdirSync(path.join(tmp, `uploads-${port}`), { recursive: true });
+  const db = openDb(killPickupDb);
+  const user = await db.run(
+    `INSERT INTO users (username, password_hash, role, display_name, email)
+     VALUES ('killed-pickup', 'hash', 'customer', 'Killed Pickup', 'killed-pickup@example.com')`
+  );
+  const order = await db.run(
+    `INSERT INTO orders (
+       order_number, customer_id, company, contact_name, phone, email,
+       delivery_method, due_date, due_time
+     ) VALUES ('KILL-PICKUP', ?, 'Ops Co', 'Ops Contact', '919-555-3333', 'killed-pickup@example.com', 'Will Call', ?, '10:00')`,
+    [user.lastID, weekdayAhead()]
+  );
+  await db.run(
+    `INSERT INTO pickup_requests (
+       customer_id, order_id, contact_name, contact_phone,
+       address_line1, city, state, zip, ready_date, status, source,
+       confirmation_email_status
+     ) VALUES (?, ?, 'Ops Contact', '919-555-3333', '10 Dock Street', 'Raleigh', 'NC', '27601', ?, 'new', 'order', 'pending')`,
+    [user.lastID, order.lastID, weekdayAhead()]
+  );
+  await db.run(
+    `INSERT INTO mail_outbox (scope, order_id, channel, notice_type, status, created_at)
+     VALUES ('order', ?, 'email', 'pickup_request', 'queued', datetime('now'))`,
+    [order.lastID]
+  );
+  await db.close();
+  await runKilledPeer({
+    port,
+    databaseFile: killPickupDb,
+    childName: 'pickup-deliver',
+    childEnv: { OPS_ORDER_ID: String(order.lastID) },
+    claimSql: `SELECT claimed_by, status FROM mail_outbox WHERE order_id = ? AND notice_type = 'pickup_request'`,
+    claimParams: [order.lastID],
+    countSent: (probe) => probe.get(
+      `SELECT COUNT(*) AS count FROM order_notify_log
+       WHERE order_id = ? AND notice_type = 'pickup_request' AND result = 'sent'`,
+      [order.lastID]
+    ).then((row) => (row ? row.count : 0)),
+    logNeedle: 'pickup_request',
+    passLine: 'PASS a killed peer\'s pickup confirmation is delivered once after the lease expires',
+  });
+}
+
+async function runAbandonedAccount() {
+  const port = 3188;
+  await initDatabase(killAccountDb);
+  fs.mkdirSync(path.join(tmp, `uploads-${port}`), { recursive: true });
+  const db = openDb(killAccountDb);
+  const user = await db.run(
+    `INSERT INTO users (username, password_hash, role, display_name, email)
+     VALUES ('killed-welcome', 'hash', 'customer', 'Killed Welcome', 'killed-welcome@example.com')`
+  );
+  await db.run(
+    `INSERT INTO mail_outbox (scope, user_id, channel, notice_type, status, created_at)
+     VALUES ('account', ?, 'email', 'welcome', 'queued', datetime('now'))`,
+    [user.lastID]
+  );
+  await db.close();
+  await runKilledPeer({
+    port,
+    databaseFile: killAccountDb,
+    childName: 'account-deliver',
+    childEnv: {
+      OPS_USER_ID: String(user.lastID),
+      OPS_USER_EMAIL: 'killed-welcome@example.com',
+    },
+    claimSql: `SELECT claimed_by, status FROM mail_outbox WHERE user_id = ? AND notice_type = 'welcome'`,
+    claimParams: [user.lastID],
+    countSent: (probe) => probe.get(
+      `SELECT COUNT(*) AS count FROM account_audit_log
+       WHERE user_id = ? AND notice_type = 'welcome' AND result = 'sent'`,
+      [user.lastID]
+    ).then((row) => (row ? row.count : 0)),
+    logNeedle: 'welcome',
+    passLine: 'PASS a killed peer\'s welcome mail is delivered once after the lease expires',
+  });
+}
+
 async function runChild() {
   if (process.env.OPS_CHILD === 'enqueue') {
     const mailOutbox = require('../mailOutbox');
@@ -1256,6 +1393,23 @@ async function runChild() {
     const orderConfirm = require('../orderConfirm');
     const result = await orderConfirm.deliver(Number(process.env.OPS_ORDER_ID));
     console.log(`DELIVER ${JSON.stringify({ status: result.status, leased: Boolean(result.leased) })}`);
+    return;
+  }
+  if (process.env.OPS_CHILD === 'pickup-deliver') {
+    const pickupRequests = require('../pickupRequests');
+    const result = await pickupRequests.sendQueuedConfirmation(Number(process.env.OPS_ORDER_ID));
+    console.log(`DELIVER ${JSON.stringify({ status: result.status, leased: Boolean(result.leased) })}`);
+    return;
+  }
+  if (process.env.OPS_CHILD === 'account-deliver') {
+    const accountMail = require('../accountMail');
+    const result = await accountMail.sendSignupWelcome({
+      id: Number(process.env.OPS_USER_ID),
+      email: process.env.OPS_USER_EMAIL,
+      username: 'killed-welcome',
+      display_name: 'Killed Welcome',
+    });
+    console.log(`DELIVER ${JSON.stringify({ status: result.status, leased: Boolean(result.leased) })}`);
   }
 }
 
@@ -1277,6 +1431,8 @@ async function main() {
   await runPickupGap();
   await runOverlapChecks();
   await runAbandonedSend();
+  await runAbandonedPickup();
+  await runAbandonedAccount();
   await runMobileChecks();
   await runDrainChecks();
   console.log('All ops checks passed');

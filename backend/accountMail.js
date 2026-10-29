@@ -21,17 +21,22 @@ async function withOutbox(noticeType, user, fn) {
     return { status: 'skipped', leased: true };
   }
   let owned = false;
+  let result = { status: 'skipped', leased: true };
   try {
     if (user && user.id) {
       await mailOutbox.enqueue(fields);
       const gate = await mailOutbox.acquire(fields);
-      if (gate === 'leased') return { status: 'skipped', leased: true };
+      if (gate === 'leased') return result;
       owned = gate === 'owned';
     }
-    return await fn();
+    result = await fn();
+    return result;
   } finally {
     try {
-      if (owned) await mailOutbox.completeMatching(fields);
+      if (owned) {
+        if (mailOutbox.deliverySettled(result)) await mailOutbox.completeMatching(fields);
+        else await mailOutbox.releaseMatching(fields);
+      }
     } catch (err) {
       console.error('MAIL OUTBOX ERROR:', err && err.message ? err.message : 'failed');
     } finally {
