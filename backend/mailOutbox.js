@@ -11,6 +11,8 @@ const { get, all, run } = require('./dbAsync');
 
 const claimant = crypto.randomBytes(16).toString('hex');
 const LEASE_MARGIN_MS_DEFAULT = 5000;
+const sending = new Set();
+const renewers = new Map();
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS mail_outbox (
@@ -61,6 +63,52 @@ function keyOf(fields) {
     channel: String(fields.channel || 'email').slice(0, 20),
     noticeType: String(fields.noticeType || 'notice').slice(0, 80),
   };
+}
+
+function flightKey(fields) {
+  const key = keyOf(fields);
+  const orderId = key.orderId == null ? '' : String(key.orderId);
+  const userId = key.userId == null ? '' : String(key.userId);
+  return `${key.scope}|${key.channel}|${key.noticeType}|${orderId}|${userId}`;
+}
+
+function isSending(fields) {
+  return sending.has(flightKey(fields));
+}
+
+// Reserves the notice in this process before any send work, including the
+// confirmation pending-lock clear. A second caller in the same process gets false.
+function reserve(fields) {
+  const key = flightKey(fields);
+  if (sending.has(key)) return false;
+  sending.add(key);
+  return true;
+}
+
+function startRenewal(fields, id) {
+  const key = flightKey(fields);
+  if (renewers.has(key) || !id) return;
+  const intervalMs = Math.max(250, Math.floor(leaseMs() / 3));
+  const timer = setInterval(() => {
+    run(
+      `UPDATE mail_outbox
+       SET claimed_at = datetime('now'), updated_at = datetime('now')
+       WHERE id = ? AND claimed_by = ? AND status = 'sending'`,
+      [id, claimant]
+    ).catch((err) => {
+      console.error('MAIL LEASE ERROR:', err && err.message ? err.message : 'failed');
+    });
+  }, intervalMs);
+  if (typeof timer.unref === 'function') timer.unref();
+  renewers.set(key, timer);
+}
+
+function release(fields) {
+  const key = flightKey(fields);
+  const timer = renewers.get(key);
+  if (timer) clearInterval(timer);
+  renewers.delete(key);
+  sending.delete(key);
 }
 
 async function ensureActiveIndex(db) {
@@ -129,6 +177,12 @@ async function enqueue(fields, executor) {
 
 async function claim(id, executor) {
   const db = dbOf(executor);
+  const row = await db.get(`SELECT id, status FROM mail_outbox WHERE id = ?`, [id]);
+  if (!row) return false;
+  // A fresh sending row is refused, including one this process already
+  // claimed. Only a queued row of ours, an unclaimed row, or an expired
+  // lease can be taken. The in-memory reserve stops the same process from
+  // reaching this update while its send is still running.
   const updated = await db.run(
     `UPDATE mail_outbox
      SET status = 'sending',
@@ -138,22 +192,24 @@ async function claim(id, executor) {
      WHERE id = ?
        AND status IN ('queued', 'sending')
        AND (
-         claimed_by = ?
-         OR claimed_at IS NULL
+         claimed_at IS NULL
          OR datetime(claimed_at) <= datetime('now', ?)
+         OR (claimed_by = ? AND status = 'queued')
        )`,
-    [claimant, id, claimant, `-${leaseSeconds()} seconds`]
+    [claimant, id, `-${leaseSeconds()} seconds`, claimant]
   );
   return updated.changes === 1;
 }
 
-// 'owned' means this process may send. 'leased' means another process still
-// holds the row. 'none' means there is no active outbox row.
+// 'owned' means this process may send. 'leased' means the row is held.
+// 'none' means there is no active outbox row.
 async function acquire(fields, executor) {
   const row = await findActive(fields, executor);
   if (!row) return 'none';
   const ok = await claim(row.id, executor);
-  return ok ? 'owned' : 'leased';
+  if (!ok) return 'leased';
+  startRenewal(fields, row.id);
+  return 'owned';
 }
 
 async function complete(id, executor) {
@@ -169,15 +225,19 @@ async function complete(id, executor) {
 async function completeMatching(fields, executor) {
   const db = dbOf(executor);
   const key = keyOf(fields);
-  await db.run(
-    `UPDATE mail_outbox SET status = 'done', updated_at = datetime('now')
-     WHERE scope = ? AND channel = ? AND notice_type = ?
-       AND ifnull(order_id, -1) = ifnull(?, -1)
-       AND ifnull(user_id, -1) = ifnull(?, -1)
-       AND status IN ('queued', 'sending')
-       AND (claimed_by IS NULL OR claimed_by = ?)`,
-    [key.scope, key.channel, key.noticeType, key.orderId, key.userId, claimant]
-  );
+  try {
+    await db.run(
+      `UPDATE mail_outbox SET status = 'done', updated_at = datetime('now')
+       WHERE scope = ? AND channel = ? AND notice_type = ?
+         AND ifnull(order_id, -1) = ifnull(?, -1)
+         AND ifnull(user_id, -1) = ifnull(?, -1)
+         AND status IN ('queued', 'sending')
+         AND (claimed_by IS NULL OR claimed_by = ?)`,
+      [key.scope, key.channel, key.noticeType, key.orderId, key.userId, claimant]
+    );
+  } finally {
+    release(fields);
+  }
 }
 
 async function releaseMatching(fields, executor) {
@@ -201,6 +261,9 @@ module.exports = {
   claimant,
   leaseMs,
   leaseSeconds,
+  isSending,
+  reserve,
+  release,
   ensureSchema,
   enqueue,
   claim,

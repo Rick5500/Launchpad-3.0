@@ -185,21 +185,22 @@ function pickupKey(orderId) {
 
 async function sendConfirmation(row) {
   const key = row && row.order_id ? pickupKey(row.order_id) : null;
+  if (key && !mailOutbox.reserve(key)) return { status: 'skipped', leased: true };
   let owned = false;
-  if (key) {
-    const gate = await mailOutbox.acquire(key);
-    if (gate === 'leased') return { status: 'skipped', leased: true };
-    owned = gate === 'owned';
-  }
   try {
+    if (key) {
+      const gate = await mailOutbox.acquire(key);
+      if (gate === 'leased') return { status: 'skipped', leased: true };
+      owned = gate === 'owned';
+    }
     return await sendConfirmationNow(row);
   } finally {
-    if (owned && key) {
-      try {
-        await mailOutbox.completeMatching(key);
-      } catch (err) {
-        console.error('MAIL OUTBOX ERROR:', err && err.message ? err.message : 'failed');
-      }
+    try {
+      if (owned && key) await mailOutbox.completeMatching(key);
+    } catch (err) {
+      console.error('MAIL OUTBOX ERROR:', err && err.message ? err.message : 'failed');
+    } finally {
+      if (key) mailOutbox.release(key);
     }
   }
 }

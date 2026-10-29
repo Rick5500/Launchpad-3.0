@@ -160,6 +160,11 @@ async function sweepOnce() {
       noticeType: row.notice_type,
     };
     try {
+      if (mailOutbox.isSending(fields)) {
+        skipped += 1;
+        console.log(`MAIL SWEEP: ${label(row)} already sending in this process`);
+        continue;
+      }
       const prior = await recorded(row);
       if (prior) {
         if (prior.result === 'sent') await repairSent(row);

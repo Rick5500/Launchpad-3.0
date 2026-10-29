@@ -63,35 +63,49 @@ function confirmationKey(orderId) {
   };
 }
 
+function skippedLease() {
+  return { status: 'skipped', email_sent: false, leased: true };
+}
+
 async function deliver(orderId) {
-  const gate = await mailOutbox.acquire(confirmationKey(orderId));
-  if (gate === 'leased') {
-    const skipped = { status: 'skipped', email_sent: false, leased: true };
-    noteFinished(orderId, skipped);
-    return skipped;
-  }
+  const key = confirmationKey(orderId);
+  if (!mailOutbox.reserve(key)) return skippedLease();
+  let owned = false;
   let result;
   try {
-    result = await deliverOnce(orderId);
-  } catch (err) {
-    console.error('ORDER CONFIRM ERROR:', err && err.message ? err.message : 'failed');
-    result = { status: 'failed', email_sent: false };
-  }
-  noteFinished(orderId, result);
-  if (gate === 'owned') {
+    const gate = await mailOutbox.acquire(key);
+    if (gate === 'leased') {
+      result = skippedLease();
+      return result;
+    }
+    owned = gate === 'owned';
     try {
-      await mailOutbox.completeMatching(confirmationKey(orderId));
+      result = await deliverOnce(orderId);
+    } catch (err) {
+      console.error('ORDER CONFIRM ERROR:', err && err.message ? err.message : 'failed');
+      result = { status: 'failed', email_sent: false };
+    }
+    return result;
+  } finally {
+    noteFinished(orderId, result || skippedLease());
+    try {
+      if (owned) await mailOutbox.completeMatching(key);
     } catch (err) {
       console.error('MAIL OUTBOX ERROR:', err && err.message ? err.message : 'failed');
+    } finally {
+      mailOutbox.release(key);
     }
   }
-  return result;
 }
 
 // Startup sweep entry. A crash leaves confirmation_email_status pending and
 // no sent row in the order notification log. Clearing that claim lets the
-// normal send run once. A later call still sees the log and does not repeat.
+// normal send run once. A send already running in this process is left alone,
+// including its pending lock.
 async function deliverQueued(orderId) {
+  if (mailOutbox.isSending(confirmationKey(orderId))) {
+    return skippedLease();
+  }
   await run(
     `UPDATE orders
      SET confirmation_email_status = NULL, updated_at = datetime('now')

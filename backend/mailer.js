@@ -8,6 +8,7 @@ const { createFixedWindowLimiter } = require('./rateLimit');
 const { loadLetterhead } = require('./shopProfile');
 const emailLoop = require('./emailLoop');
 const lifecycle = require('./lifecycle');
+const mailOutbox = require('./mailOutbox');
 
 const ADDRESS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ON = new Set(['1', 'true', 'yes', 'on']);
@@ -151,8 +152,13 @@ function transportMode() {
 
 function smtpTimeoutMs() {
   const parsed = Number(process.env.SMTP_TIMEOUT_MS);
-  if (!Number.isInteger(parsed) || parsed < 1000 || parsed > 120000) return 12000;
-  return parsed;
+  let timeout = 12000;
+  if (Number.isInteger(parsed) && parsed >= 1000 && parsed <= 120000) timeout = parsed;
+  // Connect, greeting, and socket each use this budget. Together they stay
+  // under the outbox lease so a slow server cannot outlive the claim.
+  const budget = mailOutbox.leaseMs() - 2000;
+  if (budget >= 3000) timeout = Math.min(timeout, Math.floor(budget / 3));
+  return timeout;
 }
 
 function createTransport() {

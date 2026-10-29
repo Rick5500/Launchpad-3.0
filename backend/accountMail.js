@@ -17,6 +17,9 @@ async function withOutbox(noticeType, user, fn) {
     channel: 'email',
     noticeType,
   };
+  if (user && user.id && !mailOutbox.reserve(fields)) {
+    return { status: 'skipped', leased: true };
+  }
   let owned = false;
   try {
     if (user && user.id) {
@@ -27,11 +30,12 @@ async function withOutbox(noticeType, user, fn) {
     }
     return await fn();
   } finally {
-    if (!owned) return;
     try {
-      await mailOutbox.completeMatching(fields);
+      if (owned) await mailOutbox.completeMatching(fields);
     } catch (err) {
       console.error('MAIL OUTBOX ERROR:', err && err.message ? err.message : 'failed');
+    } finally {
+      if (user && user.id) mailOutbox.release(fields);
     }
   }
 }

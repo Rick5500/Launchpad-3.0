@@ -867,6 +867,7 @@ function spawnOps(childName, databaseFile, extra = {}) {
         INIT_ADMIN_PASSWORD: adminPassword,
         MAIL_TEST_THROW: '',
         EMAIL_NOTIFICATIONS: '',
+        MAIL_TEST_HOLD_MS: '',
         ...extra,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -950,8 +951,140 @@ async function runOverlapChecks() {
      WHERE order_id = 77 AND notice_type = 'confirmation' AND status IN ('queued', 'sending')`
   );
   assert(active.count === 1, `the unique outbox index should keep one active row, got ${active.count}`);
+  const slowUser = await db.run(
+    `INSERT INTO users (username, password_hash, role, display_name, email)
+     VALUES ('slow-customer', 'hash', 'customer', 'Slow', 'slow@example.com')`
+  );
+  const slowOrder = await db.run(
+    `INSERT INTO orders (
+       order_number, customer_id, company, contact_name, phone, email,
+       delivery_method, due_date, due_time
+     ) VALUES ('SLOW-1', ?, 'Ops Co', 'Ops Contact', '919-555-3333', 'slow@example.com', 'Will Call', ?, '10:00')`,
+    [slowUser.lastID, weekdayAhead()]
+  );
+  await db.run(
+    `INSERT INTO mail_outbox (scope, order_id, channel, notice_type, status, created_at)
+     VALUES ('order', ?, 'email', 'confirmation', 'queued', datetime('now'))`,
+    [slowOrder.lastID]
+  );
+  const slowLease = {
+    DRAIN_TIMEOUT_MS: '1000',
+    MAIL_SWEEP_LEASE_MARGIN_MS: '0',
+  };
+  const slowSender = spawnOps('deliver', overlapDb, {
+    ...slowLease,
+    OPS_ORDER_ID: String(slowOrder.lastID),
+    MAIL_TEST_HOLD_MS: '4000',
+  });
+  const slowClaimDeadline = Date.now() + 5000;
+  let slowClaim = null;
+  while (Date.now() < slowClaimDeadline) {
+    slowClaim = await db.get(
+      `SELECT claimed_by FROM mail_outbox WHERE order_id = ? AND notice_type = 'confirmation'`,
+      [slowOrder.lastID]
+    );
+    if (slowClaim && slowClaim.claimed_by) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert(slowClaim && slowClaim.claimed_by, 'the slow send should claim the row');
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  const slowSweep = await spawnOps('sweep', overlapDb, slowLease);
+  assert(slowSweep.code === 0, `slow-send sweep failed\n${slowSweep.err}\n${slowSweep.out}`);
+  const slowResult = JSON.parse((slowSweep.out.match(/SWEEP (\{.*\})/) || [])[1] || 'null');
+  assert(slowResult && slowResult.resent === 0, `a sweep past the lease took a send that was still running: ${slowSweep.out}`);
+  const slowFinished = await slowSender;
+  assert(slowFinished.code === 0 && /"status":"sent"/.test(slowFinished.out), slowFinished.out);
+  const slowSent = await db.get(
+    `SELECT COUNT(*) AS count FROM order_notify_log
+     WHERE order_id = ? AND notice_type = 'confirmation' AND result = 'sent'`,
+    [slowOrder.lastID]
+  );
+  assert(slowSent.count === 1, `a renewed lease should still send once, got ${slowSent.count}`);
   await db.close();
   console.log('PASS overlapping processes do not double-send, and enqueue is atomic');
+  console.log('PASS a slow send keeps its lease against another process');
+}
+
+async function runSameProcessOverlap() {
+  const db = require('../dbAsync');
+  const orderConfirm = require('../orderConfirm');
+  const pickupRequests = require('../pickupRequests');
+  const accountMail = require('../accountMail');
+  const mailSweep = require('../mailSweep');
+  process.env.MAIL_TEST_HOLD_MS = '3000';
+  try {
+    const customerId = await db.run(
+      `INSERT INTO users (username, password_hash, role, display_name, email)
+       VALUES ('same-customer', 'hash', 'customer', 'Same', 'same@example.com')`
+    ).then((row) => row.lastID);
+    const confirmId = await insertOrder(db, {
+      orderNumber: 'SAME-CONFIRM',
+      customerId,
+      email: 'same-confirm@example.com',
+    });
+    await db.run(
+      `INSERT INTO mail_outbox (scope, order_id, channel, notice_type, status, created_at)
+       VALUES ('order', ?, 'email', 'confirmation', 'queued', datetime('now'))`,
+      [confirmId]
+    );
+    const confirmSend = orderConfirm.deliver(confirmId);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const confirmSweep = await mailSweep.sweep();
+    assert(confirmSweep.resent === 0, `same-process sweep resent a confirmation still sending: ${confirmSweep.resent}`);
+    const confirmResult = await confirmSend;
+    assert(confirmResult.status === 'sent' && !confirmResult.leased, JSON.stringify(confirmResult));
+    assert(await noticeCount(db, confirmId, 'confirmation') === 1, 'a same-process sweep must not write a second confirmation');
+
+    const pickupId = await insertOrder(db, {
+      orderNumber: 'SAME-PICKUP',
+      customerId,
+      email: 'same-pickup@example.com',
+    });
+    await db.run(
+      `INSERT INTO pickup_requests (
+         customer_id, order_id, contact_name, contact_phone,
+         address_line1, city, state, zip, ready_date, status, source
+       ) VALUES (?, ?, 'Ops Contact', '919-555-3333', '10 Dock Street', 'Raleigh', 'NC', '27601', ?, 'new', 'order')`,
+      [customerId, pickupId, weekdayAhead()]
+    );
+    await db.run(
+      `INSERT INTO mail_outbox (scope, order_id, channel, notice_type, status, created_at)
+       VALUES ('order', ?, 'email', 'pickup_request', 'queued', datetime('now'))`,
+      [pickupId]
+    );
+    const pickupSend = pickupRequests.sendQueuedConfirmation(pickupId);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const pickupSweep = await mailSweep.sweep();
+    assert(pickupSweep.resent === 0, `same-process sweep resent a pickup mail still sending: ${pickupSweep.resent}`);
+    const pickupResult = await pickupSend;
+    assert(pickupResult.status === 'sent' && !pickupResult.leased, JSON.stringify(pickupResult));
+    assert(await noticeCount(db, pickupId, 'pickup_request') === 1, 'a same-process sweep must not write a second pickup mail');
+
+    const welcomeId = await db.run(
+      `INSERT INTO users (username, password_hash, role, display_name, email)
+       VALUES ('same-welcome', 'hash', 'customer', 'Same Welcome', 'same-welcome@example.com')`
+    ).then((row) => row.lastID);
+    const welcomeSend = accountMail.sendSignupWelcome({
+      id: welcomeId,
+      email: 'same-welcome@example.com',
+      display_name: 'Same Welcome',
+      username: 'same-welcome',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const welcomeSweep = await mailSweep.sweep();
+    assert(welcomeSweep.resent === 0, `same-process sweep resent a welcome still sending: ${welcomeSweep.resent}`);
+    const welcomeResult = await welcomeSend;
+    assert(welcomeResult.status === 'sent' && !welcomeResult.leased, JSON.stringify(welcomeResult));
+    const welcomeAudit = await db.get(
+      `SELECT COUNT(*) AS count FROM account_audit_log
+       WHERE user_id = ? AND notice_type = 'welcome' AND result = 'sent'`,
+      [welcomeId]
+    );
+    assert(welcomeAudit.count === 1, 'a same-process sweep must not write a second welcome');
+    console.log('PASS a sweep in this process does not resend confirmation, pickup, or welcome mail already sending');
+  } finally {
+    delete process.env.MAIL_TEST_HOLD_MS;
+  }
 }
 
 async function runChild() {
@@ -993,6 +1126,7 @@ if (process.env.OPS_CHILD) {
 
 async function main() {
   await runSweepChecks();
+  await runSameProcessOverlap();
   await runOverlapChecks();
   await runMobileChecks();
   await runDrainChecks();
