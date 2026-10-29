@@ -6,7 +6,7 @@ Playwright drives the Launchpad UI and checks the API behind it. The tests asser
 
 `npm run test:e2e` from the repo root starts `e2e/start-server.js`, which:
 
-1. Builds `frontend/` when `frontend/dist/index.html` is missing, and serves that build from the API.
+1. Builds `frontend/` when `frontend/dist/index.html` is missing or older than `frontend/src`, and serves that build from the API.
 2. Runs `backend/init_db.js` against `e2e/.runtime/launchpad.db`. That file is created for the run and deleted at the start of the next one. `database/launchpad.db` is not opened.
 3. Adds the accounts, customers, orders, and work orders below.
 4. Listens on `http://127.0.0.1:4173` with `NODE_ENV=test`.
@@ -54,20 +54,10 @@ Customers `customer.raleigh` and `customer.hickory` have mobile numbers `+191955
 - Email orders: Check now twice on one Graph message stores one row. An automatic reply, a reply to a Launchpad `Message-ID`, and mail from `SMTP_FROM` are ignored and create no order. Converting once in the form, converting again, submitting the form twice, and two concurrent convert calls each leave one order and one work order for that `source_inbound_email_id`.
 - Customer privacy: an operator's pages and `GET /api/customers/lookup` do not contain the mobile numbers, and `GET /api/customers` is 403. An admin, and the Raleigh manager for the Raleigh customer, do see `+19195550111`. A Hickory manager cannot open the Raleigh order.
 
-## Known failure on current master
+## Customer privacy
 
-Opening a new message at `/email-orders/:id` throws `ReferenceError: confirmCustomer is not defined` in `frontend/src/routes/CustomerOrderForm.jsx` (`confirmCustomer` and `setConfirmCustomer` are used when an inbound email is open, and they are not declared). The React tree unmounts, so the page is blank. `converting an email twice, including a double submit, creates one order` stops there. That test is left failing on purpose. The component is not changed here.
+These checks run against the shop scoping that is on master:
 
-`two concurrent converts create one order and one set of work orders` still checks the API: two converts at once, then a third, leave one order and one work order for that `source_inbound_email_id`.
-
-## PR #51
-
-[PR #51](https://github.com/Rick5500/Launchpad-3.0/pull/51) is not merged. On current master, every manager who can open Customers receives every customer's mobile number, including a manager with no shop and a manager at the other shop. Order detail includes the SMS recipient for anyone who can open the order.
-
-Three tests in `e2e/tests/customer-privacy.spec.js` are marked `test.fixme` and do not run:
-
-- a Raleigh manager does not see the Hickory mobile, and `PUT /api/customers/:id/texting` for that customer is 404
+- a Raleigh manager sees the Raleigh customer's mobile and does not see the Hickory customer's mobile. Updating texting for the Hickory customer is HTTP 404
 - a manager with no shop sees no mobiles
-- order detail for the transferred order omits the SMS recipient from an operator, the Raleigh manager, and the manager with no shop, while the email recipient stays, and an admin still sees the SMS recipient
-
-After PR #51 merges, delete `test.fixme` on those three tests (leave the title and the body) and run `npm run test:e2e` again.
+- order detail for an order at Raleigh whose customer is at Hickory omits the SMS recipient from an operator, the Raleigh manager, and the manager with no shop. The email recipient stays. An admin still sees the SMS recipient

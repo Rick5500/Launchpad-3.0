@@ -1,12 +1,9 @@
 const { test, expect } = require('@playwright/test');
 const { c, login, api, runtime } = require('../helpers');
 
-// PR #51 (https://github.com/Rick5500/Launchpad-3.0/pull/51) is not on master.
-// It scopes customer mobile numbers to a manager's own shop, hides them from a
-// manager with no shop, and omits SMS recipients on order detail for operators
-// and for managers whose shop is not the customer's shop.
-// Tests that need that behaviour are test.fixme. Remove fixme after #51 merges.
-// The tests that run here assert the privacy behaviour master already enforces.
+// Customer mobiles are limited to an admin or a manager whose shop matches the
+// customer's shop. A manager with no shop sees none. SMS recipients on an order
+// follow that same rule, including when the order was moved to another shop.
 
 function noticesOf(body) {
   return (body && body.order && body.order.customer_notices) || [];
@@ -98,7 +95,7 @@ test('a manager at another shop cannot open the order, so its private notice is 
   expect(order.text).not.toContain(c.TRANSFER_SMS);
 });
 
-test.fixme('PR #51: a manager does not see mobile numbers for another shop', async ({ page }) => {
+test('a manager does not see mobile numbers for another shop', async ({ page }) => {
   const data = runtime();
   await login(page, c.MANAGER_RALEIGH);
   await page.goto('/customers');
@@ -118,7 +115,7 @@ test.fixme('PR #51: a manager does not see mobile numbers for another shop', asy
   expect(texting.status).toBe(404);
 });
 
-test.fixme('PR #51: a manager with no shop sees no customer mobile numbers', async ({ page }) => {
+test('a manager with no shop sees no customer mobile numbers', async ({ page }) => {
   const data = runtime();
   await login(page, c.MANAGER_NONE);
   await page.goto('/customers');
@@ -141,7 +138,7 @@ test.fixme('PR #51: a manager with no shop sees no customer mobile numbers', asy
   expect(texting.status).toBe(404);
 });
 
-test.fixme('PR #51: order detail hides SMS recipients from an operator, another shop, and a manager with no shop', async ({ page }) => {
+test('order detail hides SMS recipients from an operator, another shop, and a manager with no shop', async ({ page }) => {
   const data = runtime();
   const viewers = [c.OPERATOR, c.MANAGER_RALEIGH, c.MANAGER_NONE];
   for (const viewer of viewers) {

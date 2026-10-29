@@ -14,6 +14,24 @@ const runtimeDir = path.join(root, 'e2e', '.runtime');
 const databaseFile = path.join(runtimeDir, 'launchpad.db');
 const uploadDir = path.join(runtimeDir, 'uploads');
 
+function newestMtime(dir) {
+  let newest = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) newest = Math.max(newest, newestMtime(full));
+    else newest = Math.max(newest, fs.statSync(full).mtimeMs);
+  }
+  return newest;
+}
+
+function frontendBuildIsStale() {
+  const index = path.join(root, 'frontend', 'dist', 'index.html');
+  if (!fs.existsSync(index)) return true;
+  const built = fs.statSync(index).mtimeMs;
+  const src = path.join(root, 'frontend', 'src');
+  return newestMtime(src) > built;
+}
+
 function buildFrontend() {
   return new Promise((resolve, reject) => {
     const child = spawn('npm', ['run', 'build'], {
@@ -54,7 +72,7 @@ async function main() {
   delete process.env.TWILIO_FROM_NUMBER;
   delete process.env.EMAIL_NOTIFICATIONS;
 
-  if (!fs.existsSync(path.join(root, 'frontend', 'dist', 'index.html'))) {
+  if (frontendBuildIsStale()) {
     await buildFrontend();
   }
 

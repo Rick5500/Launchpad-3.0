@@ -168,7 +168,8 @@ test('converting an email twice, including a double submit, creates one order', 
   await page.getByRole('option', { name: 'Converted', exact: true }).click();
   const converted = page.getByRole('row').filter({ hasText: ORDER_SUBJECT });
   await expect(converted).toContainText('Converted');
-  await expect(converted).toContainText(orderNumber);
+  await converted.getByRole('link', { name: ORDER_SUBJECT }).click();
+  await expect(page.getByRole('link', { name: `Order ${orderNumber}` })).toBeVisible();
 
   const first = await ordersForEmail('e2e-order-once');
   expect(first.orders).toHaveLength(1);
