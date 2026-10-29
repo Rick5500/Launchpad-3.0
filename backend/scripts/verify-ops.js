@@ -1129,6 +1129,48 @@ async function sentConfirmations(db, orderId) {
   return row ? row.count : 0;
 }
 
+async function runPickupGap() {
+  const db = require('../dbAsync');
+  const pickupRequests = require('../pickupRequests');
+  const mailSweep = require('../mailSweep');
+  const { whenSettled } = require('../afterResponse');
+  const customerId = await db.run(
+    `INSERT INTO users (username, password_hash, role, display_name, email)
+     VALUES ('gap-customer', 'hash', 'customer', 'Gap', 'gap@example.com')`
+  ).then((row) => row.lastID);
+  const orderId = await db.run(
+    `INSERT INTO orders (
+       order_number, customer_id, company, contact_name, phone, email,
+       delivery_method, due_date, due_time, originals_source,
+       address_line1, city, state, zip
+     ) VALUES (
+       'GAP-1', ?, 'Ops Co', 'Ops Contact', '919-555-3333', 'gap@example.com',
+       'Will Call', ?, '10:00', 'Send a vehicle to pick up originals',
+       '10 Dock Street', 'Raleigh', 'NC', '27601'
+     )`,
+    [customerId, weekdayAhead()]
+  ).then((row) => row.lastID);
+  let during = null;
+  pickupRequests.setBeforeSendForTest(async () => {
+    during = await mailSweep.sweep();
+  });
+  try {
+    const created = await pickupRequests.createFromOrder(orderId);
+    assert(created && created.pickup_request, 'the pickup request should be created');
+    await whenSettled();
+  } finally {
+    pickupRequests.setBeforeSendForTest(null);
+  }
+  assert(during && during.resent === 0, `the sweep in the enqueue gap resent the pickup mail: ${JSON.stringify(during)}`);
+  const sent = await db.get(
+    `SELECT COUNT(*) AS count FROM order_notify_log
+     WHERE order_id = ? AND notice_type = 'pickup_request' AND channel = 'email' AND result = 'sent'`,
+    [orderId]
+  );
+  assert(sent.count === 1, `the pickup confirmation should be emailed once, got ${sent.count}`);
+  console.log('PASS a sweep between pickup enqueue and send delivers one email');
+}
+
 async function runAbandonedSend() {
   const port = 3186;
   const lease = { DRAIN_TIMEOUT_MS: '3000', MAIL_SWEEP_LEASE_MARGIN_MS: '0' };
@@ -1232,6 +1274,7 @@ if (process.env.OPS_CHILD) {
 async function main() {
   await runSweepChecks();
   await runSameProcessOverlap();
+  await runPickupGap();
   await runOverlapChecks();
   await runAbandonedSend();
   await runMobileChecks();

@@ -71,7 +71,11 @@ function install(onDrain) {
       process.exit(code);
     };
     const force = setTimeout(() => {
-      finish(1, 'DRAIN: timeout; unfinished mail stays queued');
+      finished = true;
+      if (httpServer && typeof httpServer.closeAllConnections === 'function') {
+        try { httpServer.closeAllConnections(); } catch (err) { /* exiting */ }
+      }
+      process.exit(1);
     }, drainTimeoutMs());
     if (typeof force.ref === 'function') force.ref();
     const closed = closeServer(httpServer);

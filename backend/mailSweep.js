@@ -136,13 +136,16 @@ async function dispatch(row) {
 }
 
 async function sweepOnce() {
+  if (stopped) return { resent: 0, skipped: 0 };
   try {
     await mailOutbox.ensureSchema();
   } catch (err) {
     console.error('MAIL SWEEP ERROR:', err && err.message ? err.message : 'failed');
     return { resent: 0, skipped: 0 };
   }
+  if (stopped) return { resent: 0, skipped: 0 };
   await adoptPendingConfirmations();
+  if (stopped) return { resent: 0, skipped: 0 };
   const rows = await all(
     `SELECT id, scope, order_id, user_id, channel, notice_type, status, claimed_by, claimed_at, created_at
      FROM mail_outbox
@@ -152,6 +155,7 @@ async function sweepOnce() {
   let resent = 0;
   let skipped = 0;
   for (const row of rows) {
+    if (stopped) break;
     const fields = {
       scope: row.scope,
       orderId: row.order_id,
@@ -199,14 +203,16 @@ async function sweepOnce() {
   return { resent, skipped };
 }
 
-let tail = Promise.resolve();
 let repeatTimer = null;
 let stopped = false;
+let sweeping = false;
 
 function sweepOnceSerialized() {
-  const run = tail.then(() => sweepOnce(), () => sweepOnce());
-  tail = run.then(() => {}, () => {});
-  return run;
+  if (stopped || sweeping) return Promise.resolve({ resent: 0, skipped: 0 });
+  sweeping = true;
+  return sweepOnce().finally(() => {
+    sweeping = false;
+  });
 }
 
 function repeatDelayMs() {

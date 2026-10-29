@@ -67,9 +67,10 @@ function skippedLease() {
   return { status: 'skipped', email_sent: false, leased: true };
 }
 
-async function deliver(orderId) {
+async function deliver(orderId, options = {}) {
   const key = confirmationKey(orderId);
-  if (!mailOutbox.reserve(key)) return skippedLease();
+  const nested = Boolean(options.held);
+  if (!nested && !mailOutbox.reserve(key)) return skippedLease();
   let owned = false;
   let result;
   try {
@@ -93,7 +94,7 @@ async function deliver(orderId) {
     } catch (err) {
       console.error('MAIL OUTBOX ERROR:', err && err.message ? err.message : 'failed');
     } finally {
-      mailOutbox.release(key);
+      if (!nested) mailOutbox.release(key);
     }
   }
 }

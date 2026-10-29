@@ -879,7 +879,10 @@ async function createOrderNow(user, body, now = new Date(), options = {}) {
     ? options.sourceInboundEmailId
     : null;
 
-  const orderId = await withTransaction(async (tx) => {
+  let heldConfirmation = null;
+  let orderId;
+  try {
+  orderId = await withTransaction(async (tx) => {
     const customer = await tx.get(
       'SELECT id, role, is_active FROM users WHERE id = ?',
       [customerId]
@@ -1194,6 +1197,13 @@ async function createOrderNow(user, body, now = new Date(), options = {}) {
       await quotes.attachConversion(tx, user, quoteRequestId == null ? payload.quote_request_id : quoteRequestId, newOrderId, customerId);
     }
 
+    const confirmKey = {
+      scope: 'order',
+      orderId: newOrderId,
+      channel: 'email',
+      noticeType: 'confirmation',
+    };
+    if (mailOutbox.reserve(confirmKey)) heldConfirmation = confirmKey;
     await mailOutbox.enqueue({
       scope: 'order',
       orderId: newOrderId,
@@ -1203,6 +1213,11 @@ async function createOrderNow(user, body, now = new Date(), options = {}) {
 
     return newOrderId;
   });
+  } catch (err) {
+    if (heldConfirmation) mailOutbox.release(heldConfirmation);
+    heldConfirmation = null;
+    throw err;
+  }
 
   const record = await loadOrderRecord(orderId, user);
   try {
@@ -1224,7 +1239,13 @@ async function createOrderNow(user, body, now = new Date(), options = {}) {
     console.error('PICKUP REQUEST ERROR:', err && err.message ? err.message : 'failed');
   }
   orderConfirm.noteScheduled(orderId);
-  afterResponse('ORDER CONFIRM', () => orderConfirm.deliver(orderId));
+  afterResponse('ORDER CONFIRM', async () => {
+    try {
+      await orderConfirm.deliver(orderId, { held: Boolean(heldConfirmation) });
+    } finally {
+      if (heldConfirmation) mailOutbox.release(heldConfirmation);
+    }
+  });
   const presented = presentOrder(record);
   if (pickupRequest && pickupRequest.pickup_request) {
     presented.pickup_request = {

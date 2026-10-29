@@ -130,7 +130,20 @@ async function ensureActiveIndex(db) {
   await db.run(ACTIVE_INDEX);
 }
 
-async function ensureSchema(executor) {
+let schemaReady = null;
+
+function ensureSchema(executor) {
+  if (executor) return ensureSchemaNow(executor);
+  if (!schemaReady) {
+    schemaReady = ensureSchemaNow().catch((err) => {
+      schemaReady = null;
+      throw err;
+    });
+  }
+  return schemaReady;
+}
+
+async function ensureSchemaNow(executor) {
   const db = dbOf(executor);
   await db.run(SCHEMA);
   const cols = await db.all('PRAGMA table_info(mail_outbox)');
@@ -139,6 +152,11 @@ async function ensureSchema(executor) {
   if (!names.has('claimed_at')) await db.run('ALTER TABLE mail_outbox ADD COLUMN claimed_at DATETIME');
   await db.run('CREATE INDEX IF NOT EXISTS idx_mail_outbox_status ON mail_outbox(status, id)');
   await ensureActiveIndex(db);
+  const orders = await db.get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'orders'`);
+  if (orders) {
+    await db.run(`CREATE INDEX IF NOT EXISTS idx_orders_confirmation_pending
+      ON orders(confirmation_email_status, confirmation_email_sent_at)`);
+  }
 }
 
 async function findActive(fields, executor) {
@@ -225,19 +243,15 @@ async function complete(id, executor) {
 async function completeMatching(fields, executor) {
   const db = dbOf(executor);
   const key = keyOf(fields);
-  try {
-    await db.run(
-      `UPDATE mail_outbox SET status = 'done', updated_at = datetime('now')
-       WHERE scope = ? AND channel = ? AND notice_type = ?
-         AND ifnull(order_id, -1) = ifnull(?, -1)
-         AND ifnull(user_id, -1) = ifnull(?, -1)
-         AND status IN ('queued', 'sending')
-         AND (claimed_by IS NULL OR claimed_by = ?)`,
-      [key.scope, key.channel, key.noticeType, key.orderId, key.userId, claimant]
-    );
-  } finally {
-    release(fields);
-  }
+  await db.run(
+    `UPDATE mail_outbox SET status = 'done', updated_at = datetime('now')
+     WHERE scope = ? AND channel = ? AND notice_type = ?
+       AND ifnull(order_id, -1) = ifnull(?, -1)
+       AND ifnull(user_id, -1) = ifnull(?, -1)
+       AND status IN ('queued', 'sending')
+       AND (claimed_by IS NULL OR claimed_by = ?)`,
+    [key.scope, key.channel, key.noticeType, key.orderId, key.userId, claimant]
+  );
 }
 
 async function releaseMatching(fields, executor) {

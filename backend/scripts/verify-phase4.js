@@ -849,7 +849,7 @@ async function main() {
       method: 'POST',
       path: '/api/customers',
       token: admin.token,
-      timeoutMs: 60000,
+      timeoutMs: 25000,
       json: { display_name: 'Same Name Shop', password: 'CustomerPass1' },
     })));
     assert(sameName.every((row) => row.status < 500), `concurrent same-name customer creates should not 500: ${sameName.map((row) => `${row.status} ${row.text}`).join(' | ')}`);
@@ -866,28 +866,28 @@ async function main() {
         method: 'POST',
         path: '/api/orders',
         token: admin.token,
-        timeoutMs: 60000,
+        timeoutMs: 25000,
         json: orderBody(largeFormat.id, customerResponse.json.id, { project_name: `Load ${index}` }),
       })),
       ...Array.from({ length: 40 }, () => request({
         method: 'POST',
         path: '/api/barcode',
         token: admin.token,
-        timeoutMs: 60000,
+        timeoutMs: 25000,
         json: { scanned_value: externalId, location: 'Quality Control' },
       })),
       ...Array.from({ length: 10 }, (_, index) => request({
         method: 'PUT',
         path: '/api/settings',
         token: admin.token,
-        timeoutMs: 60000,
+        timeoutMs: 25000,
         json: { last_backup_at: `2026-06-09 03:00:${String(index).padStart(2, '0')}` },
       })),
     ]);
     const loadMs = Date.now() - loadStarted;
     const loadFailures = mixedLoad.filter((row) => row.status >= 500);
     assert(loadFailures.length === 0, `mixed load should not 500 (${loadMs}ms): ${loadFailures.map((row) => row.text).join(' | ')}\n${server.logs()}`);
-    assert(loadMs < 45000, `mixed load of 40 orders, 40 scans, and 10 admin writes should finish, took ${loadMs}ms`);
+    assert(loadMs < 20000, `mixed load of 40 orders, 40 scans, and 10 admin writes should finish well under 30s, took ${loadMs}ms`);
     const loadOrders = mixedLoad.slice(0, 40);
     const loadScans = mixedLoad.slice(40, 80);
     const loadWrites = mixedLoad.slice(80);
