@@ -239,6 +239,31 @@ async function checkConfig() {
     assert(runtime.corsOrigins().join(',') === 'http://localhost:5173,http://localhost:5174', 'local origins should stay the default');
     assert(typeof runtime.sessionCookiesEnabled !== 'function', 'development should not grow a session cookie switch');
     assert(runtime.shouldAutoMigrate() === false, 'development should not auto-migrate');
+    assert(runtime.serveBuiltFrontend() === false, 'development should not serve the built frontend');
+  });
+  withEnv({
+    NODE_ENV: 'development',
+    SERVE_FRONTEND: '1',
+  }, () => {
+    assert(runtime.serveBuiltFrontend() === false, 'development should ignore SERVE_FRONTEND');
+  });
+  withEnv({
+    NODE_ENV: 'test',
+    SERVE_FRONTEND: '',
+  }, () => {
+    assert(runtime.serveBuiltFrontend() === false, 'test mode should not serve the built frontend unless asked');
+  });
+  withEnv({
+    NODE_ENV: 'test',
+    SERVE_FRONTEND: '1',
+  }, () => {
+    assert(runtime.serveBuiltFrontend() === true, 'SERVE_FRONTEND=1 should serve the built frontend in test mode');
+  });
+  withEnv({
+    NODE_ENV: 'production',
+    SERVE_FRONTEND: '',
+  }, () => {
+    assert(runtime.serveBuiltFrontend() === true, 'production should serve the built frontend without SERVE_FRONTEND');
   });
   withEnv({
     NODE_ENV: 'production',
@@ -558,6 +583,7 @@ async function checkServers() {
     TRUST_PROXY: '1',
     COOKIE_SECURE: 'false',
     FRONTEND_DIST: dist,
+    SERVE_FRONTEND: '',
     INIT_ADMIN_PASSWORD: 'AdminPass123',
     DELIVERY_TIMEZONE: 'UTC',
     FILE_STORAGE_DRIVER: '',
@@ -724,6 +750,7 @@ async function checkServers() {
     UPLOAD_DIR: devUploads,
     UPLOADS_DIR: '',
     FRONTEND_DIST: dist,
+    SERVE_FRONTEND: '',
     PUBLIC_APP_URL: '',
     COOKIE_SECURE: '',
     FILE_STORAGE_DRIVER: '',
@@ -755,6 +782,46 @@ async function checkServers() {
     throw err;
   } finally {
     await stopServer(dev);
+  }
+
+  const e2ePort = 3197;
+  const e2eDb = path.join(tmp, 'serve-frontend.db');
+  const e2e = startServer({
+    NODE_ENV: 'test',
+    PORT: String(e2ePort),
+    DATABASE_FILE: e2eDb,
+    DATABASE_PATH: '',
+    UPLOAD_DIR: devUploads,
+    UPLOADS_DIR: '',
+    FRONTEND_DIST: dist,
+    SERVE_FRONTEND: '1',
+    PUBLIC_APP_URL: '',
+    MAIL_TRANSPORT: 'json',
+    COOKIE_SECURE: '',
+    FILE_STORAGE_DRIVER: '',
+    BACKUP_ENABLED: '',
+    AUTO_MIGRATE: '',
+    M365_TENANT_ID: '',
+    M365_CLIENT_ID: '',
+    M365_CLIENT_SECRET: '',
+    M365_MAILBOX: '',
+  });
+  try {
+    await waitFor(e2ePort, e2e);
+    const home = await request(e2ePort, { path: '/' });
+    assert(home.status === 200 && home.text.includes(marker), 'SERVE_FRONTEND=1 should serve the built frontend in test mode');
+    const login = await request(e2ePort, { path: '/login' });
+    assert(login.status === 200 && login.text.includes(marker), 'SERVE_FRONTEND=1 should serve the sign-in route');
+    const health = await request(e2ePort, { path: '/api/health' });
+    assert(health.status === 200 && health.json && health.json.status === 'ok', 'the API should stay JSON when the built frontend is served in test mode');
+    const missing = await request(e2ePort, { path: '/assets/missing.js' });
+    assert(missing.status === 404 && !missing.text.includes(marker), 'a missing asset should not return the sign-in page');
+    console.log('PASS test mode can serve the built frontend');
+  } catch (err) {
+    err.message += `\n--- server log ---\n${e2e.log()}`;
+    throw err;
+  } finally {
+    await stopServer(e2e);
   }
 }
 

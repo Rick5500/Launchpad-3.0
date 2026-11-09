@@ -6,10 +6,10 @@ Playwright drives the Launchpad UI and checks the API behind it. The tests asser
 
 `npm run test:e2e` from the repo root starts `e2e/start-server.js`, which:
 
-1. Builds `frontend/` when `frontend/dist/index.html` is missing or older than `frontend/src`, and serves that build from the API.
+1. Builds `frontend/` when `frontend/dist/index.html` is missing or older than `frontend/src`.
 2. Runs `backend/init_db.js` against `e2e/.runtime/launchpad.db`. That file is created for the run and deleted at the start of the next one. `database/launchpad.db` is not opened.
 3. Adds the accounts, customers, orders, and work orders below.
-4. Listens on `http://127.0.0.1:4173` with `NODE_ENV=test`.
+4. Listens on `http://127.0.0.1:4173` with `NODE_ENV=test` and `SERVE_FRONTEND=1`, so this process serves that build. `NODE_ENV` stays `test` so mail uses the JSON transport. Development does not serve the build, and production serves it without this flag.
 
 Mail uses `MAIL_TRANSPORT=json`. Nodemailer keeps the message in memory. SMTP settings in this process point at `127.0.0.1` only so the JSON transport is selected; the suite does not open a connection. Twilio variables are unset, so a text is not sent. The orders mailbox is a local stand-in (`e2e/mock-graph.js`). It does not call Microsoft. The client id, secret, and mailbox address in that process are fixed test strings, not credentials.
 

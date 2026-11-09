@@ -1,10 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 const express = require('express');
-const { frontendDistDir, isProduction } = require('./runtimeConfig');
+const { frontendDistDir, serveBuiltFrontend } = require('./runtimeConfig');
 
 function mountProductionFrontend(app) {
-  if (!isProduction()) return { enabled: false, dist: null };
+  if (!serveBuiltFrontend()) return { enabled: false, dist: null };
 
   const dist = frontendDistDir();
   const indexFile = path.join(dist, 'index.html');

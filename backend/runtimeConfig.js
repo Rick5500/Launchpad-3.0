@@ -11,6 +11,15 @@ function isProduction() {
   return process.env.NODE_ENV === 'production';
 }
 
+// Production always serves frontend/dist. A test process serves it only when
+// SERVE_FRONTEND is on, which is how the Playwright harness loads the sign-in
+// page while mail stays on the JSON transport. Development ignores the flag.
+function serveBuiltFrontend() {
+  if (isProduction()) return true;
+  if (String(process.env.NODE_ENV || '').trim() !== 'test') return false;
+  return flagOn(process.env.SERVE_FRONTEND);
+}
+
 function flagOn(value) {
   return /^(1|true|yes|on)$/i.test(String(value || '').trim());
 }
@@ -58,6 +67,7 @@ function databaseFile() {
 module.exports = {
   applyPathAliases,
   isProduction,
+  serveBuiltFrontend,
   shouldAutoMigrate,
   corsOrigins,
   frontendDistDir,

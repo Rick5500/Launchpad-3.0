@@ -53,6 +53,9 @@ async function main() {
   fs.mkdirSync(uploadDir, { recursive: true });
 
   process.env.NODE_ENV = 'test';
+  // Test mode does not serve frontend/dist unless this is set. Production does
+  // not need it, and development ignores it so Vite stays the local UI.
+  process.env.SERVE_FRONTEND = '1';
   process.env.DATABASE_FILE = databaseFile;
   process.env.PORT = String(c.PORT);
   process.env.DELIVERY_TIMEZONE = 'America/New_York';
