@@ -313,6 +313,8 @@ function assertCustomerMessageCopy() {
     assert(!order.text.includes('2026-11-13'), order.text);
     assert(order.text.includes('725 11th Ave Blvd SE') && order.html.includes('Hickory, NC 28602'), order.text);
     assert(order.html.includes('828-322-5050'), order.html);
+    assert(!order.text.includes('8121 Brownleigh Drive') && !order.html.includes('8121 Brownleigh Drive'), order.text);
+    assert(!order.text.includes('919-782-3332') && !order.html.includes('919-782-3332'), order.text);
 
     const delivery = mailer.renderReadyForDeliveryEmail({
       letterhead: hickoryHead,
@@ -324,6 +326,8 @@ function assertCustomerMessageCopy() {
     });
     assert(delivery.subject === 'Order 20261110-036 is ready for delivery', delivery.subject);
     assert(delivery.text.includes('Due: Fri, Nov 13, 2:00 PM'), delivery.text);
+    assert(delivery.text.includes('725 11th Ave Blvd SE') && delivery.text.includes('828-322-5050'), delivery.text);
+    assert(!delivery.text.includes('8121 Brownleigh Drive') && !delivery.text.includes('919-782-3332'), delivery.text);
 
     const pickup = mailer.renderPickupRequestEmail({
       letterhead: hickoryHead,
@@ -336,6 +340,8 @@ function assertCustomerMessageCopy() {
     });
     assert(pickup.subject === 'We received your pickup request', pickup.subject);
     assert(pickup.text.includes('Ready: Wed, Nov 11, 10:00 AM'), pickup.text);
+    assert(pickup.text.includes('725 11th Ave Blvd SE') && pickup.text.includes('828-322-5050'), pickup.text);
+    assert(!pickup.text.includes('8121 Brownleigh Drive') && !pickup.text.includes('919-782-3332'), pickup.text);
 
     const quote = mailer.renderQuoteEmail({
       letterhead: hickoryHead,
@@ -348,6 +354,8 @@ function assertCustomerMessageCopy() {
     assert(quote.subject === 'Quote for Sample Lobby Signage', quote.subject);
     assert(quote.text.includes('Valid until: Thu, Dec 10'), quote.text);
     assert(!quote.text.includes('2026-12-10'), quote.text);
+    assert(quote.text.includes('725 11th Ave Blvd SE') && quote.text.includes('828-322-5050'), quote.text);
+    assert(!quote.text.includes('8121 Brownleigh Drive') && !quote.text.includes('919-782-3332'), quote.text);
 
     const noTime = mailer.renderOrderConfirmationEmail({
       letterhead: company,
@@ -357,6 +365,7 @@ function assertCustomerMessageCopy() {
     });
     assert(noTime.text.includes('Due: Fri, Nov 13'), noTime.text);
     assert(!/Due: Fri, Nov 13,/.test(noTime.text), noTime.text);
+    assert(noTime.text.includes('8121 Brownleigh Drive') && noTime.text.includes('919-782-3332'), 'no shop should keep the company address');
 
     const setPassword = mailer.renderSetPasswordEmail({
       letterhead: company,
@@ -402,6 +411,8 @@ function assertCustomerMessageCopy() {
     assert(reset.text.includes('A service of Accent Imaging and Accent Corporate Graphics'), reset.text);
     assert(reset.text.includes('Accent Imaging, Inc.'), reset.text);
     assert(reset.text.includes('725 11th Ave Blvd SE'), reset.text);
+    assert(reset.text.includes('828-322-5050'), reset.text);
+    assert(!reset.text.includes('8121 Brownleigh Drive') && !reset.text.includes('919-782-3332'), reset.text);
     assert(reset.text.includes('Your sign-in name: sample-architects'), reset.text);
     assert(reset.text.includes('If you did not expect this reset, contact your shop at 828-322-5050.'), reset.text);
     assert(reset.text.includes('This message does not include the new password.'), reset.text);
@@ -477,6 +488,22 @@ async function main() {
   await seeded.close();
   console.log('PASS init settings, department keys, and columns');
   assertCustomerMessageCopy();
+  const shopLocations = require('../shopLocations');
+  const fallbackMailer = require('../mailer');
+  for (const locationId of [null, 999999]) {
+    const letterhead = await shopLocations.letterheadForLocationId(locationId);
+    assert(!letterhead.location_name, `location ${locationId} should not resolve to a shop`);
+    const rendered = fallbackMailer.renderOrderConfirmationEmail({
+      letterhead,
+      orderNumber: 'NO-SHOP',
+      dueDate: '2026-11-13',
+      deliveryMethod: 'Will Call',
+    });
+    assert(rendered.text.includes('8121 Brownleigh Drive'), `a missing shop should keep the company street: ${rendered.text}`);
+    assert(rendered.text.includes('919-782-3332'), `a missing shop should keep the company phone: ${rendered.text}`);
+    assert(!rendered.text.includes('725 11th Ave'), rendered.text);
+  }
+  console.log('PASS a missing or invalid shop falls back to the company address');
 
   process.env.MAIL_TEST_THROW = 'welcome';
   const userAdmin = require('../userAdmin');
@@ -775,7 +802,9 @@ async function main() {
     const hickoryBlob = mailBlob(hickorySettled.json.confirmation.preview);
     assert(hickoryBlob.includes('725 11th Ave Blvd SE'), `a Hickory order should show the Hickory street: ${hickoryBlob}`);
     assert(hickoryBlob.includes('Hickory, NC 28602'), hickoryBlob);
-    assert(hickoryBlob.includes('828-322-5050'), hickoryBlob);
+      assert(hickoryBlob.includes('828-322-5050'), hickoryBlob);
+    assert(!hickoryBlob.includes('8121 Brownleigh Drive'), `a Hickory order should not show the Raleigh street: ${hickoryBlob}`);
+    assert(!hickoryBlob.includes('919-782-3332'), `a Hickory order should not show the Raleigh phone: ${hickoryBlob}`);
     assert(hickoryBlob.includes(`Due: ${expectedDue}`), hickoryBlob);
     console.log('PASS order confirmation send-once and setting');
 
@@ -1164,6 +1193,8 @@ async function main() {
     assert(manualBlob.includes('725 11th Ave Blvd SE'), `a Hickory pickup should show the Hickory street: ${manualBlob}`);
     assert(manualBlob.includes('Hickory, NC 28602'), manualBlob);
     assert(manualBlob.includes('828-322-5050'), manualBlob);
+    assert(!manualBlob.includes('8121 Brownleigh Drive'), manualBlob);
+    assert(!manualBlob.includes('919-782-3332'), manualBlob);
     assert(manualBlob.includes(`Ready: ${when.formatCustomerWhen(weekdayAhead(), '14:30')}`), manualBlob);
     const hickorySees = await request({ method: 'GET', path: '/api/pickup-requests', token: hickoryLogin.token });
     assert((hickorySees.json.pickup_requests || []).some((row) => row.id === manual.json.pickup_request.id), 'Hickory staff should see the Hickory request');

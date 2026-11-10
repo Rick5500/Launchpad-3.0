@@ -239,12 +239,18 @@ function footerLines(letterhead) {
     if (lines.some((line) => line.trim().toLowerCase() === text.toLowerCase())) return;
     lines.push(text);
   }
+  const shopLines = ((letterhead && letterhead.location_address_lines) || [])
+    .map((line) => String(line || '').trim())
+    .filter(Boolean);
   if (letterhead && letterhead.name) push(letterhead.name);
   if (letterhead && letterhead.location_name) push(letterhead.location_name);
-  for (const line of (letterhead && letterhead.location_address_lines) || []) push(line);
+  for (const line of shopLines) push(line);
   if (letterhead && letterhead.location_phone) push(letterhead.location_phone);
-  for (const line of (letterhead && letterhead.address_lines) || []) push(line);
-  if (letterhead && letterhead.phone) push(letterhead.phone);
+  // The company street and phone are only the fallback when no shop is known.
+  if (!shopLines.length) {
+    for (const line of (letterhead && letterhead.address_lines) || []) push(line);
+    if (letterhead && letterhead.phone) push(letterhead.phone);
+  }
   return lines;
 }
 
