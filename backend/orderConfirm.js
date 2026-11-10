@@ -5,7 +5,7 @@ const { get, run } = require('./dbAsync');
 const mailer = require('./mailer');
 const mailOutbox = require('./mailOutbox');
 const systemSettings = require('./systemSettings');
-const { loadLetterhead, letterheadFromMap } = require('./shopProfile');
+const shopLocations = require('./shopLocations');
 
 function customerEmail(row) {
   const candidates = [row && row.email, row && row.account_email];
@@ -146,7 +146,7 @@ async function deliverOnce(orderId) {
 
     const row = await get(
       `SELECT o.id, o.order_number, o.email, o.due_date, o.due_time, o.delivery_method, o.ship_to,
-              u.email AS account_email
+              o.location_id, u.email AS account_email
        FROM orders o
        LEFT JOIN users u ON u.id = o.customer_id
        WHERE o.id = ?`,
@@ -163,12 +163,7 @@ async function deliverOnce(orderId) {
       return { status: 'skipped', email_sent: false };
     }
 
-    let letterhead;
-    try {
-      letterhead = await loadLetterhead();
-    } catch (err) {
-      letterhead = letterheadFromMap({});
-    }
+    const letterhead = await shopLocations.safeLetterheadForLocationId(row.location_id);
     const rendered = mailer.renderOrderConfirmationEmail({
       letterhead,
       orderNumber: row.order_number,

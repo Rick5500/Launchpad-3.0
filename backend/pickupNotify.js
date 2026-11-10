@@ -5,7 +5,7 @@ const { get, run } = require('./dbAsync');
 const mailer = require('./mailer');
 const sms = require('./sms');
 const customerNotices = require('./customerNotices');
-const { loadLetterhead, letterheadFromMap } = require('./shopProfile');
+const shopLocations = require('./shopLocations');
 
 function customerEmail(row) {
   const candidates = [row && row.email, row && row.account_email];
@@ -40,7 +40,7 @@ async function deliver(orderId, generation) {
   };
   try {
     const row = await get(
-      `SELECT o.id, o.order_number, o.email, o.status,
+      `SELECT o.id, o.order_number, o.email, o.status, o.location_id,
               u.email AS account_email, u.mobile_phone, u.sms_opt_in,
               loc.name AS location_name, loc.address AS location_address, loc.phone AS location_phone
        FROM orders o
@@ -51,12 +51,7 @@ async function deliver(orderId, generation) {
     );
     if (!row) return result;
 
-    let letterhead;
-    try {
-      letterhead = await loadLetterhead();
-    } catch (err) {
-      letterhead = letterheadFromMap({});
-    }
+    const letterhead = await shopLocations.safeLetterheadForLocationId(row.location_id);
     const link = mailer.orderPageLink(orderId);
     const rendered = mailer.renderPickupReadyEmail({
       letterhead,

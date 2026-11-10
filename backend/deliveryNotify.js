@@ -10,7 +10,7 @@ const sms = require('./sms');
 const customerNotices = require('./customerNotices');
 const { methodKey } = require('./deliveryRules');
 const { isReadyStageId, allWorkOrdersAtOrPastQuality } = require('./departmentStage');
-const { loadLetterhead, letterheadFromMap } = require('./shopProfile');
+const shopLocations = require('./shopLocations');
 
 function isAccentTruck(name) {
   return methodKey(name) === 'accent truck';
@@ -87,7 +87,7 @@ async function deliver(orderId, generation) {
   try {
     const row = await get(
       `SELECT o.id, o.order_number, o.email, o.delivery_method, o.ship_to, o.due_date, o.due_time,
-              u.email AS account_email, u.mobile_phone, u.sms_opt_in
+              o.location_id, u.email AS account_email, u.mobile_phone, u.sms_opt_in
        FROM orders o
        LEFT JOIN users u ON u.id = o.customer_id
        WHERE o.id = ?`,
@@ -95,12 +95,7 @@ async function deliver(orderId, generation) {
     );
     if (!row) return result;
 
-    let letterhead;
-    try {
-      letterhead = await loadLetterhead();
-    } catch (err) {
-      letterhead = letterheadFromMap({});
-    }
+    const letterhead = await shopLocations.safeLetterheadForLocationId(row.location_id);
     const rendered = mailer.renderReadyForDeliveryEmail({
       letterhead,
       orderNumber: row.order_number,
