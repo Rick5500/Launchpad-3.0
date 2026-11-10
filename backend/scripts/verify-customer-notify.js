@@ -459,6 +459,222 @@ function assertCustomerMessageCopy() {
   }
 }
 
+function assertPublicUrlLinks() {
+  const mailer = require('../mailer');
+  const previous = process.env.PUBLIC_APP_URL;
+  const letterhead = {
+    name: 'Accent Imaging, Inc.',
+    address_lines: ['8121 Brownleigh Drive', 'Raleigh, NC 27617'],
+    phone: '919-782-3332',
+    location_name: 'Hickory',
+    location_address_lines: ['725 11th Ave Blvd SE', 'Hickory, NC 28602'],
+    location_phone: '828-322-5050',
+  };
+  function assertOmitted(rendered, label) {
+    const blob = `${rendered.text}\n${rendered.html}`;
+    assert(!blob.includes('/orders/'), `${label} should not include a relative order path: ${blob.slice(0, 400)}`);
+    assert(!blob.includes('Or copy this link'), `${label} should not include a copy-this-link line`);
+    assert(!rendered.html.includes('<a '), `${label} should not include a link or button`);
+    assert(rendered.text.includes('725 11th Ave Blvd SE'), `${label} should keep the Hickory street`);
+    assert(rendered.text.includes('828-322-5050'), `${label} should keep the Hickory phone`);
+    assert(!rendered.text.includes('8121 Brownleigh Drive') && !rendered.text.includes('919-782-3332'), `${label} should stay shop-only`);
+    assert(rendered.subject && rendered.subject.indexOf('http') === -1, `${label} subject should stay unchanged`);
+  }
+  try {
+    for (const value of [undefined, '', '   ', 'not a url', 'ftp://files.example']) {
+      if (value == null) delete process.env.PUBLIC_APP_URL;
+      else process.env.PUBLIC_APP_URL = value;
+      assert(mailer.orderPageLink(3) === '/orders/3', `expected a relative order link, got ${mailer.orderPageLink(3)}`);
+      const pickup = mailer.renderPickupReadyEmail({
+        letterhead,
+        orderNumber: '20261110-034',
+        locationName: 'Hickory',
+        locationAddress: '725 11th Ave Blvd SE\nHickory, NC 28602',
+        locationPhone: '828-322-5050',
+        link: mailer.orderPageLink(3),
+      });
+      assertOmitted(pickup, `pickup (${value == null ? 'unset' : value})`);
+      assert(pickup.text.includes('ready for pickup at our Hickory location'), pickup.text);
+      assert(!pickup.text.includes('Sign in to view this order'), pickup.text);
+      assert(!pickup.html.includes('Sign in to view your order'), pickup.html);
+      assert(pickup.subject === 'Order 20261110-034 is ready for pickup', pickup.subject);
+
+      const confirm = mailer.renderOrderConfirmationEmail({
+        letterhead,
+        orderNumber: '20261110-034',
+        dueDate: '2026-11-13',
+        dueTime: '15:00',
+        deliveryMethod: 'Will Call',
+        link: mailer.orderPageLink(3),
+      });
+      assertOmitted(confirm, 'confirmation');
+      assert(confirm.text.includes('Due: Fri, Nov 13, 3:00 PM'), confirm.text);
+      assert(!confirm.text.includes('This link opens Launchpad'), confirm.text);
+      assert(confirm.subject === 'Order 20261110-034 received', confirm.subject);
+
+      const delivery = mailer.renderReadyForDeliveryEmail({
+        letterhead,
+        orderNumber: '20261110-036',
+        dueDate: '2026-11-13',
+        dueTime: '14:00',
+        deliveryMethod: 'Accent Truck',
+        link: mailer.orderPageLink(3),
+      });
+      assertOmitted(delivery, 'delivery');
+      assert(delivery.text.includes('Due: Fri, Nov 13, 2:00 PM'), delivery.text);
+      assert(!delivery.text.includes('Sign in to view this order'), delivery.text);
+
+      const requestMail = mailer.renderPickupRequestEmail({
+        letterhead,
+        contactName: 'Jane Sample',
+        readyDate: '2026-11-11',
+        readyTime: '10:00',
+        address: '100 Sample Street',
+        locationName: 'Hickory',
+        link: mailer.appLink('/pickups'),
+      });
+      assert(!`${requestMail.text}\n${requestMail.html}`.includes('/pickups'), requestMail.text);
+      assert(!requestMail.html.includes('<a '), requestMail.html);
+      assert(requestMail.text.includes('Ready: Wed, Nov 11, 10:00 AM'), requestMail.text);
+      assert(requestMail.text.includes('Sign in if you need to review or cancel this request.'), requestMail.text);
+      assert(requestMail.subject === 'We received your pickup request', requestMail.subject);
+
+      const files = mailer.renderShareEmail({
+        letterhead,
+        orderNumber: '20261110-034',
+        message: 'Your scanned drawings are ready.',
+        fileNames: ['Sample-Drawings.pdf'],
+        link: mailer.orderFilesLink(3),
+      });
+      assertOmitted(files, 'order files');
+      assert(files.text.includes('Your scanned drawings are ready.'), files.text);
+      assert(files.text.includes('Sample-Drawings.pdf'), files.text);
+      assert(!files.text.includes('This link opens Launchpad'), files.text);
+
+      const transfer = mailer.renderTransferEmail({
+        letterhead,
+        subject: 'Final files for Sample Lobby Signage',
+        message: 'Here are the print-ready files.',
+        fileNames: ['Sample-Lobby-Final.pdf'],
+        link: mailer.transferFilesLink(55),
+      });
+      assert(!`${transfer.text}\n${transfer.html}`.includes('/files/'), transfer.text);
+      assert(!transfer.html.includes('<a '), transfer.html);
+      assert(transfer.text.includes('Here are the print-ready files.'), transfer.text);
+      assert(transfer.subject === 'Final files for Sample Lobby Signage', transfer.subject);
+
+      const quote = mailer.renderQuoteEmail({
+        letterhead,
+        projectName: 'Sample Lobby Signage',
+        price: '$412.50',
+        validUntil: '2026-12-10',
+        lineItems: [],
+        link: mailer.quoteLink(77),
+      });
+      assertOmitted(quote, 'quote');
+      assert(quote.text.includes('Valid until: Thu, Dec 10'), quote.text);
+      assert(!quote.text.includes('This link opens Launchpad'), quote.text);
+      assert(quote.subject === 'Quote for Sample Lobby Signage', quote.subject);
+
+      const proof = mailer.renderProofEmail({
+        letterhead,
+        orderNumber: '20261110-034',
+        version: 2,
+        message: 'Here is the revised proof.',
+        fileNames: ['Sample-Lobby-Sign-v2.pdf'],
+        link: mailer.orderProofLink(3),
+        workOrderNumber: '20261110-034-A',
+      });
+      assertOmitted(proof, 'proof');
+      assert(proof.text.includes('Here is the revised proof.'), proof.text);
+      assert(proof.subject === 'Proof v2 for order 20261110-034', proof.subject);
+
+      const welcome = mailer.renderWelcomeEmail({
+        letterhead,
+        displayName: 'Jane Sample',
+        username: 'sam@signup.example',
+        link: mailer.signInLink(),
+      });
+      assert(!`${welcome.text}\n${welcome.html}`.includes('/login'), welcome.text);
+      assert(!welcome.html.includes('<a '), welcome.html);
+      assert(welcome.text.includes('Your sign-in name: sam@signup.example'), welcome.text);
+      assert(welcome.subject === 'Welcome to Launchpad', welcome.subject);
+
+      const reset = mailer.renderPasswordResetEmail({
+        letterhead,
+        displayName: 'Jane Sample',
+        username: 'sample-architects',
+        link: mailer.signInLink(),
+      });
+      assert(!`${reset.text}\n${reset.html}`.includes('/login'), reset.text);
+      assert(!reset.html.includes('<a '), reset.html);
+      assert(reset.text.includes('Your sign-in name: sample-architects'), reset.text);
+      assert(reset.text.includes('If you did not expect this reset, contact your shop at 828-322-5050.'), reset.text);
+      assert(reset.subject === 'Your Launchpad password was reset', reset.subject);
+
+      const setPassword = mailer.renderSetPasswordEmail({
+        letterhead,
+        displayName: 'Jane Sample',
+        username: 'sample-architects',
+        link: mailer.setPasswordLink('SAMPLE-TOKEN-NOT-REAL'),
+      });
+      assert(!`${setPassword.text}\n${setPassword.html}`.includes('set-password'), setPassword.text);
+      assert(!`${setPassword.text}\n${setPassword.html}`.includes('SAMPLE-TOKEN-NOT-REAL'), setPassword.text);
+      assert(!setPassword.html.includes('<a '), setPassword.html);
+      assert(setPassword.text.includes('Your sign-in name: sample-architects'), setPassword.text);
+      assert(setPassword.text.includes('does not include a password'), setPassword.text);
+      assert(setPassword.text.includes('The link expires after 7 days.'), setPassword.text);
+      assert(setPassword.subject === 'Set your Launchpad password', setPassword.subject);
+    }
+
+    process.env.PUBLIC_APP_URL = 'https://launchpad.example';
+    const linkedPickup = mailer.renderPickupReadyEmail({
+      letterhead,
+      orderNumber: '20261110-034',
+      locationName: 'Hickory',
+      locationAddress: '725 11th Ave Blvd SE\nHickory, NC 28602',
+      locationPhone: '828-322-5050',
+      link: mailer.orderPageLink(3),
+    });
+    const pickupUrl = mailer.orderPageLink(3);
+    assert(pickupUrl.startsWith('https://launchpad.example/login?next='), pickupUrl);
+    assert(linkedPickup.html.includes(pickupUrl), linkedPickup.html);
+    assert(linkedPickup.html.includes('Sign in to view your order'), linkedPickup.html);
+    assert(linkedPickup.html.includes('Or copy this link'), linkedPickup.html);
+    assert(linkedPickup.text.includes('Sign in to view this order:'), linkedPickup.text);
+    assert(linkedPickup.text.includes(pickupUrl), linkedPickup.text);
+    assert(linkedPickup.text.includes('725 11th Ave Blvd SE') && !linkedPickup.text.includes('8121 Brownleigh Drive'), linkedPickup.text);
+
+    const linkedConfirm = mailer.renderOrderConfirmationEmail({
+      letterhead,
+      orderNumber: '20261110-034',
+      dueDate: '2026-11-13',
+      dueTime: '15:00',
+      deliveryMethod: 'Will Call',
+      link: pickupUrl,
+    });
+    assert(linkedConfirm.text.includes('This link opens Launchpad. You need to sign in.'), linkedConfirm.text);
+    assert(linkedConfirm.html.includes('Or copy this link') && linkedConfirm.html.includes(pickupUrl), linkedConfirm.html);
+    assert(linkedConfirm.text.includes('Due: Fri, Nov 13, 3:00 PM'), linkedConfirm.text);
+
+    const linkedSet = mailer.renderSetPasswordEmail({
+      letterhead,
+      displayName: 'Jane Sample',
+      username: 'sample-architects',
+      link: mailer.setPasswordLink('SAMPLE-TOKEN-NOT-REAL'),
+    });
+    const setUrl = 'https://launchpad.example/set-password?token=SAMPLE-TOKEN-NOT-REAL';
+    assert(linkedSet.html.includes(setUrl), linkedSet.html);
+    assert(linkedSet.text.includes(setUrl), linkedSet.text);
+    assert(linkedSet.html.includes('Set your password'), linkedSet.html);
+    assert(linkedSet.html.includes('Or copy this link'), linkedSet.html);
+    console.log('PASS customer emails omit relative links and keep them when a public URL is set');
+  } finally {
+    if (previous == null) delete process.env.PUBLIC_APP_URL;
+    else process.env.PUBLIC_APP_URL = previous;
+  }
+}
+
 async function main() {
   fs.mkdirSync(path.join(tmp, 'uploads'), { recursive: true });
   const firstInit = await spawnNode(path.join(backendDir, 'init_db.js'), baseEnv());
@@ -488,6 +704,7 @@ async function main() {
   await seeded.close();
   console.log('PASS init settings, department keys, and columns');
   assertCustomerMessageCopy();
+  assertPublicUrlLinks();
   const shopLocations = require('../shopLocations');
   const fallbackMailer = require('../mailer');
   for (const locationId of [null, 999999]) {
