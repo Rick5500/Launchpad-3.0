@@ -793,7 +793,7 @@ async function getTransfer(user, id) {
 
 async function loadCustomerAccount(customerId) {
   const customer = await get(
-    `SELECT id, role, email, display_name, company, username, COALESCE(is_active, 1) AS is_active
+    `SELECT id, role, email, display_name, company, username, location_id, COALESCE(is_active, 1) AS is_active
      FROM users WHERE id = ?`,
     [customerId]
   );
@@ -888,7 +888,7 @@ async function createTransfer(user, body, files) {
       });
     });
     if (emailPlan === 'pending') {
-      const letterhead = await loadLetterheadSafe();
+      const letterhead = await loadLetterheadSafe(customer.location_id);
       const rendered = mailer.renderTransferEmail({
         letterhead,
         subject: subject.value,

@@ -6,6 +6,7 @@ const nodemailer = require('nodemailer');
 const { httpError } = require('./httpError');
 const { createFixedWindowLimiter } = require('./rateLimit');
 const { loadLetterhead } = require('./shopProfile');
+const { formatCustomerWhen } = require('./customerWhen');
 const emailLoop = require('./emailLoop');
 const lifecycle = require('./lifecycle');
 const mailOutbox = require('./mailOutbox');
@@ -442,12 +443,13 @@ function renderQuoteEmail({ letterhead, projectName, price, notes, validUntil, l
     return parts.join(' · ');
   }).filter(Boolean);
   const notesText = notes ? String(notes) : '';
+  const until = formatCustomerWhen(validUntil);
   const text = [
     name,
     '',
     `Your quote for ${project} is ready.`,
     price ? `Total: ${price}` : '',
-    validUntil ? `Valid until: ${validUntil}` : '',
+    until ? `Valid until: ${until}` : '',
     notesText ? `\n${notesText}\n` : '',
     lineText.length ? 'Line items:' : '',
     ...lineText.map((line) => `- ${line}`),
@@ -476,7 +478,7 @@ function renderQuoteEmail({ letterhead, projectName, price, notes, validUntil, l
         <tr><td style="padding:24px;">
           <h1 style="margin:0 0 12px;font-size:20px;color:#0A2F6E;">Quote for ${escapeHtml(project)}</h1>
           ${price ? `<p style="margin:0 0 8px;font-size:18px;font-weight:700;color:#0A2F6E;">Total: ${escapeHtml(price)}</p>` : ''}
-          ${validUntil ? `<p style="margin:0 0 16px;">Valid until ${escapeHtml(validUntil)}</p>` : ''}
+          ${until ? `<p style="margin:0 0 16px;">Valid until ${escapeHtml(until)}</p>` : ''}
           ${notesHtml}
           ${itemsHtml}
           <p style="margin:0 0 16px;"><a href="${href}" style="display:inline-block;background:#F58220;color:#111111;text-decoration:none;font-weight:700;padding:10px 16px;">Sign in to review this quote</a></p>
@@ -779,7 +781,41 @@ function renderCustomerLetter({ letterhead, subject, heading, lines, link, linkL
   return { subject: safeSubject(subject || heading), text, html };
 }
 
-function renderSetPasswordEmail({ letterhead, displayName, link }) {
+function signInNameLine(username) {
+  const name = String(username || '').replace(/[\r\n]+/g, ' ').trim();
+  if (!name) return '';
+  return `Your sign-in name: ${name}`;
+}
+
+function setPasswordExpirySentence() {
+  const hours = require('./passwordSet').lifetimeHours();
+  let span;
+  if (hours % 24 === 0) {
+    const days = hours / 24;
+    span = days === 1 ? '1 day' : `${days} days`;
+  } else {
+    span = hours === 1 ? '1 hour' : `${hours} hours`;
+  }
+  return `The link expires after ${span}. If it expires, ask your shop to send a new one.`;
+}
+
+function shopContactBits(letterhead) {
+  const phone = String((letterhead && (letterhead.location_phone || letterhead.phone)) || '').replace(/[\r\n]+/g, ' ').trim();
+  const email = String((letterhead && (letterhead.location_email || letterhead.email)) || '').replace(/[\r\n]+/g, ' ').trim();
+  const bits = [];
+  if (phone) bits.push(phone);
+  if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) bits.push(email);
+  return bits;
+}
+
+function unexpectedResetLine(letterhead) {
+  const bits = shopContactBits(letterhead);
+  if (!bits.length) return 'If you did not expect this reset, contact your shop.';
+  if (bits.length === 1) return `If you did not expect this reset, contact your shop at ${bits[0]}.`;
+  return `If you did not expect this reset, contact your shop at ${bits[0]} or ${bits[1]}.`;
+}
+
+function renderSetPasswordEmail({ letterhead, displayName, username, link }) {
   const who = displayName ? ` ${displayName}` : '';
   return renderCustomerLetter({
     letterhead,
@@ -787,15 +823,16 @@ function renderSetPasswordEmail({ letterhead, displayName, link }) {
     heading: 'Your Launchpad account is ready',
     lines: [
       `Hello${who},`,
+      signInNameLine(username),
       'An account was created for you at Launchpad. Choose a password to sign in. This message does not include a password.',
-      'The link expires after a few days. If it expires, ask your shop to send a new one.',
-    ],
+      setPasswordExpirySentence(),
+    ].filter((line) => line !== ''),
     link,
     linkLabel: 'Set your password',
   });
 }
 
-function renderWelcomeEmail({ letterhead, displayName, link }) {
+function renderWelcomeEmail({ letterhead, displayName, username, link }) {
   const who = displayName ? ` ${displayName}` : '';
   return renderCustomerLetter({
     letterhead,
@@ -803,8 +840,26 @@ function renderWelcomeEmail({ letterhead, displayName, link }) {
     heading: 'Welcome to Launchpad',
     lines: [
       `Hello${who},`,
+      signInNameLine(username),
       'Your account is ready. Sign in to place an order, request a quote, or check on work we are producing for you.',
-    ],
+    ].filter((line) => line !== ''),
+    link,
+    linkLabel: 'Sign in',
+  });
+}
+
+function renderPasswordResetEmail({ letterhead, displayName, username, link }) {
+  const who = displayName ? ` ${displayName}` : '';
+  return renderCustomerLetter({
+    letterhead,
+    subject: 'Your Launchpad password was reset',
+    heading: 'Your Launchpad password was reset',
+    lines: [
+      who ? `Hello${who},` : '',
+      'The password for your Launchpad account was reset. This message does not include the new password.',
+      signInNameLine(username),
+      unexpectedResetLine(letterhead),
+    ].filter((line) => line !== ''),
     link,
     linkLabel: 'Sign in',
   });
@@ -812,7 +867,7 @@ function renderWelcomeEmail({ letterhead, displayName, link }) {
 
 function renderOrderConfirmationEmail({ letterhead, orderNumber, dueDate, dueTime, deliveryMethod, shipTo, link }) {
   const orderLabel = orderNumber || 'your order';
-  const due = [dueDate, dueTime].filter(Boolean).join(' ');
+  const due = formatCustomerWhen(dueDate, dueTime);
   const lines = [
     `We received order ${orderLabel}.`,
     due ? `Due: ${due}` : '',
@@ -832,7 +887,7 @@ function renderOrderConfirmationEmail({ letterhead, orderNumber, dueDate, dueTim
 
 function renderReadyForDeliveryEmail({ letterhead, orderNumber, dueDate, dueTime, deliveryMethod, shipTo, link }) {
   const orderLabel = orderNumber || 'your order';
-  const due = [dueDate, dueTime].filter(Boolean).join(' ');
+  const due = formatCustomerWhen(dueDate, dueTime);
   const lines = [
     `Order ${orderLabel} is ready for delivery.`,
     due ? `Due: ${due}` : '',
@@ -851,7 +906,7 @@ function renderReadyForDeliveryEmail({ letterhead, orderNumber, dueDate, dueTime
 }
 
 function renderPickupRequestEmail({ letterhead, contactName, readyDate, readyTime, address, locationName, orderNumber, notes, link }) {
-  const when = [readyDate, readyTime].filter(Boolean).join(' ');
+  const when = formatCustomerWhen(readyDate, readyTime);
   const place = locationName ? `We will send a vehicle from our ${locationName} shop.` : 'We will send a vehicle to pick up your originals.';
   const lines = [
     contactName ? `Hello ${contactName},` : 'Hello,',
@@ -1050,6 +1105,7 @@ module.exports = {
   renderPickupReadyEmail,
   renderSetPasswordEmail,
   renderWelcomeEmail,
+  renderPasswordResetEmail,
   renderOrderConfirmationEmail,
   renderReadyForDeliveryEmail,
   renderPickupRequestEmail,

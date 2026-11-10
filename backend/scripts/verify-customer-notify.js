@@ -261,6 +261,193 @@ function dryRuns(logs) {
   return (logs.match(/SMS dry-run:/g) || []).length;
 }
 
+function assertCustomerMessageCopy() {
+  const saved = {
+    DELIVERY_TIMEZONE: process.env.DELIVERY_TIMEZONE,
+    PUBLIC_APP_URL: process.env.PUBLIC_APP_URL,
+    PASSWORD_SET_HOURS: process.env.PASSWORD_SET_HOURS,
+  };
+  function restore() {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+  try {
+    process.env.DELIVERY_TIMEZONE = 'America/New_York';
+    process.env.PUBLIC_APP_URL = 'https://launchpad.example';
+    delete process.env.PASSWORD_SET_HOURS;
+    const when = require('../customerWhen');
+    const mailer = require('../mailer');
+    const sms = require('../sms');
+    assert(when.formatCustomerWhen('2026-11-13', '15:00') === 'Fri, Nov 13, 3:00 PM', when.formatCustomerWhen('2026-11-13', '15:00'));
+    assert(when.formatCustomerWhen('2026-11-13') === 'Fri, Nov 13', when.formatCustomerWhen('2026-11-13'));
+    assert(when.formatCustomerWhen('2026-11-13T20:00:00Z') === 'Fri, Nov 13, 3:00 PM', when.formatCustomerWhen('2026-11-13T20:00:00Z'));
+    assert(when.formatCustomerWhen('2026-07-13T19:00:00Z') === 'Mon, Jul 13, 3:00 PM', when.formatCustomerWhen('2026-07-13T19:00:00Z'));
+    process.env.DELIVERY_TIMEZONE = 'UTC';
+    assert(when.formatCustomerWhen('2026-11-13', '15:00') === 'Fri, Nov 13, 3:00 PM', 'a shop wall-clock time stays as entered');
+    assert(when.formatCustomerWhen('2026-11-13T20:00:00Z') === 'Fri, Nov 13, 8:00 PM', when.formatCustomerWhen('2026-11-13T20:00:00Z'));
+    process.env.DELIVERY_TIMEZONE = 'America/New_York';
+
+    const company = {
+      name: 'Accent Imaging, Inc.',
+      address_lines: ['8121 Brownleigh Drive', 'Raleigh, NC 27617'],
+      phone: '919-782-3332',
+    };
+    const hickoryHead = {
+      ...company,
+      location_name: 'Hickory',
+      location_address_lines: ['725 11th Ave Blvd SE', 'Hickory, NC 28602'],
+      location_phone: '828-322-5050',
+    };
+    const order = mailer.renderOrderConfirmationEmail({
+      letterhead: hickoryHead,
+      orderNumber: '20261110-034',
+      dueDate: '2026-11-13',
+      dueTime: '15:00',
+      deliveryMethod: 'Will Call',
+      link: 'https://launchpad.example/login?next=%2Forders%2F1',
+    });
+    assert(order.subject === 'Order 20261110-034 received', order.subject);
+    assert(order.text.includes('Due: Fri, Nov 13, 3:00 PM'), order.text);
+    assert(!order.text.includes('2026-11-13'), order.text);
+    assert(order.text.includes('725 11th Ave Blvd SE') && order.html.includes('Hickory, NC 28602'), order.text);
+    assert(order.html.includes('828-322-5050'), order.html);
+
+    const delivery = mailer.renderReadyForDeliveryEmail({
+      letterhead: hickoryHead,
+      orderNumber: '20261110-036',
+      dueDate: '2026-11-13',
+      dueTime: '14:00',
+      deliveryMethod: 'Accent Truck',
+      link: 'https://launchpad.example/login',
+    });
+    assert(delivery.subject === 'Order 20261110-036 is ready for delivery', delivery.subject);
+    assert(delivery.text.includes('Due: Fri, Nov 13, 2:00 PM'), delivery.text);
+
+    const pickup = mailer.renderPickupRequestEmail({
+      letterhead: hickoryHead,
+      contactName: 'Jane Sample',
+      readyDate: '2026-11-11',
+      readyTime: '10:00',
+      address: '100 Sample Street',
+      locationName: 'Hickory',
+      link: 'https://launchpad.example/login',
+    });
+    assert(pickup.subject === 'We received your pickup request', pickup.subject);
+    assert(pickup.text.includes('Ready: Wed, Nov 11, 10:00 AM'), pickup.text);
+
+    const quote = mailer.renderQuoteEmail({
+      letterhead: hickoryHead,
+      projectName: 'Sample Lobby Signage',
+      price: '$412.50',
+      validUntil: '2026-12-10',
+      lineItems: [],
+      link: 'https://launchpad.example/login',
+    });
+    assert(quote.subject === 'Quote for Sample Lobby Signage', quote.subject);
+    assert(quote.text.includes('Valid until: Thu, Dec 10'), quote.text);
+    assert(!quote.text.includes('2026-12-10'), quote.text);
+
+    const noTime = mailer.renderOrderConfirmationEmail({
+      letterhead: company,
+      orderNumber: 'D-1',
+      dueDate: '2026-11-13',
+      deliveryMethod: 'Will Call',
+    });
+    assert(noTime.text.includes('Due: Fri, Nov 13'), noTime.text);
+    assert(!/Due: Fri, Nov 13,/.test(noTime.text), noTime.text);
+
+    const setPassword = mailer.renderSetPasswordEmail({
+      letterhead: company,
+      displayName: 'Jane Sample',
+      username: 'sample-architects',
+      link: 'https://launchpad.example/set-password?token=abc',
+    });
+    assert(setPassword.subject === 'Set your Launchpad password', setPassword.subject);
+    assert(setPassword.text.includes('Your sign-in name: sample-architects'), setPassword.text);
+    assert(setPassword.html.includes('Your sign-in name: sample-architects'), setPassword.html);
+    assert(setPassword.text.includes('The link expires after 7 days.'), setPassword.text);
+    assert(!setPassword.text.includes('few days'), setPassword.text);
+
+    process.env.PASSWORD_SET_HOURS = '36';
+    const shortLink = mailer.renderSetPasswordEmail({
+      letterhead: company,
+      username: 'sample-architects',
+      link: 'https://launchpad.example/set-password?token=abc',
+    });
+    assert(shortLink.text.includes('The link expires after 36 hours.'), shortLink.text);
+    delete process.env.PASSWORD_SET_HOURS;
+
+    const welcome = mailer.renderWelcomeEmail({
+      letterhead: company,
+      displayName: 'Jane Sample',
+      username: 'sam@signup.example',
+      link: 'https://launchpad.example/login',
+    });
+    assert(welcome.subject === 'Welcome to Launchpad', welcome.subject);
+    assert(welcome.text.includes('Your sign-in name: sam@signup.example'), welcome.text);
+    assert(welcome.html.includes('Your sign-in name: sam@signup.example'), welcome.html);
+
+    const reset = mailer.renderPasswordResetEmail({
+      letterhead: hickoryHead,
+      displayName: 'Jane Sample',
+      username: 'sample-architects',
+      link: 'https://launchpad.example/login',
+    });
+    assert(reset.subject === 'Your Launchpad password was reset', reset.subject);
+    assert(reset.html.includes('<!DOCTYPE html>'), 'the reset email should use the branded letter');
+    assert(reset.html.includes('https://launchpad.example/brand/logo.png'), reset.html);
+    assert(reset.html.includes('A service of Accent Imaging and Accent Corporate Graphics'), reset.html);
+    assert(reset.text.includes('A service of Accent Imaging and Accent Corporate Graphics'), reset.text);
+    assert(reset.text.includes('Accent Imaging, Inc.'), reset.text);
+    assert(reset.text.includes('725 11th Ave Blvd SE'), reset.text);
+    assert(reset.text.includes('Your sign-in name: sample-architects'), reset.text);
+    assert(reset.text.includes('If you did not expect this reset, contact your shop at 828-322-5050.'), reset.text);
+    assert(reset.text.includes('This message does not include the new password.'), reset.text);
+
+    const resetBare = mailer.renderPasswordResetEmail({
+      letterhead: { name: 'Accent Imaging, Inc.', address_lines: [], phone: '' },
+      username: 'sample-architects',
+      link: 'https://launchpad.example/login',
+    });
+    assert(resetBare.text.includes('If you did not expect this reset, contact your shop.'), resetBare.text);
+    assert(!resetBare.text.includes('contact your shop at'), resetBare.text);
+
+    const resetBoth = mailer.renderPasswordResetEmail({
+      letterhead: { name: 'Accent Imaging, Inc.', phone: '919-782-3332', email: 'raleigh@accent.example' },
+      username: 'sample-architects',
+      link: 'https://launchpad.example/login',
+    });
+    assert(resetBoth.text.includes('contact your shop at 919-782-3332 or raleigh@accent.example.'), resetBoth.text);
+
+    const staffRequest = mailer.renderQuoteRequestEmail({
+      letterhead: company,
+      customerName: 'Pat',
+      projectName: 'Banner',
+      neededBy: '2026-12-01',
+      link: 'https://launchpad.example/login',
+    });
+    assert(staffRequest.text.includes('Needed by 2026-12-01.'), 'staff mail keeps the stored date');
+
+    const pickupSms = sms.pickupSmsBody({
+      orderNumber: '123',
+      locationName: 'Raleigh',
+      locationAddress: '8121 Brownleigh Drive\nRaleigh, NC 27617',
+      locationPhone: '919-782-3332',
+    });
+    assert(
+      pickupSms === 'Accent Corporate Graphics: Order #123 is ready for pickup at our Raleigh location, 8121 Brownleigh Drive, Raleigh, NC 27617. Questions? 919-782-3332 Reply STOP to opt out.',
+      pickupSms
+    );
+    const deliverySms = sms.deliverySmsBody({ orderNumber: '20261110-036' });
+    assert(deliverySms === 'Accent Corporate Graphics: Order #20261110-036 is ready for delivery. Reply STOP to opt out.', deliverySms);
+    console.log('PASS customer email dates, sign-in name, shop address, and reset layout');
+  } finally {
+    restore();
+  }
+}
+
 async function main() {
   fs.mkdirSync(path.join(tmp, 'uploads'), { recursive: true });
   const firstInit = await spawnNode(path.join(backendDir, 'init_db.js'), baseEnv());
@@ -289,6 +476,7 @@ async function main() {
   assert(confirmColumn && deliveryColumn && awaitingColumn && productionColumn && pickupTable && tokenTable, 'mail, pickup, and originals-hold columns should be migrated');
   await seeded.close();
   console.log('PASS init settings, department keys, and columns');
+  assertCustomerMessageCopy();
 
   process.env.MAIL_TEST_THROW = 'welcome';
   const userAdmin = require('../userAdmin');
@@ -305,6 +493,31 @@ async function main() {
   assert(!failedWelcome.welcome_email.preview, 'a forced failure should not include a message');
   delete process.env.MAIL_TEST_THROW;
   console.log('PASS mail failure does not block account creation');
+
+  const shopDb = openDb(dbFile);
+  const hickoryShop = await shopDb.get(`SELECT id FROM locations WHERE name = 'Hickory'`);
+  assert(hickoryShop, 'Hickory should be seeded');
+  await shopDb.run(`UPDATE users SET location_id = ? WHERE id = ?`, [hickoryShop.id, failedWelcome.id]);
+  await shopDb.close();
+  process.env.SMTP_HOST = '127.0.0.1';
+  process.env.SMTP_PORT = '2525';
+  process.env.SMTP_FROM = 'orders@example.com';
+  process.env.MAIL_TRANSPORT = 'json';
+  process.env.PUBLIC_APP_URL = 'https://launchpad.example';
+  const accountMail = require('../accountMail');
+  const resetNotice = await accountMail.sendPasswordResetNotice({ id: failedWelcome.id });
+  assert(resetNotice.status === 'sent', JSON.stringify(resetNotice));
+  const resetPreview = resetNotice.preview;
+  assert(resetPreview && resetPreview.html && resetPreview.text, 'the reset email should be captured');
+  assert(resetPreview.subject === 'Your Launchpad password was reset', resetPreview.subject);
+  assert(resetPreview.html.includes('https://launchpad.example/brand/logo.png'), 'the reset email should include the logo');
+  assert(resetPreview.html.includes('A service of Accent Imaging and Accent Corporate Graphics'), 'the reset email should include the footer credit');
+  assert(resetPreview.text.includes('Accent Imaging, Inc.'), 'the reset email should include the letterhead');
+  assert(resetPreview.text.includes('725 11th Ave Blvd SE'), `the reset email should use the Hickory shop: ${resetPreview.text}`);
+  assert(resetPreview.text.includes('Your sign-in name: mailfail'), resetPreview.text);
+  assert(resetPreview.text.includes('If you did not expect this reset, contact your shop at 828-322-5050.'), resetPreview.text);
+  assert(!resetPreview.text.includes('MailFailPass123'), 'the reset email must not include a password');
+  console.log('PASS password reset email uses the branded layout');
 
   const server = startServer(baseEnv());
   await server.ready;
@@ -366,6 +579,9 @@ async function main() {
     const generatedBlob = mailBlob(generated.json.welcome_email.preview);
     assert(!generatedBlob.includes(generated.json.password), 'the welcome email must not contain the generated password');
     assert(generatedBlob.includes('does not include a password'), 'the welcome should say the password is not in the message');
+    assert(generatedBlob.includes('Your sign-in name: generatedlogin'), generatedBlob);
+    assert(generatedBlob.includes('The link expires after 7 days.'), generatedBlob);
+    assert(!generatedBlob.includes('few days'), generatedBlob);
     const generatedToken = tokenFrom(generated.json.welcome_email.preview);
 
     const supplied = await request({
@@ -456,6 +672,7 @@ async function main() {
     assert(signupBlob.includes('https://launchpad.example/login'), `self sign-up should link to the public sign-in page: ${signupBlob.slice(0, 400)}`);
     assert(!signupBlob.includes('set-password'), 'self sign-up should not send a set-password link');
     assert(!signupBlob.includes(customerPassword), 'self sign-up mail must not contain the password');
+    assert(signupBlob.includes('Your sign-in name: sam@signup.example'), signupBlob);
     console.log('PASS self sign-up welcome');
 
     const options = await request({ method: 'GET', path: '/api/orders/options', token: admin.token });
@@ -521,7 +738,10 @@ async function main() {
     assertCustomerMail(confirmedSettled.json.confirmation.preview, 'order confirmation');
     const confirmBlob = mailBlob(confirmedSettled.json.confirmation.preview);
     assert(confirmBlob.includes(confirmed.json.order_number), 'confirmation should include the order number');
-    assert(confirmBlob.includes(weekdayAhead()), 'confirmation should include the due date');
+    const when = require('../customerWhen');
+    const expectedDue = when.formatCustomerWhen(weekdayAhead(), '10:00');
+    assert(confirmBlob.includes(`Due: ${expectedDue}`), `confirmation should show a friendly due time, got ${confirmBlob}`);
+    assert(!confirmBlob.includes(weekdayAhead()), 'confirmation should not show the stored due date');
     assert(confirmBlob.includes('Accent Truck'), 'confirmation should include the delivery method');
     assert(confirmBlob.includes('10 Dock Street'), 'confirmation should include the ship-to address');
     assert(
@@ -535,6 +755,28 @@ async function main() {
     assert(secondSend.skipped === true, `a second confirmation should not send: ${JSON.stringify(secondSend)}`);
     const stampedAgain = await db.get(`SELECT confirmation_email_sent_at FROM orders WHERE id = ?`, [confirmed.json.order.id]);
     assert(stampedAgain.confirmation_email_sent_at === stamped.confirmation_email_sent_at, 'the send-once timestamp should stay put');
+
+    const hickoryOrder = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: admin.token,
+      json: orderBody({
+        customer_id: customerRecord.json.id,
+        location_id: hickory.id,
+        project_name: 'Hickory confirmed job',
+        email: 'hickory-order@notify.example',
+        service_ids: [large.id],
+        line_items: [{ description: 'Hickory set', quantity: '1', service_id: large.id }],
+      }),
+    });
+    assert(hickoryOrder.status === 201, hickoryOrder.text);
+    const hickorySettled = await waitForConfirmation(admin.token, hickoryOrder.json.order.id);
+    assert(hickorySettled.json.confirmation.email_status === 'sent', hickorySettled.text);
+    const hickoryBlob = mailBlob(hickorySettled.json.confirmation.preview);
+    assert(hickoryBlob.includes('725 11th Ave Blvd SE'), `a Hickory order should show the Hickory street: ${hickoryBlob}`);
+    assert(hickoryBlob.includes('Hickory, NC 28602'), hickoryBlob);
+    assert(hickoryBlob.includes('828-322-5050'), hickoryBlob);
+    assert(hickoryBlob.includes(`Due: ${expectedDue}`), hickoryBlob);
     console.log('PASS order confirmation send-once and setting');
 
     const opted = await login('customernora', customerPassword);
@@ -610,6 +852,7 @@ async function main() {
     assert(readyBlob.includes(truck.order_number), 'delivery mail should include the order number');
     assert(readyBlob.includes('Accent Truck'), 'delivery mail should include the delivery method');
     assert(readyBlob.includes('10 Dock Street'), 'delivery mail should include the ship-to address');
+    assert(readyBlob.includes(`Due: ${when.formatCustomerWhen(weekdayAhead(), '10:00')}`), `delivery mail should show a friendly due time: ${readyBlob.slice(0, 500)}`);
     const smsLogs = server.logs();
     assert(dryRuns(smsLogs) === beforeSms + 1, 'one dry-run text should be logged');
     assert(smsLogs.includes(STOP_LINE), 'the text should include the opt-out line');
@@ -724,6 +967,7 @@ async function main() {
     assert(pickupMail.json.email_status === 'sent', JSON.stringify(pickupMail.json));
     assertCustomerMail(pickupMail.json.preview, 'automatic pickup confirmation');
     assert(mailBlob(pickupMail.json.preview).includes('pick up'), 'pickup mail should describe the pickup');
+    assert(mailBlob(pickupMail.json.preview).includes(`Ready: ${when.formatCustomerWhen(weekdayAhead(), '11:00')}`), 'pickup mail should show a friendly ready time');
     const autoRow = await db.get(`SELECT status, source, location_id, customer_id FROM pickup_requests WHERE id = ?`, [originals.json.pickup_request.id]);
     assert(autoRow.status === 'new' && autoRow.source === 'order', JSON.stringify(autoRow));
     assert(Number(autoRow.customer_id) === Number(customerRecord.json.id), 'the automatic pickup belongs to the customer');
@@ -916,6 +1160,11 @@ async function main() {
     assert(manual.json.pickup_request.order_number === confirmed.json.order_number, 'the related order number should be stored');
     assert(manual.json.email.status === 'sent', JSON.stringify(manual.json.email));
     assertCustomerMail(manual.json.email.preview, 'customer pickup confirmation');
+    const manualBlob = mailBlob(manual.json.email.preview);
+    assert(manualBlob.includes('725 11th Ave Blvd SE'), `a Hickory pickup should show the Hickory street: ${manualBlob}`);
+    assert(manualBlob.includes('Hickory, NC 28602'), manualBlob);
+    assert(manualBlob.includes('828-322-5050'), manualBlob);
+    assert(manualBlob.includes(`Ready: ${when.formatCustomerWhen(weekdayAhead(), '14:30')}`), manualBlob);
     const hickorySees = await request({ method: 'GET', path: '/api/pickup-requests', token: hickoryLogin.token });
     assert((hickorySees.json.pickup_requests || []).some((row) => row.id === manual.json.pickup_request.id), 'Hickory staff should see the Hickory request');
     const raleighMisses = await request({ method: 'GET', path: '/api/pickup-requests', token: dispatchLogin.token });

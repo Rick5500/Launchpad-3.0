@@ -10,7 +10,6 @@ const originalsHold = require('./originalsHold');
 const mailer = require('./mailer');
 const notifications = require('./notifications');
 const shopLocations = require('./shopLocations');
-const { loadLetterhead, letterheadFromMap } = require('./shopProfile');
 const { afterResponse } = require('./afterResponse');
 const mailOutbox = require('./mailOutbox');
 
@@ -257,12 +256,7 @@ async function sendConfirmationNow(row) {
     await run(`UPDATE pickup_requests SET confirmation_email_status = 'skipped' WHERE id = ?`, [row.id]);
     return { status: 'skipped' };
   }
-  let letterhead;
-  try {
-    letterhead = await loadLetterhead();
-  } catch (err) {
-    letterhead = letterheadFromMap({});
-  }
+  const letterhead = await shopLocations.safeLetterheadForLocationId(row.location_id);
   const address = [row.address_line1, row.address_line2, [row.city, row.state, row.zip].filter(Boolean).join(', ')]
     .filter(Boolean)
     .join('\n');
