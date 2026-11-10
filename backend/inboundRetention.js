@@ -59,7 +59,7 @@ async function cleanupExpired() {
   );
   let removed = 0;
   for (const row of rows) {
-    if (row.stored_name) removeStored(row.stored_name, row.storage_root);
+    if (row.stored_name) await Promise.resolve(removeStored(row.stored_name, row.storage_root));
     await run('DELETE FROM inbound_email_attachments WHERE id = ?', [row.id]);
     removed += 1;
   }

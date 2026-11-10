@@ -66,7 +66,7 @@ async function sweepOrphanUploads() {
     [`-${hours} hours`]
   );
   for (const row of rows) {
-    const removed = removeStored(row.stored_name, row.storage_root);
+    const removed = await Promise.resolve(removeStored(row.stored_name, row.storage_root));
     if (removed === 'unavailable') continue;
     await run(
       'DELETE FROM order_files WHERE id = ? AND order_id IS NULL AND quote_request_id IS NULL',

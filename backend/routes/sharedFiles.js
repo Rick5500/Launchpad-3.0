@@ -4,11 +4,12 @@ const auth = require('../auth');
 const shared = require('../sharedFiles');
 const { sendError } = require('../httpError');
 const {
+  finishRemoveUploaded,
   removeUploaded,
   uploadMiddleware,
   uploadErrorStatus,
   uploadErrorMessage,
-  finishStoredDownload,
+  sendStoredDownload,
 } = require('../fileStore');
 
 const fileRouter = express.Router();
@@ -33,8 +34,10 @@ function fail(res, err, label, fallback) {
 function acceptUpload(req, res, next) {
   uploadMiddleware()(req, res, (err) => {
     if (err) {
-      removeUploaded(req.files);
-      return res.status(uploadErrorStatus(err)).json({ error: uploadErrorMessage(err) });
+      finishRemoveUploaded(req.files, () => {
+        res.status(uploadErrorStatus(err)).json({ error: uploadErrorMessage(err) });
+      });
+      return;
     }
     return next();
   });
@@ -54,14 +57,14 @@ function mount(orderRouter) {
   orderRouter.post('/:id/shared-files', auth.requireAuth, staff, acceptUpload, async (req, res) => {
     const id = parseId(req.params.id);
     if (!id) {
-      removeUploaded(req.files);
+      await Promise.resolve(removeUploaded(req.files));
       return res.status(400).json({ error: 'id must be a positive integer' });
     }
     try {
       const result = await shared.shareFiles(req.user, id, req.body || {}, req.files || []);
       return res.status(201).json(result);
     } catch (err) {
-      if (!err.filesCommitted) removeUploaded(req.files);
+      if (!err.filesCommitted) await Promise.resolve(removeUploaded(req.files));
       return fail(res, err, 'SHARED FILES SEND ERROR:', 'Failed to share files');
     }
   });
@@ -75,9 +78,7 @@ fileRouter.get('/:id/download', auth.requireAuth, readers, async (req, res) => {
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('Content-Type', file.contentType);
     res.set('Cache-Control', 'private, no-store');
-    return res.download(file.fullPath, file.downloadName, (downloadErr) => {
-      finishStoredDownload(res, downloadErr, path.dirname(file.fullPath));
-    });
+    return await Promise.resolve(sendStoredDownload(res, file.fullPath, file.downloadName, path.dirname(file.fullPath)));
   } catch (err) {
     return fail(res, err, 'SHARED DOWNLOAD ERROR:', 'Failed to download file');
   }
@@ -96,14 +97,14 @@ fileRouter.delete('/:id', auth.requireAuth, staff, async (req, res) => {
 fileRouter.post('/:id/replace', auth.requireAuth, staff, acceptUpload, async (req, res) => {
   const id = parseId(req.params.id);
   if (!id) {
-    removeUploaded(req.files);
+    await Promise.resolve(removeUploaded(req.files));
     return res.status(400).json({ error: 'id must be a positive integer' });
   }
   try {
     const result = await shared.replaceFile(req.user, id, req.body || {}, req.files || []);
     return res.json(result);
   } catch (err) {
-    if (!err.filesCommitted) removeUploaded(req.files);
+    if (!err.filesCommitted) await Promise.resolve(removeUploaded(req.files));
     return fail(res, err, 'SHARED REPLACE ERROR:', 'Failed to replace file');
   }
 });
@@ -133,7 +134,7 @@ transferRouter.post('/', auth.requireAuth, staff, acceptUpload, async (req, res)
     const result = await shared.createTransfer(req.user, req.body || {}, req.files || []);
     return res.status(201).json(result);
   } catch (err) {
-    if (!err.filesCommitted) removeUploaded(req.files);
+    if (!err.filesCommitted) await Promise.resolve(removeUploaded(req.files));
     return fail(res, err, 'FILE TRANSFER SEND ERROR:', 'Failed to send files');
   }
 });

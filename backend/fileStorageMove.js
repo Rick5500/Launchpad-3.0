@@ -67,7 +67,7 @@ async function finishCurrentCopy(table, row, target, sourceRoot, sourcePath, tar
     return { status: textOrNull(row.storage_previous) ? 'moved' : 'already' };
   }
   try {
-    if (!filesMatch(sourcePath, targetPath)) {
+    if (!await Promise.resolve(filesMatch(sourcePath, targetPath))) {
       return { status: 'failed', error: 'A file already in the new folder does not match the original' };
     }
   } catch (err) {
@@ -80,7 +80,7 @@ async function finishCurrentCopy(table, row, target, sourceRoot, sourcePath, tar
     return { status: 'failed', error: STORAGE_DOWN_MESSAGE, unavailable: true };
   }
   await stamp(table, row.id, target, sourceRoot);
-  const removed = removeStored(nameOf(row), sourceRoot);
+  const removed = await Promise.resolve(removeStored(nameOf(row), sourceRoot));
   if (removed === 'unavailable') return { status: 'failed', error: STORAGE_DOWN_MESSAGE, unavailable: true };
   await stamp(table, row.id, target, null);
   return { status: 'moved' };
@@ -98,7 +98,7 @@ async function moveRow(table, row, target) {
   const targetPath = safeStoredPath(name, target);
   if (!targetPath) return { status: 'failed', error: 'Stored name is not allowed' };
 
-  const targetInfo = inspectStored(targetPath, size);
+  const targetInfo = await Promise.resolve(inspectStored(targetPath, size));
   if (targetInfo.unavailable) return { status: 'failed', error: STORAGE_DOWN_MESSAGE, unavailable: true };
   if (targetInfo.mismatch) {
     return { status: 'failed', error: 'A file already in the new folder does not match this record' };
@@ -119,13 +119,13 @@ async function moveRow(table, row, target) {
     return { status: previousRoot ? 'moved' : 'already' };
   }
 
-  const sourceInfo = inspectStored(sourcePath, size);
+  const sourceInfo = await Promise.resolve(inspectStored(sourcePath, size));
   if (sourceInfo.unavailable) return { status: 'failed', error: STORAGE_DOWN_MESSAGE, unavailable: true };
   if (sourceInfo.mismatch) return { status: 'failed', error: 'Original file size does not match the record' };
   if (!sourceInfo.ok) return { status: 'missing', error: 'Original file is missing' };
 
   try {
-    copyVerified(sourcePath, targetPath, sourceInfo.size);
+    await Promise.resolve(copyVerified(sourcePath, targetPath, sourceInfo.size));
   } catch (err) {
     if (err && (err.code === 'ESIZE' || err.code === 'ECHECKSUM')) {
       return { status: 'failed', error: 'Copied file does not match the original' };
@@ -133,10 +133,10 @@ async function moveRow(table, row, target) {
     return { status: 'failed', error: STORAGE_DOWN_MESSAGE, unavailable: true };
   }
 
-  const copied = inspectStored(targetPath, size);
+  const copied = await Promise.resolve(inspectStored(targetPath, size));
   if (!copied.ok) return { status: 'failed', error: 'Copied file does not match the original' };
   try {
-    if (!filesMatch(sourcePath, targetPath)) {
+    if (!await Promise.resolve(filesMatch(sourcePath, targetPath))) {
       return { status: 'failed', error: 'Copied file does not match the original' };
     }
   } catch (err) {
@@ -144,7 +144,7 @@ async function moveRow(table, row, target) {
   }
 
   await stamp(table, row.id, target, sourceRoot);
-  const removed = removeStored(name, sourceRoot);
+  const removed = await Promise.resolve(removeStored(name, sourceRoot));
   if (removed === 'unavailable') return { status: 'failed', error: STORAGE_DOWN_MESSAGE, unavailable: true };
   await stamp(table, row.id, target, null);
   return { status: 'moved' };
@@ -213,7 +213,7 @@ async function moveAll(actorId) {
 }
 
 async function runMove(actorId) {
-  const ready = ensureUploadDir();
+  const ready = await Promise.resolve(ensureUploadDir());
   if (!ready.ok) {
     return {
       unavailable: true,
@@ -227,7 +227,7 @@ async function runMove(actorId) {
     };
   }
   const target = uploadDir();
-  removeMovingTemps(target);
+  await Promise.resolve(removeMovingTemps(target));
   const summary = {
     unavailable: false,
     error: null,

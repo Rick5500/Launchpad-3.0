@@ -1,0 +1,17 @@
+.git
+.github
+node_modules
+backend/node_modules
+frontend/node_modules
+frontend/dist
+backend/.env
+.env
+**/.env
+data
+database/*.db
+database/*.sqlite
+database/*.sqlite3
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db

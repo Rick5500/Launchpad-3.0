@@ -323,15 +323,26 @@ const DRIVERS = {
   local: createLocalFolderDriver(),
 };
 
+let cachedS3 = null;
+
+function loadS3Driver() {
+  if (cachedS3) return { driver: cachedS3, error: null };
+  const created = require('./s3').createS3DriverFromEnv();
+  if (created.error) return { driver: null, error: created.error };
+  cachedS3 = created.driver;
+  return { driver: cachedS3, error: null };
+}
+
 function getStorageDriver(id) {
   const raw = id == null || String(id).trim() === ''
     ? (process.env.FILE_STORAGE_DRIVER || 'local')
     : id;
   const key = String(raw).trim().toLowerCase() || 'local';
+  if (key === 's3') return loadS3Driver();
   const driver = DRIVERS[key];
   if (!driver) {
     const error = new Error(
-      `Storage driver "${key}" is not installed. Only the local folder driver is available. A OneDrive or SharePoint driver can be added later.`
+      `Storage driver "${key}" is not installed. Available drivers are local and s3. A OneDrive or SharePoint driver is not included.`
     );
     error.status = 400;
     error.code = 'STORAGE_DRIVER';

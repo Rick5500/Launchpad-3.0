@@ -96,6 +96,9 @@ jobs:
       - name: Verify mail sweep, drain, and mobile scope
         working-directory: backend
         run: npm run verify:ops
+      - name: Verify cloud deploy
+        working-directory: backend
+        run: npm run verify:cloud
       - name: Build frontend
         working-directory: frontend
         run: |

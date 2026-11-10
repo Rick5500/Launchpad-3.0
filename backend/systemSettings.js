@@ -338,8 +338,8 @@ async function loadFileStorageCache() {
   setMarkerMap(parseMarkerJson(markerRow && markerRow.value));
   setKnownRoots((roots || []).map((entry) => entry.path));
   try {
-    createDefaultFolderOnce();
-    await persistPlantedMarker(plantOriginalMarker());
+    await Promise.resolve(createDefaultFolderOnce());
+    await persistPlantedMarker(await Promise.resolve(plantOriginalMarker()));
   } catch (err) {
     console.error('FILE STORAGE MARKER ERROR:', err.message || err);
   }
@@ -360,7 +360,7 @@ async function updateFileStorage(actorId, rawPath) {
     stored = validated.path;
     markerId = crypto.randomBytes(16).toString('hex');
     try {
-      writeStorageMarker(stored, markerId);
+      await Promise.resolve(writeStorageMarker(stored, markerId));
     } catch (err) {
       throw httpError(400, NOT_WRITABLE_MESSAGE);
     }
@@ -389,7 +389,7 @@ async function updateFileStorage(actorId, rawPath) {
     rememberKnownRoot(stored);
     rememberKnownRoot(previousRoot);
   } else {
-    await persistPlantedMarker(plantOriginalMarker());
+    await persistPlantedMarker(await Promise.resolve(plantOriginalMarker()));
   }
   return getSettings();
 }

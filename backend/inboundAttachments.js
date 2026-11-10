@@ -253,10 +253,10 @@ async function storeBytes(emailId, attachment, bytes) {
     )
     : null;
   if (existing && existing.fetch_state === 'fetched' && existing.stored_name) return;
-  const written = writeNewFile(ext, bytes);
+  const written = await Promise.resolve(writeNewFile(ext, bytes));
   let rowId = existing && existing.id;
   if (existing) {
-    if (existing.stored_name) removeStored(existing.stored_name, existing.storage_root);
+    if (existing.stored_name) await Promise.resolve(removeStored(existing.stored_name, existing.storage_root));
     await run(
       `UPDATE inbound_email_attachments
        SET original_name = ?, stored_name = ?, mime_type = ?, size_bytes = ?, storage_root = ?,
@@ -658,7 +658,7 @@ async function attachmentDownload(user, emailId, attachmentId) {
   if (!clean && !(exception && user && user.role === 'admin')) {
     throw httpError(403, clean ? 'File not found' : 'This attachment is still quarantined');
   }
-  const opened = openStored(file.stored_name, file.storage_root);
+  const opened = await Promise.resolve(openStored(file.stored_name, file.storage_root));
   if (!opened) return null;
   return {
     path: opened.fullPath,
