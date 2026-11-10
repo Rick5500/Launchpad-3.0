@@ -392,7 +392,7 @@ async function loadLetterheadSafe(locationId) {
     return await shopLocations.letterheadForLocationId(locationId);
   } catch (err) {
     console.error('LETTERHEAD ERROR:', err.message || err);
-    return { name: '', address: '', address_lines: [], phone: '' };
+    return shopLocations.safeLetterheadForLocationId(null);
   }
 }
 

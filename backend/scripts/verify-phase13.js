@@ -456,8 +456,10 @@ async function runApiChecks() {
     assert(!html.includes('<script'), 'html should not contain a script tag');
     assert(html.includes('&amp;'), 'html should escape ampersands');
     assert(html.includes('Accent File Shop'), 'html should use the letterhead name');
-    assert(html.includes('100 Test Lane'), 'html should use the letterhead address');
-    assert(html.includes('919-555-0144'), 'html should use the letterhead phone');
+    assert(html.includes('8121 Brownleigh Drive'), 'an order at a shop should use that shop street');
+    assert(html.includes('919-782-3332'), 'an order at a shop should use that shop phone');
+    assert(!html.includes('100 Test Lane'), 'a shop footer should not also show the company street');
+    assert(!html.includes('919-555-0144'), 'a shop footer should not also show the company phone');
     assert(html.includes(`${appUrl}/brand/logo.png`), 'the file email should keep the Launchpad logo');
     assert(html.includes(`${appUrl}/brand/acg-logo.png`), 'the file email footer should include the ACG logo');
     assert(html.includes(`${appUrl}/brand/accent-imaging-logo.png`), 'the file email footer should include the Accent Imaging logo');

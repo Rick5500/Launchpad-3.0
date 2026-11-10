@@ -2,7 +2,7 @@
 // account creation can finish either way. Staff mail carries a set-password
 // link and never receives the password.
 
-const { loadLetterhead, letterheadFromMap } = require('./shopProfile');
+const shopLocations = require('./shopLocations');
 const mailer = require('./mailer');
 const mailOutbox = require('./mailOutbox');
 const passwordSet = require('./passwordSet');
@@ -45,12 +45,33 @@ async function withOutbox(noticeType, user, fn) {
   }
 }
 
-async function letterhead() {
+async function loadAccount(user) {
+  if (!user || !user.id) return user || null;
   try {
-    return await loadLetterhead();
+    const row = await get(
+      `SELECT id, username, email, display_name, contact_name, location_id FROM users WHERE id = ?`,
+      [user.id]
+    );
+    if (!row) return user;
+    const suppliedLocation = user.location_id != null && String(user.location_id).trim() !== '';
+    return {
+      id: row.id,
+      username: user.username || row.username,
+      email: user.email || row.email,
+      display_name: user.display_name || row.display_name,
+      contact_name: user.contact_name || row.contact_name,
+      location_id: suppliedLocation ? user.location_id : row.location_id,
+    };
   } catch (err) {
-    return letterheadFromMap({});
+    return user;
   }
+}
+
+async function shopLetterhead(account) {
+  const locationId = account && account.location_id != null && String(account.location_id).trim() !== ''
+    ? account.location_id
+    : null;
+  return shopLocations.safeLetterheadForLocationId(locationId);
 }
 
 function addressOf(row) {
@@ -85,12 +106,14 @@ async function sendStaffWelcomeNow(user) {
     if (forcedFailure()) throw new Error('forced');
     const enabled = await systemSettings.emailWelcomeOnAccount();
     if (!enabled) return { status: 'disabled' };
-    const to = addressOf(user);
-    if (!to || !user || !user.id) return { status: 'skipped' };
-    const token = await passwordSet.issueToken(user.id);
+    const account = await loadAccount(user);
+    const to = addressOf(account);
+    if (!to || !account || !account.id) return { status: 'skipped' };
+    const token = await passwordSet.issueToken(account.id);
     const rendered = mailer.renderSetPasswordEmail({
-      letterhead: await letterhead(),
-      displayName: user.display_name || user.username || '',
+      letterhead: await shopLetterhead(account),
+      displayName: account.display_name || account.username || '',
+      username: account.username || '',
       link: mailer.setPasswordLink(token),
     });
     const sent = await mailer.deliver({
@@ -102,7 +125,7 @@ async function sendStaffWelcomeNow(user) {
     });
     const result = withPreview({ status: sent && sent.status ? sent.status : 'failed', to }, sent);
     await customerNotices.recordAccountNotice({
-      userId: user.id,
+      userId: account.id,
       channel: 'email',
       noticeType: 'password_set',
       recipient: to,
@@ -124,11 +147,13 @@ async function sendSignupWelcomeNow(user) {
     if (forcedFailure()) throw new Error('forced');
     const enabled = await systemSettings.emailWelcomeOnAccount();
     if (!enabled) return { status: 'disabled' };
-    const to = addressOf(user);
+    const account = await loadAccount(user);
+    const to = addressOf(account);
     if (!to) return { status: 'skipped' };
     const rendered = mailer.renderWelcomeEmail({
-      letterhead: await letterhead(),
-      displayName: user.display_name || user.contact_name || user.username || '',
+      letterhead: await shopLetterhead(account),
+      displayName: account.display_name || account.contact_name || account.username || '',
+      username: account.username || '',
       link: mailer.signInLink(),
     });
     const sent = await mailer.deliver({
@@ -140,7 +165,7 @@ async function sendSignupWelcomeNow(user) {
     });
     const result = withPreview({ status: sent && sent.status ? sent.status : 'failed', to }, sent);
     await customerNotices.recordAccountNotice({
-      userId: user && user.id,
+      userId: account && account.id,
       channel: 'email',
       noticeType: 'welcome',
       recipient: to,
@@ -159,9 +184,7 @@ async function sendPasswordResetNotice(user) {
 
 async function sendPasswordResetNoticeNow(user) {
   try {
-    const row = user && user.email
-      ? user
-      : await get(`SELECT id, username, email, display_name FROM users WHERE id = ?`, [user && user.id]);
+    const row = await loadAccount(user);
     const to = addressOf(row);
     if (!to || !row) {
       await customerNotices.recordAccountNotice({
@@ -173,12 +196,17 @@ async function sendPasswordResetNoticeNow(user) {
       });
       return { status: 'skipped' };
     }
-    const link = mailer.signInLink();
+    const rendered = mailer.renderPasswordResetEmail({
+      letterhead: await shopLetterhead(row),
+      displayName: row.display_name || '',
+      username: row.username || '',
+      link: mailer.signInLink(),
+    });
     const sent = await mailer.deliver({
       to,
-      subject: 'Your Launchpad password was reset',
-      text: `The password for your Launchpad account was reset. Sign in at ${link}. This message does not include the new password.`,
-      html: `<p>The password for your Launchpad account was reset.</p><p><a href="${mailer.escapeHtml(link)}">Sign in</a></p>`,
+      subject: rendered.subject,
+      text: rendered.text,
+      html: rendered.html,
       noticeType: 'password_reset',
     });
     const status = sent && sent.status ? sent.status : 'failed';
@@ -189,7 +217,7 @@ async function sendPasswordResetNoticeNow(user) {
       recipient: to,
       result: status,
     });
-    return { status, to };
+    return withPreview({ status, to }, sent);
   } catch (err) {
     console.error('PASSWORD RESET EMAIL ERROR:', err && err.message ? err.message : 'failed');
     await customerNotices.recordAccountNotice({

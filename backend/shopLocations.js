@@ -6,7 +6,7 @@
 const { get, all, run } = require('./dbAsync');
 const { httpError } = require('./httpError');
 const { parseText } = require('./fields');
-const { addressLines, loadLetterhead } = require('./shopProfile');
+const { addressLines, letterheadFromMap, loadLetterhead } = require('./shopProfile');
 
 const DEFAULT_LOCATION_NAME = 'Raleigh';
 
@@ -425,9 +425,21 @@ function overlayLetterhead(letterhead, location) {
 
 async function letterheadForLocationId(locationId) {
   const base = await loadLetterhead();
-  if (locationId == null) return base;
+  if (locationId == null || String(locationId).trim() === '') return base;
   const row = await get(`SELECT * FROM locations WHERE id = ?`, [locationId]);
   return overlayLetterhead(base, present(row));
+}
+
+async function safeLetterheadForLocationId(locationId) {
+  try {
+    return await letterheadForLocationId(locationId);
+  } catch (err) {
+    try {
+      return await loadLetterhead();
+    } catch (inner) {
+      return letterheadFromMap({});
+    }
+  }
 }
 
 async function publicUserFields(userId) {
@@ -495,6 +507,7 @@ module.exports = {
   resolveOrderLocation,
   overlayLetterhead,
   letterheadForLocationId,
+  safeLetterheadForLocationId,
   publicUserFields,
   comparison,
 };

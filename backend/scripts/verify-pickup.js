@@ -683,6 +683,35 @@ async function main() {
     assert(dryRuns(server.logs()) === invalidBefore + 1, 'leaving and returning to ready should send once more');
     console.log('PASS a new transition sends again');
 
+    const hickoryReady = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: admin.token,
+      json: orderBody(created.json.id, large.id, hickory.id, 'hickory-pickup@pickup.example'),
+    });
+    assert(hickoryReady.status === 201, hickoryReady.text);
+    const hickoryMarked = await request({
+      method: 'PUT',
+      path: `/api/orders/${hickoryReady.json.order.id}/status`,
+      token: admin.token,
+      json: { status: 'Ready for Pickup' },
+    });
+    assert(hickoryMarked.status === 200 && hickoryMarked.json.pickup_notice.email.status === 'sent', hickoryMarked.text);
+    const hickoryPreview = hickoryMarked.json.pickup_notice.email.preview;
+    assert(hickoryPreview && hickoryPreview.html && hickoryPreview.text, 'the Hickory pickup email should be captured');
+    const footerAt = hickoryPreview.html.lastIndexOf('border-top:1px solid #E2E8F0');
+    assert(footerAt >= 0, 'the pickup email should have a footer');
+    const hickoryFooter = hickoryPreview.html.slice(footerAt);
+    assert(hickoryFooter.includes('Hickory'), hickoryFooter);
+    assert(hickoryFooter.includes('725 11th Ave Blvd SE'), `the Hickory footer should use the shop street: ${hickoryFooter}`);
+    assert(hickoryFooter.includes('Hickory, NC 28602'), hickoryFooter);
+    assert(hickoryFooter.includes('828-322-5050'), hickoryFooter);
+    assert(!hickoryFooter.includes('8121 Brownleigh Drive'), `the Hickory footer should not use the Raleigh street: ${hickoryFooter}`);
+    assert(!hickoryFooter.includes('919-782-3332'), `the Hickory footer should not use the Raleigh phone: ${hickoryFooter}`);
+    assert(hickoryPreview.html.includes('our Hickory location'), 'the body should still name the Hickory shop');
+    assert(!hickoryPreview.text.includes('8121 Brownleigh Drive'), hickoryPreview.text);
+    console.log('PASS Hickory ready-for-pickup footer uses the Hickory shop');
+
     const quietLogin = await login('pickupquiet', customerPassword);
     const quietOn = await request({
       method: 'PUT',
