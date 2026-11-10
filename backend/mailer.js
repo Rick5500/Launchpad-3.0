@@ -99,6 +99,22 @@ function publicAppUrl() {
   return raw;
 }
 
+// A customer mail program cannot open a path such as /orders/3. Those paths
+// are what the link builders return when PUBLIC_APP_URL is unset or invalid.
+function absoluteCustomerLink(link) {
+  const text = String(link || '').trim();
+  if (!text || text.length > 2000 || /[\r\n\u0000-\u001F]/.test(text)) return '';
+  let parsed;
+  try {
+    parsed = new URL(text);
+  } catch (err) {
+    return '';
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+  if (parsed.username || parsed.password) return '';
+  return text;
+}
+
 function orderFilesLink(orderId) {
   const id = Number(orderId);
   const next = `/orders/${id}#files-from-accent`;
@@ -332,8 +348,9 @@ function renderShareEmail({ letterhead, orderNumber, message, fileNames, link })
   const orderLabel = orderNumber || 'your order';
   const names = fileNames || [];
   const footer = footerLines(letterhead);
-  const safeLink = escapeHtml(link);
-  const href = String(link || '').replace(/"/g, '%22');
+  const usable = absoluteCustomerLink(link);
+  const safeLink = escapeHtml(usable);
+  const href = usable.replace(/"/g, '%22');
   const messageHtml = message ? `<p style="margin:0 0 16px;line-height:1.5;">${escapeHtml(message).replace(/\n/g, '<br>')}</p>` : '';
   const filesHtml = names.map((file) => `<li>${escapeHtml(file)}</li>`).join('');
   const text = [
@@ -343,11 +360,13 @@ function renderShareEmail({ letterhead, orderNumber, message, fileNames, link })
     message ? `\n${message}\n` : '',
     'Files:',
     ...names.map((file) => `- ${file}`),
-    '',
-    'Sign in to open these files:',
-    link,
-    '',
-    'This link opens Launchpad. You need to sign in. Files are not available from a public link.',
+    ...(usable ? [
+      '',
+      'Sign in to open these files:',
+      usable,
+      '',
+      'This link opens Launchpad. You need to sign in. Files are not available from a public link.',
+    ] : []),
     '',
     footerText(footer, { credit: true }).join('\n'),
   ].join('\n').replace(/\n{3,}/g, '\n\n');
@@ -364,8 +383,8 @@ function renderShareEmail({ letterhead, orderNumber, message, fileNames, link })
           ${messageHtml}
           <p style="margin:0 0 8px;font-weight:700;color:#0A2F6E;">Files</p>
           <ul style="margin:0 0 20px;padding-left:18px;">${filesHtml}</ul>
-          <p style="margin:0 0 16px;"><a href="${href}" style="display:inline-block;background:#F58220;color:#111111;text-decoration:none;font-weight:700;padding:10px 16px;">Sign in to view files</a></p>
-          <p style="margin:0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>
+          ${usable ? `<p style="margin:0 0 16px;"><a href="${href}" style="display:inline-block;background:#F58220;color:#111111;text-decoration:none;font-weight:700;padding:10px 16px;">Sign in to view files</a></p>
+          <p style="margin:0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>` : ''}
           <p style="margin:16px 0 0;font-size:13px;color:#5E6A78;">You need to sign in. These files are not available from a public download link.</p>
         </td></tr>
         ${emailFooterHtml(footer, { credit: true })}
@@ -387,8 +406,9 @@ function renderTransferEmail({ letterhead, subject, message, fileNames, link }) 
   const heading = subject ? safeSubject(subject) : 'New files from Accent';
   const names = fileNames || [];
   const footer = footerLines(letterhead);
-  const safeLink = escapeHtml(link);
-  const href = String(link || '').replace(/"/g, '%22');
+  const usable = absoluteCustomerLink(link);
+  const safeLink = escapeHtml(usable);
+  const href = usable.replace(/"/g, '%22');
   const messageHtml = message ? `<p style="margin:0 0 16px;line-height:1.5;">${escapeHtml(message).replace(/\n/g, '<br>')}</p>` : '';
   const filesHtml = names.map((file) => `<li>${escapeHtml(file)}</li>`).join('');
   const text = [
@@ -398,11 +418,13 @@ function renderTransferEmail({ letterhead, subject, message, fileNames, link }) 
     message ? `\n${message}\n` : '',
     'Files:',
     ...names.map((file) => `- ${file}`),
-    '',
-    'Sign in to open these files:',
-    link,
-    '',
-    'This link opens Launchpad. You need to sign in. Files are not available from a public link.',
+    ...(usable ? [
+      '',
+      'Sign in to open these files:',
+      usable,
+      '',
+      'This link opens Launchpad. You need to sign in. Files are not available from a public link.',
+    ] : []),
     '',
     footerText(footer, { credit: true }).join('\n'),
   ].join('\n').replace(/\n{3,}/g, '\n\n');
@@ -419,8 +441,8 @@ function renderTransferEmail({ letterhead, subject, message, fileNames, link }) 
           ${messageHtml}
           <p style="margin:0 0 8px;font-weight:700;color:#0A2F6E;">Files</p>
           <ul style="margin:0 0 20px;padding-left:18px;">${filesHtml}</ul>
-          <p style="margin:0 0 16px;"><a href="${href}" style="display:inline-block;background:#F58220;color:#111111;text-decoration:none;font-weight:700;padding:10px 16px;">Sign in to view files</a></p>
-          <p style="margin:0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>
+          ${usable ? `<p style="margin:0 0 16px;"><a href="${href}" style="display:inline-block;background:#F58220;color:#111111;text-decoration:none;font-weight:700;padding:10px 16px;">Sign in to view files</a></p>
+          <p style="margin:0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>` : ''}
           <p style="margin:16px 0 0;font-size:13px;color:#5E6A78;">You need to sign in. These files are not available from a public download link.</p>
         </td></tr>
         ${emailFooterHtml(footer, { credit: true })}
@@ -441,8 +463,9 @@ function renderQuoteEmail({ letterhead, projectName, price, notes, validUntil, l
   const name = letterhead && letterhead.name ? letterhead.name : '';
   const project = projectName || 'your project';
   const footer = footerLines(letterhead);
-  const safeLink = escapeHtml(link);
-  const href = String(link || '').replace(/"/g, '%22');
+  const usable = absoluteCustomerLink(link);
+  const safeLink = escapeHtml(usable);
+  const href = usable.replace(/"/g, '%22');
   const lines = Array.isArray(lineItems) ? lineItems : [];
   const lineText = lines.map((line) => {
     const parts = [line.code, line.unit, line.quantity, line.description, line.price].filter(Boolean);
@@ -459,11 +482,13 @@ function renderQuoteEmail({ letterhead, projectName, price, notes, validUntil, l
     notesText ? `\n${notesText}\n` : '',
     lineText.length ? 'Line items:' : '',
     ...lineText.map((line) => `- ${line}`),
-    '',
-    'Sign in to accept or decline this quote.',
-    link,
-    '',
-    'This link opens Launchpad. You need to sign in.',
+    ...(usable ? [
+      '',
+      'Sign in to accept or decline this quote.',
+      usable,
+      '',
+      'This link opens Launchpad. You need to sign in.',
+    ] : []),
     '',
     footerText(footer, { credit: true }).join('\n'),
   ].filter((line) => line !== undefined).join('\n').replace(/\n{3,}/g, '\n\n');
@@ -487,8 +512,8 @@ function renderQuoteEmail({ letterhead, projectName, price, notes, validUntil, l
           ${until ? `<p style="margin:0 0 16px;">Valid until ${escapeHtml(until)}</p>` : ''}
           ${notesHtml}
           ${itemsHtml}
-          <p style="margin:0 0 16px;"><a href="${href}" style="display:inline-block;background:#F58220;color:#111111;text-decoration:none;font-weight:700;padding:10px 16px;">Sign in to review this quote</a></p>
-          <p style="margin:0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>
+          ${usable ? `<p style="margin:0 0 16px;"><a href="${href}" style="display:inline-block;background:#F58220;color:#111111;text-decoration:none;font-weight:700;padding:10px 16px;">Sign in to review this quote</a></p>
+          <p style="margin:0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>` : ''}
           <p style="margin:16px 0 0;font-size:13px;color:#5E6A78;">You need to sign in to accept or decline this quote.</p>
         </td></tr>
         ${emailFooterHtml(footer, { credit: true })}
@@ -510,8 +535,9 @@ function renderProofEmail({ letterhead, orderNumber, version, message, fileNames
   const versionLabel = `v${version || 1}`;
   const names = fileNames || [];
   const footer = footerLines(letterhead);
-  const safeLink = escapeHtml(link);
-  const href = String(link || '').replace(/"/g, '%22');
+  const usable = absoluteCustomerLink(link);
+  const safeLink = escapeHtml(usable);
+  const href = usable.replace(/"/g, '%22');
   const where = workOrderNumber ? `work order ${workOrderNumber}` : `order ${orderLabel}`;
   const messageHtml = message ? `<p style="margin:0 0 16px;line-height:1.5;">${escapeHtml(message).replace(/\n/g, '<br>')}</p>` : '';
   const filesHtml = names.map((file) => `<li>${escapeHtml(file)}</li>`).join('');
@@ -522,11 +548,13 @@ function renderProofEmail({ letterhead, orderNumber, version, message, fileNames
     message ? `\n${message}\n` : '',
     'Files:',
     ...names.map((file) => `- ${file}`),
-    '',
-    'Sign in to review this proof. You can approve it or request changes.',
-    link,
-    '',
-    'This link opens Launchpad. You need to sign in. The proof is not available from a public link.',
+    ...(usable ? [
+      '',
+      'Sign in to review this proof. You can approve it or request changes.',
+      usable,
+      '',
+      'This link opens Launchpad. You need to sign in. The proof is not available from a public link.',
+    ] : []),
     '',
     footerText(footer, { credit: true }).join('\n'),
   ].join('\n').replace(/\n{3,}/g, '\n\n');
@@ -543,8 +571,8 @@ function renderProofEmail({ letterhead, orderNumber, version, message, fileNames
           ${messageHtml}
           <p style="margin:0 0 8px;font-weight:700;color:#0A2F6E;">Files</p>
           <ul style="margin:0 0 20px;padding-left:18px;">${filesHtml}</ul>
-          <p style="margin:0 0 16px;"><a href="${href}" style="display:inline-block;background:#F58220;color:#111111;text-decoration:none;font-weight:700;padding:10px 16px;">Sign in to review this proof</a></p>
-          <p style="margin:0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>
+          ${usable ? `<p style="margin:0 0 16px;"><a href="${href}" style="display:inline-block;background:#F58220;color:#111111;text-decoration:none;font-weight:700;padding:10px 16px;">Sign in to review this proof</a></p>
+          <p style="margin:0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>` : ''}
           <p style="margin:16px 0 0;font-size:13px;color:#5E6A78;">You need to sign in. This proof is not available from a public download link.</p>
         </td></tr>
         ${emailFooterHtml(footer, { credit: true })}
@@ -672,8 +700,9 @@ function renderPickupReadyEmail({ letterhead, orderNumber, locationName, locatio
     .filter(Boolean);
   const phone = String(locationPhone || '').trim();
   const footer = footerLines(letterhead);
-  const safeLink = escapeHtml(link);
-  const href = String(link || '').replace(/"/g, '%22');
+  const usable = absoluteCustomerLink(link);
+  const safeLink = escapeHtml(usable);
+  const href = usable.replace(/"/g, '%22');
   const addressText = addressLines.join('\n');
   const text = [
     name,
@@ -681,9 +710,7 @@ function renderPickupReadyEmail({ letterhead, orderNumber, locationName, locatio
     `Order #${orderLabel} is ready for pickup at ${place}.`,
     addressText,
     phone ? `Questions? ${phone}` : '',
-    '',
-    link ? 'Sign in to view this order:' : '',
-    link || '',
+    ...(usable ? ['', 'Sign in to view this order:', usable] : []),
     '',
     footerText(footer, { credit: true }).join('\n'),
   ].filter((line) => line !== '').join('\n').replace(/\n{3,}/g, '\n\n');
@@ -694,7 +721,7 @@ function renderPickupReadyEmail({ letterhead, orderNumber, locationName, locatio
   const phoneHtml = phone
     ? `<p style="margin:0 0 16px;line-height:1.5;">Questions? ${escapeHtml(phone)}</p>`
     : '';
-  const linkHtml = link
+  const linkHtml = usable
     ? `<p style="margin:16px 0 0;"><a href="${href}" style="display:inline-block;background:#F58220;color:#111111;text-decoration:none;font-weight:700;padding:10px 16px;">Sign in to view your order</a></p>
           <p style="margin:12px 0 0;font-size:13px;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>`
     : '';
@@ -742,8 +769,9 @@ function signInLink() {
 function renderCustomerLetter({ letterhead, subject, heading, lines, link, linkLabel }) {
   const name = letterhead && letterhead.name ? letterhead.name : '';
   const footer = footerLines(letterhead);
-  const safeLink = escapeHtml(link || '');
-  const href = String(link || '').replace(/"/g, '%22');
+  const usable = absoluteCustomerLink(link);
+  const safeLink = escapeHtml(usable);
+  const href = usable.replace(/"/g, '%22');
   const bodyLines = Array.isArray(lines) ? lines : [];
   const text = [
     name,
@@ -752,8 +780,8 @@ function renderCustomerLetter({ letterhead, subject, heading, lines, link, linkL
     '',
     ...bodyLines,
     '',
-    link ? `${linkLabel || 'Open Launchpad'}:` : '',
-    link || '',
+    usable ? `${linkLabel || 'Open Launchpad'}:` : '',
+    usable || '',
     '',
     footerText(footer, { credit: true }).join('\n'),
   ].filter((line) => line !== undefined).join('\n').replace(/\n{3,}/g, '\n\n');
@@ -762,7 +790,7 @@ function renderCustomerLetter({ letterhead, subject, heading, lines, link, linkL
     if (line == null || line === '') return '';
     return `<p style="margin:0 0 14px;font-size:16px;line-height:1.5;">${escapeHtml(line).replace(/\n/g, '<br>')}</p>`;
   }).join('');
-  const linkHtml = link
+  const linkHtml = usable
     ? `<p style="margin:18px 0 0;"><a href="${href}" style="display:inline-block;background:#F58220;color:#111111;text-decoration:none;font-weight:700;padding:12px 18px;font-size:16px;">${escapeHtml(linkLabel || 'Open Launchpad')}</a></p>
           <p style="margin:12px 0 0;font-size:15px;line-height:1.5;color:#5E6A78;">Or copy this link:<br><a href="${href}" style="color:#0A2F6E;">${safeLink}</a></p>`
     : '';
@@ -874,12 +902,13 @@ function renderPasswordResetEmail({ letterhead, displayName, username, link }) {
 function renderOrderConfirmationEmail({ letterhead, orderNumber, dueDate, dueTime, deliveryMethod, shipTo, link }) {
   const orderLabel = orderNumber || 'your order';
   const due = formatCustomerWhen(dueDate, dueTime);
+  const usable = absoluteCustomerLink(link);
   const lines = [
     `We received order ${orderLabel}.`,
     due ? `Due: ${due}` : '',
     deliveryMethod ? `Delivery method: ${deliveryMethod}` : '',
     shipTo ? `Ship to:\n${shipTo}` : '',
-    'Sign in to view this order. This link opens Launchpad. You need to sign in.',
+    usable ? 'Sign in to view this order. This link opens Launchpad. You need to sign in.' : '',
   ].filter((line) => line !== '');
   return renderCustomerLetter({
     letterhead,
@@ -894,12 +923,13 @@ function renderOrderConfirmationEmail({ letterhead, orderNumber, dueDate, dueTim
 function renderReadyForDeliveryEmail({ letterhead, orderNumber, dueDate, dueTime, deliveryMethod, shipTo, link }) {
   const orderLabel = orderNumber || 'your order';
   const due = formatCustomerWhen(dueDate, dueTime);
+  const usable = absoluteCustomerLink(link);
   const lines = [
     `Order ${orderLabel} is ready for delivery.`,
     due ? `Due: ${due}` : '',
     deliveryMethod ? `Delivery method: ${deliveryMethod}` : '',
     shipTo ? `Ship to:\n${shipTo}` : '',
-    'Sign in to view this order.',
+    usable ? 'Sign in to view this order.' : '',
   ].filter((line) => line !== '');
   return renderCustomerLetter({
     letterhead,
