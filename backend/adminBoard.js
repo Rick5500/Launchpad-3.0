@@ -1,4 +1,5 @@
 const db = require('./db');
+const { paymentMethodLabel } = require('./serviceFields');
 const activityLog = require('./activityLog');
 const shopLocations = require('./shopLocations');
 const { classifyDelivery, getRules, zonedParts, zonedTimeToUtc } = require('./deliveryRules');
@@ -376,7 +377,7 @@ function presentWorkOrder(row, timeZone) {
     originals_source: row.originals_source || null,
     originals_source_label: row.originals_source ? String(row.originals_source) : 'Not specified',
     payment_method: row.payment_method || null,
-    payment_method_label: row.payment_method ? String(row.payment_method) : 'Not specified',
+    payment_method_label: paymentMethodLabel(row.payment_method),
     department: row.department || '',
     department_color: row.department_color || '#90caf9',
     delivery_method: row.delivery_method || '',

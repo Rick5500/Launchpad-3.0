@@ -6,7 +6,7 @@ const { code128Svg } = require('./barcodeSvg');
 const { ACTIVE_WORK_ORDER_STATUSES } = require('./statuses');
 const { loadLetterhead, DEFAULT_NAME, DEFAULT_ADDRESS, DEFAULT_PHONE, addressLines } = require('./shopProfile');
 const shopLocations = require('./shopLocations');
-const { displayFieldList, readFieldValues, PAYMENT_UNSPECIFIED, RETURN_UNSPECIFIED } = require('./serviceFields');
+const { displayFieldList, readFieldValues, paymentMethodLabel, RETURN_UNSPECIFIED } = require('./serviceFields');
 const { isProofHeld } = require('./proofs');
 
 const SCAN_INSTRUCTIONS = [
@@ -472,7 +472,7 @@ async function buildSheet(workOrderId, viewer) {
       hours_label: deliveryHoursLabel(methodName, willCallFlag),
     },
     payment_method: row.payment_method || '',
-    payment_method_label: row.payment_method ? String(row.payment_method) : PAYMENT_UNSPECIFIED,
+    payment_method_label: paymentMethodLabel(row.payment_method),
     return_to: row.return_to || '',
     return_to_label: row.return_to ? String(row.return_to) : RETURN_UNSPECIFIED,
     bill_to: {

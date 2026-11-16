@@ -96,6 +96,9 @@ jobs:
       - name: Verify mail sweep, drain, and mobile scope
         working-directory: backend
         run: npm run verify:ops
+      - name: Verify catalog field upgrades
+        working-directory: backend
+        run: npm run verify:catalog
       - name: Build frontend
         working-directory: frontend
         run: |

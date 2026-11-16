@@ -25,6 +25,36 @@ const SMALL_FORMAT_PRODUCTS = [
   'Tickets',
 ];
 
+// Paper list before 80# Uncoated Text. An exact match is still the seed, not an
+// admin edit, so init replaces it with SMALL_FORMAT_PAPER. 60# gloss text is
+// offset and outsource only and is not part of this list.
+const SMALL_FORMAT_PAPER_BEFORE_UNCOATED = [
+  '20# Bond',
+  '24# Bond',
+  '28# Bond',
+  '60# Offset',
+  '70# Text Gloss',
+  '80# Text Gloss',
+  '100# Text Gloss',
+  '100# Text Matte',
+  '80# Cover Gloss',
+  '100# Cover Gloss',
+  '100# Cover Matte',
+  '12 pt Cover C2S',
+  '14 pt Cover C2S',
+  '16 pt Cover C2S',
+  '14 pt Uncoated Cover',
+  'Cardstock White',
+  'Cardstock Colored',
+  'Colored Paper',
+  'Recycled',
+  'NCR/Carbonless (2-part, 3-part, 4-part)',
+  'Synthetic/Waterproof',
+  'Adhesive Label Stock Gloss',
+  'Adhesive Label Stock Matte',
+  'Other (see notes)',
+];
+
 const SMALL_FORMAT_PAPER = [
   '20# Bond',
   '24# Bond',
@@ -34,6 +64,7 @@ const SMALL_FORMAT_PAPER = [
   '80# Text Gloss',
   '100# Text Gloss',
   '100# Text Matte',
+  '80# Uncoated Text',
   '80# Cover Gloss',
   '100# Cover Gloss',
   '100# Cover Matte',
@@ -162,6 +193,7 @@ const SMALL_FORMAT_PREVIOUS = {
       '80lb Gloss Cover',
       'See Note',
     ],
+    history: [SMALL_FORMAT_PAPER_BEFORE_UNCOATED],
   },
   sides: {
     label: 'Sides',
@@ -180,6 +212,7 @@ const SMALL_FORMAT_PREVIOUS = {
 module.exports = {
   SMALL_FORMAT_PRODUCTS,
   SMALL_FORMAT_PAPER,
+  SMALL_FORMAT_PAPER_BEFORE_UNCOATED,
   SMALL_FORMAT_SIZES,
   SMALL_FORMAT_COLOR_MODES,
   SMALL_FORMAT_SIDES,

@@ -26,11 +26,48 @@ const PAYMENT_METHODS = Object.freeze([
   'Cash',
   'Check',
   'AMEX',
-  'Master Card',
+  'Mastercard',
   'Visa',
   'Discover',
 ]);
 const PAYMENT_UNSPECIFIED = 'Not specified';
+// Exact stored labels from before the spelling fix. New orders store the
+// canonical name. Init rewrites orders.payment_method when it is still the
+// old card label. A row that has not been through init still displays and
+// still submits as the canonical name.
+const PAYMENT_ALIASES = new Map([
+  ['master card', 'Mastercard'],
+]);
+// Exact option values only. "65lb Matt Cover" is a different option and stays.
+const OPTION_RENAMES = new Map([
+  ['corplast', 'Coroplast'],
+  ['matt', 'Matte'],
+]);
+
+function canonicalPaymentMethod(value) {
+  const text = value == null ? '' : String(value).trim();
+  if (!text) return '';
+  return PAYMENT_ALIASES.get(text.toLowerCase()) || text;
+}
+
+function paymentMethodLabel(value) {
+  const text = canonicalPaymentMethod(value);
+  return text || PAYMENT_UNSPECIFIED;
+}
+
+function displayToken(value) {
+  if (value == null) return '';
+  const text = String(value);
+  return OPTION_RENAMES.get(text.trim().toLowerCase()) || text;
+}
+
+function matchOption(options, text) {
+  const exact = options.find((option) => option.value === text);
+  if (exact) return exact;
+  const renamed = OPTION_RENAMES.get(String(text).trim().toLowerCase());
+  if (!renamed) return null;
+  return options.find((option) => option.value === renamed) || null;
+}
 const RETURN_TO_ME = 'To Me';
 const RETURN_SEE_SHIP = 'See ShipTo';
 const RETURN_UNSPECIFIED = 'Not specified';
@@ -58,6 +95,22 @@ function checkField(key, label, sort) {
 function multiField(key, label, sort, options, required = false) {
   return { key, label, type: 'multiselect', required, sort_order: sort, options };
 }
+
+const {
+  SIGNS_EQUIPMENT,
+  SIGNS_FINISHING,
+  SIGNS_LAMINATE,
+  SIGNS_MOUNT,
+  SIGNS_PREVIOUS,
+  SIGNS_PRODUCTS,
+} = require('./signsCatalog');
+
+const RETIRED_FIELDS = [
+  {
+    service: 'Signs & Graphics',
+    field: selectField('equipment', 'Equipment', 20, SIGNS_EQUIPMENT),
+  },
+];
 
 const {
   SMALL_FORMAT_BINDING,
@@ -105,12 +158,7 @@ const SEED = [
   {
     service: 'Signs & Graphics',
     fields: [
-      selectField('product_type', 'Product Type', 10, [
-        'Yard Signs', 'Banners', 'Posters', 'Window Graphics', 'Vehicle Graphics', 'Wall Graphics', 'Displays', 'Custom',
-      ]),
-      selectField('equipment', 'Equipment', 20, [
-        'Flatbed', 'CNC Router', 'Large Format Roll Printer', 'Vinyl Cutter', 'Laminator', 'Mounting Press',
-      ]),
+      selectField('product_type', 'Product Type', 10, SIGNS_PRODUCTS),
       selectField('material', 'Material', 30, [
         'Coroplast', 'Foam Core', 'Gator Board', 'Sintra / PVC', 'Aluminum', 'ACM / Dibond', 'Acrylic',
         'Vinyl (adhesive)', 'Banner', 'Window Perf', 'Fabric', 'Magnetic',
@@ -118,13 +166,9 @@ const SEED = [
       textField('size', 'Size', 40),
       numberField('qty', 'Qty', 50),
       selectField('ink', 'Ink', 60, ['Indoor', 'Outdoor']),
-      selectField('mount', 'Mount', 70, [
-        'No', '3/16 Foam Core', '3/16 Gator Board', '1/2 Gator Board', '1/8 Sintra', '1/4 Sintra', '1/2 Sintra', 'Corplast', 'See Notes',
-      ]),
-      selectField('laminate', 'Laminate', 80, ['No', 'Gloss', 'Matt', 'Dry Erase', 'Lexan', 'See Notes']),
-      selectField('finishing', 'Finishing', 90, [
-        'None', 'Grommets', 'Easel', 'Cut/Trim', 'Velcro', 'Print Hanger', 'Framing', 'Contour Cut', 'Routed Shape', 'See Notes',
-      ]),
+      selectField('mount', 'Mount', 70, SIGNS_MOUNT),
+      selectField('laminate', 'Laminate', 80, SIGNS_LAMINATE),
+      multiField('finishing', 'Finishing', 90, SIGNS_FINISHING, true),
       areaField('notes', 'Notes', 100),
     ],
   },
@@ -285,7 +329,7 @@ function parseOneField(field, raw, label) {
     if (typeof raw !== 'string' && typeof raw !== 'number') return { error: `${label} is invalid` };
     const text = String(raw).trim();
     const options = parseStoredOptions(field.options_json).filter((option) => option.active);
-    const match = options.find((option) => option.value === text);
+    const match = matchOption(options, text);
     if (!match) {
       const names = options.map((option) => option.value);
       return { error: names.length ? `${label} must be one of ${names.join(', ')}` : `${label} is invalid` };
@@ -306,7 +350,7 @@ function parseOneField(field, raw, label) {
     for (const entry of list) {
       if (typeof entry !== 'string' && typeof entry !== 'number') return { error: `${label} is invalid` };
       const text = String(entry).trim();
-      const match = options.find((option) => option.value === text);
+      const match = matchOption(options, text);
       if (!match) {
         return { error: names.length ? `${label} must be one of ${names.join(', ')}` : `${label} is invalid` };
       }
@@ -373,11 +417,16 @@ function validateLineFields(definitions, raw, lineLabel) {
 
 function displayOf(field, value) {
   if (field && field.type === 'checkbox') return value ? 'Yes' : 'No';
+  const rename = field && (field.type === 'select' || field.type === 'multiselect');
+  const show = (item) => (rename ? displayToken(item) : String(item));
   if (Array.isArray(value)) {
-    return value.filter((item) => item != null && String(item).trim() !== '').join(', ');
+    return value
+      .filter((item) => item != null && String(item).trim() !== '')
+      .map((item) => show(item))
+      .join(', ');
   }
   if (value == null || value === '') return '';
-  return String(value);
+  return show(value);
 }
 
 function displayFieldList(definitions, values) {
@@ -467,7 +516,10 @@ function mirrorLegacy(values, legacy) {
   if (values.binding != null) next.bindingFinish = String(values.binding);
   if (Object.prototype.hasOwnProperty.call(values, 'finishing')) {
     if (Array.isArray(values.finishing)) {
-      next.finishing = values.finishing.length ? values.finishing.join(', ') : null;
+      const parts = values.finishing
+        .map((value) => String(value).trim())
+        .filter((value) => value && value !== 'None');
+      next.finishing = parts.length ? parts.join(', ') : null;
     } else {
       next.finishing = values.finishing === 'None' ? null : String(values.finishing);
     }
@@ -506,17 +558,58 @@ function sameActiveList(stored, expected) {
   return true;
 }
 
+function snapshotLists(previous) {
+  const lists = [];
+  if (Array.isArray(previous)) {
+    lists.push(previous);
+    return lists;
+  }
+  if (previous && Array.isArray(previous.options)) lists.push(previous.options);
+  if (previous && Array.isArray(previous.history)) {
+    for (const list of previous.history) {
+      if (Array.isArray(list) && list.length) lists.push(list);
+    }
+  }
+  return lists;
+}
+
+function canonicalizeOptions(stored) {
+  const merged = [];
+  const indexByToken = new Map();
+  for (const option of stored) {
+    const raw = String(option.value || '').trim();
+    if (!raw) continue;
+    const renamed = OPTION_RENAMES.get(raw.toLowerCase());
+    const value = renamed || raw;
+    const token = value.toLowerCase();
+    const active = option.active !== false && option.active !== 0;
+    const existingIndex = indexByToken.get(token);
+    if (existingIndex != null) {
+      if (active) merged[existingIndex].active = true;
+      continue;
+    }
+    indexByToken.set(token, merged.length);
+    merged.push({ value, active });
+  }
+  return merged;
+}
+
+function optionSignature(list) {
+  return list.map((option) => `${option.value}:${option.active !== false && option.active !== 0}`).join('|');
+}
+
 function reconcileSelectOptions(stored, previous, next) {
   if (sameActiveList(stored, next)) return { options: null, replaced: false };
-  const untouched = stored.length === 0 || sameActiveList(stored, previous);
+  const untouched = stored.length === 0 || snapshotLists(previous).some((list) => sameActiveList(stored, list));
   if (untouched) {
     return {
       options: next.map((value) => ({ value, active: true })),
       replaced: true,
     };
   }
-  const seen = new Set(stored.map((option) => String(option.value || '').trim().toLowerCase()));
-  const merged = stored.map((option) => ({ value: option.value, active: option.active }));
+  const canonical = canonicalizeOptions(stored);
+  const seen = new Set(canonical.map((option) => String(option.value || '').trim().toLowerCase()));
+  const merged = canonical.map((option) => ({ value: option.value, active: option.active }));
   let added = false;
   for (const value of next) {
     const token = String(value || '').trim().toLowerCase();
@@ -525,14 +618,15 @@ function reconcileSelectOptions(stored, previous, next) {
     merged.push({ value, active: true });
     added = true;
   }
-  if (!added) return { options: null, replaced: false };
+  const renamed = optionSignature(stored) !== optionSignature(canonical);
+  if (!added && !renamed) return { options: null, replaced: false };
   return { options: merged, replaced: false };
 }
 
 async function upgradeExistingField(run, existing, field, previous) {
   if (!usesOptions(field.type) || !usesOptions(existing.type)) return;
   const stored = parseStoredOptions(existing.options_json);
-  const result = reconcileSelectOptions(stored, previous.options || [], field.options || []);
+  const result = reconcileSelectOptions(stored, previous, field.options || []);
   const sets = [];
   const params = [];
   if (result.options) {
@@ -553,11 +647,47 @@ async function upgradeExistingField(run, existing, field, previous) {
   await run(`UPDATE service_fields SET ${sets.join(', ')} WHERE id = ?`, params);
 }
 
+async function retireServiceFields(run, getRow) {
+  for (const entry of RETIRED_FIELDS) {
+    const service = await getRow('SELECT id FROM services WHERE name = ?', [entry.service]);
+    if (!service) continue;
+    const field = entry.field;
+    const existing = await getRow(
+      'SELECT id, is_active FROM service_fields WHERE service_id = ? AND key = ?',
+      [service.id, field.key]
+    );
+    if (!existing) {
+      await run(
+        `INSERT INTO service_fields (
+           service_id, key, label, type, options_json, required, sort_order, is_active, updated_at
+         ) VALUES (?,?,?,?,?,?,?,0,datetime('now'))`,
+        [
+          service.id,
+          field.key,
+          field.label,
+          field.type,
+          optionsToJson(field.options),
+          field.required ? 1 : 0,
+          field.sort_order,
+        ]
+      );
+      continue;
+    }
+    if (existing.is_active === 0) continue;
+    await run(
+      `UPDATE service_fields SET is_active = 0, updated_at = datetime('now') WHERE id = ? AND is_active != 0`,
+      [existing.id]
+    );
+  }
+}
+
 async function seedServiceFields(run, getRow) {
   for (const group of SEED) {
     const service = await getRow('SELECT id FROM services WHERE name = ?', [group.service]);
     if (!service) continue;
-    const previousByKey = group.service === 'Small Format' ? SMALL_FORMAT_PREVIOUS : null;
+    const previousByKey = group.service === 'Small Format'
+      ? SMALL_FORMAT_PREVIOUS
+      : (group.service === 'Signs & Graphics' ? SIGNS_PREVIOUS : null);
     for (const field of group.fields) {
       const existing = await getRow(
         'SELECT id, label, type, options_json FROM service_fields WHERE service_id = ? AND key = ?',
@@ -584,6 +714,7 @@ async function seedServiceFields(run, getRow) {
       if (previous) await upgradeExistingField(run, existing, field, previous);
     }
   }
+  await retireServiceFields(run, getRow);
 }
 
 function normalizeOption(entry, index, label) {
@@ -800,8 +931,16 @@ async function replaceServiceFields(actorId, serviceId, body) {
 module.exports = {
   SEED,
   seedFieldCount,
+  SIGNS_PRODUCTS,
+  SIGNS_EQUIPMENT,
+  SIGNS_MOUNT,
+  SIGNS_LAMINATE,
+  SIGNS_FINISHING,
+  SIGNS_PREVIOUS,
   PAYMENT_METHODS,
   PAYMENT_UNSPECIFIED,
+  canonicalPaymentMethod,
+  paymentMethodLabel,
   RETURN_TO_ME,
   RETURN_SEE_SHIP,
   RETURN_UNSPECIFIED,

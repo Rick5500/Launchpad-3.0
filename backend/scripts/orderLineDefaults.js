@@ -9,6 +9,11 @@ const {
   SMALL_FORMAT_PRODUCTS,
   SMALL_FORMAT_SIZES,
 } = require('../smallFormatCatalog');
+const {
+  SIGNS_FINISHING,
+  SIGNS_LAMINATE,
+  SIGNS_MOUNT,
+} = require('../signsCatalog');
 
 const serviceNames = new Map();
 
@@ -17,9 +22,6 @@ const LARGE_PROCESS = ['Black & White', 'Color Line'];
 const LARGE_MEDIA = ['Bond', 'Vellum', 'Vellum Erase', 'Mylar', 'Mylar Reversed', 'See Note'];
 const LARGE_BINDING = ['None', 'Staple', 'Screw Post', 'See Note'];
 const SMALL_PROCESS = ['Black & White', 'Color'];
-const SIGNS_FINISHING = ['None', 'Grommets', 'Easel', 'Cut/Trim', 'Velcro', 'Print Hanger', 'Framing', 'Contour Cut', 'Routed Shape', 'See Notes'];
-const SIGNS_MOUNT = ['No', '3/16 Foam Core', '3/16 Gator Board', '1/2 Gator Board', '1/8 Sintra', '1/4 Sintra', '1/2 Sintra', 'Corplast', 'See Notes'];
-const SIGNS_LAMINATE = ['No', 'Gloss', 'Matt', 'Dry Erase', 'Lexan', 'See Notes'];
 
 function setServiceNames(services) {
   serviceNames.clear();
@@ -90,7 +92,6 @@ function defaultsFor(name, item) {
   if (name === 'Signs & Graphics') {
     return {
       product_type: 'Banners',
-      equipment: 'Flatbed',
       material: 'Coroplast',
       size: textSize(item),
       qty: count,

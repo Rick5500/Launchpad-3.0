@@ -1,4 +1,5 @@
 const db = require('./db');
+const { paymentMethodLabel } = require('./serviceFields');
 const barcodeEvents = require('./barcodeEvents');
 const { classifyDelivery, getRules } = require('./deliveryRules');
 const { WORK_ORDER_STATUSES } = require('./statuses');
@@ -297,7 +298,7 @@ function loadDeliveryReport(range, cb) {
           carrier: row.carrier,
           delivery_method: row.delivery_method || row.carrier || null,
           ups_account_number: row.ups_account_number || null,
-          payment_method: row.payment_method || 'Not specified',
+          payment_method: paymentMethodLabel(row.payment_method),
           bill_to_company: row.bill_to_company || '',
           status: row.status,
           overdue: flags.overdue,

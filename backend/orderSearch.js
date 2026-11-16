@@ -10,7 +10,7 @@ const {
   parseDateBound,
   likePattern,
 } = require('./fields');
-const { displayFieldList, readFieldValues, PAYMENT_UNSPECIFIED } = require('./serviceFields');
+const { displayFieldList, readFieldValues, paymentMethodLabel } = require('./serviceFields');
 const shopLocations = require('./shopLocations');
 
 const SORTS = {
@@ -304,7 +304,7 @@ async function searchOrders(query, access) {
       state: row.state || '',
       zip: row.zip || '',
       payment_method: row.payment_method || null,
-      payment_method_label: row.payment_method ? String(row.payment_method) : PAYMENT_UNSPECIFIED,
+      payment_method_label: paymentMethodLabel(row.payment_method),
       return_to: row.return_to || null,
       bill_to_company: row.bill_to_company || '',
       location_id: row.location_id || null,
