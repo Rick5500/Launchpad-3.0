@@ -49,6 +49,8 @@ module.exports = {
   HICKORY_PROJECT: 'Hickory fixture plates',
   TRANSFER_PROJECT: 'Transferred hickory job',
   RALEIGH_DESCRIPTION: 'Raleigh plates WO-E2E-RDU',
+  LEGACY_SIGNS_PROJECT: 'Legacy signs banner',
+  LEGACY_SIGNS_EXTERNAL_ID: 'WO-E2E-SIGNS',
   HICKORY_DESCRIPTION: 'Hickory plates WO-E2E-HKY',
   OUTBOUND_MESSAGE_ID: '<e2e-notice@e2e.launchpad.test>',
   SMTP_FROM: 'orders@e2e.launchpad.test',

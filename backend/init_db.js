@@ -1741,6 +1741,7 @@ async function main() {
   await run(`CREATE INDEX IF NOT EXISTS idx_orders_confirmation_pending
     ON orders(confirmation_email_status, confirmation_email_sent_at)`);
   await run(`UPDATE orders SET status = 'In Production' WHERE status IS NULL OR trim(status) = ''`);
+  await run(`UPDATE orders SET payment_method = 'Mastercard' WHERE payment_method = 'Master Card'`);
   await run('UPDATE orders SET pickup_ready_generation = 0 WHERE pickup_ready_generation IS NULL');
   await run('UPDATE orders SET delivery_ready_generation = 0 WHERE delivery_ready_generation IS NULL');
   await ensureColumns('order_line_items', [

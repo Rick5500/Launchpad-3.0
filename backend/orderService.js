@@ -27,6 +27,8 @@ const { parsePostalAddress } = require('./fields');
 const {
   PAYMENT_METHODS,
   PAYMENT_UNSPECIFIED,
+  canonicalPaymentMethod,
+  paymentMethodLabel,
   RETURN_TO_ME,
   RETURN_SEE_SHIP,
   RETURN_UNSPECIFIED,
@@ -447,7 +449,7 @@ async function applyServiceFields(tx, lineItems, services) {
 }
 
 function parsePaymentMethod(value) {
-  const text = requiredText(value, 'payment_method', 40);
+  const text = canonicalPaymentMethod(requiredText(value, 'payment_method', 40));
   if (!PAYMENT_METHODS.includes(text)) {
     throw new OrderError(`payment_method must be one of ${PAYMENT_METHODS.join(', ')}`);
   }
@@ -535,8 +537,7 @@ function billToPresent(row) {
 }
 
 function paymentLabel(value) {
-  const text = value == null ? '' : String(value).trim();
-  return text || PAYMENT_UNSPECIFIED;
+  return paymentMethodLabel(value);
 }
 
 function returnLabel(value) {

@@ -70,6 +70,80 @@ async function insertUser(db, row) {
   return inserted.lastID;
 }
 
+async function placeLegacySigns(db, { user, customerId, locationId }) {
+  const { createOrder } = require(path.join(root, 'backend', 'orderService'));
+  const service = await db.get(`SELECT id FROM services WHERE name = 'Signs & Graphics'`);
+  if (!service) throw new Error('Signs & Graphics was not seeded');
+  const created = await createOrder(user, {
+    customer_id: customerId,
+    location_id: locationId,
+    company: 'Raleigh Fixture Co',
+    contact_name: 'Riley Raleigh',
+    phone: '919-555-0140',
+    email: 'riley@raleigh-fixture.example',
+    project_name: c.LEGACY_SIGNS_PROJECT,
+    notes: 'Legacy signs line kept after the field change.',
+    originals_source: 'Hardcopy or digital media provided',
+    address_line1: '10 Fixture Lane',
+    city: 'Raleigh',
+    state: 'NC',
+    zip: '27601',
+    delivery_method: 'Will Call',
+    due_date: nextWeekday(),
+    due_time: '10:00',
+    return_to: 'To Me',
+    payment_method: 'Mastercard',
+    service_ids: [service.id],
+    line_items: [{
+      service_id: service.id,
+      description: 'Legacy fence banner',
+      field_values: {
+        product_type: 'Banners',
+        material: 'Banner',
+        size: '3x6',
+        qty: 1,
+        ink: 'Outdoor',
+        mount: 'No',
+        laminate: 'No',
+        finishing: ['None'],
+      },
+    }],
+  });
+  const workOrder = (created.work_orders || [])[0];
+  if (!workOrder) throw new Error('No work order for the legacy signs order');
+  const legacyValues = {
+    product_type: 'Banners',
+    equipment: 'Flatbed',
+    material: 'Banner',
+    size: '3x6',
+    qty: 2,
+    ink: 'Outdoor',
+    mount: 'Corplast',
+    laminate: 'Matt',
+    finishing: 'Grommets',
+  };
+  await db.run(
+    `UPDATE orders SET payment_method = 'Master Card' WHERE id = ?`,
+    [created.order.id]
+  );
+  await db.run(
+    `UPDATE order_line_items
+     SET field_values = ?, finishing = 'Grommets', description = 'Legacy fence banner'
+     WHERE order_id = ?`,
+    [JSON.stringify(legacyValues), created.order.id]
+  );
+  await db.run(
+    `UPDATE work_orders SET external_id = ?, description = ? WHERE id = ?`,
+    [c.LEGACY_SIGNS_EXTERNAL_ID, 'Legacy fence banner', workOrder.id]
+  );
+  return {
+    orderId: created.order.id,
+    orderNumber: created.order_number,
+    workOrderId: workOrder.id,
+    externalId: c.LEGACY_SIGNS_EXTERNAL_ID,
+  };
+}
+
 async function placeOrder(db, { user, customerId, locationId, project, notes, externalId, description }) {
   const { createOrder } = require(path.join(root, 'backend', 'orderService'));
   const service = await db.get(`SELECT id FROM services WHERE name = ?`, ['Archive File Request']);
@@ -202,6 +276,11 @@ async function seedDatabase(databaseFile) {
   });
   // Customer stays at Hickory. The order itself is at Raleigh, which is the
   // case PR #51 uses for SMS recipient scoping.
+  const legacySigns = await placeLegacySigns(db, {
+    user: actor,
+    customerId: raleighCustomerId,
+    locationId: raleigh.id,
+  });
   const transferred = await placeOrder(db, {
     user: actor,
     customerId: hickoryCustomerId,
@@ -271,6 +350,7 @@ async function seedDatabase(databaseFile) {
     raleigh: raleighOrder,
     hickory: hickoryOrder,
     transferred,
+    legacySigns,
   };
 }
 

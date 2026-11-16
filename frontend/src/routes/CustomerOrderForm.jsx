@@ -140,7 +140,34 @@ const ORIGINALS_SOURCES = [
 ];
 const ORIGINALS_FILES = 'Files attached below';
 const ORIGINALS_PICKUP = 'Send a vehicle to pick up originals';
-const PAYMENT_METHODS = ['Accent Account', 'Cash', 'Check', 'AMEX', 'Master Card', 'Visa', 'Discover'];
+const PAYMENT_METHODS = ['Accent Account', 'Cash', 'Check', 'AMEX', 'Mastercard', 'Visa', 'Discover'];
+const OPTION_RENAMES = { corplast: 'Coroplast', matt: 'Matte' };
+
+function canonicalOption(value, choices) {
+  const text = value == null ? '' : String(value);
+  if (!text || choices.includes(text)) return text;
+  const renamed = OPTION_RENAMES[text.trim().toLowerCase()];
+  if (renamed && choices.includes(renamed)) return renamed;
+  return text;
+}
+
+function chosenValues(value, choices) {
+  const list = Array.isArray(value)
+    ? value
+    : (value == null || value === '' ? [] : [value]);
+  return list.map((item) => canonicalOption(item, choices));
+}
+
+// None is the only finishing choice, or it is left off. Checking None clears
+// the others. Checking anything else clears None.
+function exclusiveNone(previous, next) {
+  const before = Array.isArray(previous) ? previous : [];
+  const after = Array.isArray(next) ? next.filter(Boolean) : [];
+  if (!after.includes('None')) return after;
+  if (after.length === 1) return after;
+  if (!before.includes('None')) return ['None'];
+  return after.filter((value) => value !== 'None');
+}
 
 const emptyBill = {
   name: '',
@@ -218,7 +245,8 @@ function missingRequired(service, line) {
     if (field.type === 'checkbox') {
       if (!value) return `${service.name}: ${field.label} is required`;
     } else if (field.type === 'multiselect') {
-      if (!Array.isArray(value) || value.length === 0) return `${service.name}: ${field.label} is required`;
+      const picked = Array.isArray(value) ? value : (value == null || String(value).trim() === '' ? [] : [value]);
+      if (picked.length === 0) return `${service.name}: ${field.label} is required`;
     } else if (value == null || String(value).trim() === '') {
       return `${service.name}: ${field.label} is required`;
     }
@@ -416,7 +444,7 @@ function FieldInput({ id, field, value, disabled, onChange }) {
   if (field.type === 'select') {
     return (
       <LabelField id={id} label={field.label} required={field.required}>
-        <TextField id={id} select size="small" fullWidth required={field.required} value={value || ''} disabled={disabled} onChange={(event) => onChange(event.target.value)} sx={fieldSx} inputProps={{ 'aria-required': field.required || undefined }} SelectProps={{ labelId: `${id}-label` }}>
+        <TextField id={id} select size="small" fullWidth required={field.required} value={canonicalOption(value || '', choices)} disabled={disabled} onChange={(event) => onChange(event.target.value)} sx={fieldSx} inputProps={{ 'aria-required': field.required || undefined }} SelectProps={{ labelId: `${id}-label` }}>
           <MenuItem value="">Select</MenuItem>
           {choices.map((option) => <MenuItem key={option} value={option}>{option}</MenuItem>)}
         </TextField>
@@ -424,7 +452,7 @@ function FieldInput({ id, field, value, disabled, onChange }) {
     );
   }
   if (field.type === 'multiselect') {
-    const selected = Array.isArray(value) ? value : [];
+    const selected = chosenValues(value, choices);
     return (
       <LabelField id={id} label={field.label} required={field.required}>
         <TextField
@@ -437,7 +465,8 @@ function FieldInput({ id, field, value, disabled, onChange }) {
           disabled={disabled}
           onChange={(event) => {
             const next = event.target.value;
-            onChange(typeof next === 'string' ? next.split(',') : next);
+            const list = typeof next === 'string' ? next.split(',') : next;
+            onChange(field.key === 'finishing' ? exclusiveNone(selected, list) : list);
           }}
           SelectProps={{
             multiple: true,
@@ -1029,17 +1058,34 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
     if (!isStaff && user) applyProfile(user, true);
   }
 
+  function normalizeLineValues(service, values) {
+    const next = { ...(values || {}) };
+    for (const field of service?.fields || []) {
+      if (field.is_active === false) continue;
+      const choices = optionValues(field);
+      if (field.type === 'select') next[field.key] = canonicalOption(values?.[field.key] || '', choices);
+      if (field.type === 'multiselect') {
+        const picked = chosenValues(values?.[field.key], choices);
+        next[field.key] = field.key === 'finishing' && picked.includes('None') && picked.length > 1
+          ? picked.filter((value) => value !== 'None')
+          : picked;
+      }
+    }
+    return next;
+  }
+
   function saveEditor() {
     if (!editor) return;
     const service = options.services.find((row) => row.id === editor.service_id);
-    const problem = service ? missingRequired(service, editor) : null;
+    const values = normalizeLineValues(service, editor.values);
+    const problem = service ? missingRequired(service, { ...editor, values }) : null;
     if (problem) {
       setEditor({ ...editor, error: problem });
       return;
     }
     setLines((rows) => {
       const index = rows.findIndex((row) => row.key === editor.key);
-      const next = { key: editor.key, service_id: editor.service_id, values: editor.values, file: editor.file };
+      const next = { key: editor.key, service_id: editor.service_id, values, file: editor.file };
       if (index === -1) return [...rows, next];
       const copy = rows.slice();
       copy[index] = next;
