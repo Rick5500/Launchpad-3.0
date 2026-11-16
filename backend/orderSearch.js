@@ -88,6 +88,24 @@ function addLike(clauses, params, column, value) {
   params.push(likePattern(value));
 }
 
+// Exact search terms only. A longer query is not rewritten. Stored line JSON
+// stays as written, so a search for the corrected spelling still finds Corplast,
+// Matt, and Master Card.
+const SEARCH_SPELLINGS = [
+  ['coroplast', 'Corplast'],
+  ['corplast', 'Coroplast'],
+  ['matte', 'Matt'],
+  ['matt', 'Matte'],
+  ['mastercard', 'Master Card'],
+  ['master card', 'Mastercard'],
+];
+
+function spellingVariants(query) {
+  const text = String(query || '').trim().toLowerCase();
+  const match = SEARCH_SPELLINGS.find((pair) => pair[0] === text);
+  return match ? [match[1]] : [];
+}
+
 function buildWhere(filters) {
   const clauses = [];
   const params = [];
@@ -98,6 +116,18 @@ function buildWhere(filters) {
   addLike(clauses, params, 'o.email', filters.email);
   if (filters.q) {
     const pattern = likePattern(filters.q);
+    const variants = spellingVariants(filters.q);
+    const variantSql = variants.map(() => `
+      OR IFNULL(o.payment_method, '') LIKE ? ESCAPE '\\'
+      OR EXISTS (
+        SELECT 1 FROM order_line_items li
+        WHERE li.order_id = o.id AND (
+          IFNULL(li.description, '') LIKE ? ESCAPE '\\'
+          OR IFNULL(li.field_values, '') LIKE ? ESCAPE '\\'
+          OR IFNULL(li.media, '') LIKE ? ESCAPE '\\'
+          OR IFNULL(li.finishing, '') LIKE ? ESCAPE '\\'
+        )
+      )`).join('');
     clauses.push(`(
       o.order_number LIKE ? ESCAPE '\\'
       OR o.company LIKE ? ESCAPE '\\'
@@ -119,8 +149,13 @@ function buildWhere(filters) {
           OR IFNULL(li.media, '') LIKE ? ESCAPE '\\'
         )
       )
+      ${variantSql}
     )`);
     params.push(pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern);
+    for (const variant of variants) {
+      const extra = likePattern(variant);
+      params.push(extra, extra, extra, extra, extra);
+    }
   }
   if (filters.from) {
     clauses.push('o.created_at >= ?');

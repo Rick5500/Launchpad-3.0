@@ -337,6 +337,12 @@ function assertAliases() {
   assert(byKey.finishing === 'Grommets', 'a stored finishing string should display');
   assert(byKey.mount === 'Coroplast' && byKey.laminate === 'Matte', 'stored typos should display with the corrected spelling');
   assert(byKey.equipment === 'Flatbed', 'a stored equipment value should still display');
+  const mixed = validateLineFields([finishing], { finishing: ['None', 'Hems'] }, 'line item 1');
+  assert(!mixed.error && mixed.value.finishing.join('|') === 'Hems', `None plus another finish should keep the other finish, got ${mixed.error || mixed.value.finishing}`);
+  const onlyNone = validateLineFields([finishing], { finishing: ['None'] }, 'line item 1');
+  assert(!onlyNone.error && onlyNone.value.finishing.join('|') === 'None', 'None alone should stay');
+  const mixedDisplay = fields.displayFieldList([finishing], { finishing: ['None', 'Hems'] });
+  assert(mixedDisplay[0].display === 'Hems', 'a stored None mix should display the other finishing');
   assert(fields.canonicalPaymentMethod('Master Card') === 'Mastercard', 'Master Card should canonicalize');
   assert(fields.paymentMethodLabel('Master Card') === 'Mastercard', 'Master Card should display as Mastercard');
   assert(fields.paymentMethodLabel(null) === 'Not specified', 'a blank payment should stay Not specified');
@@ -345,6 +351,8 @@ function assertAliases() {
 async function assertFresh(db) {
   const count = await db.get('SELECT COUNT(*) AS count FROM service_fields');
   assert(count.count === 58, `fresh init should leave 58 service fields, found ${count.count}`);
+  const flag = await db.get('SELECT value FROM system_settings WHERE key = ?', [fields.SIGNS_CATALOG_MIGRATION_KEY]);
+  assert(flag && flag.value === '1', 'a fresh init should record the one-time Signs catalog migration');
   const signsFields = await fieldsFor(db, 'Signs & Graphics');
   const products = signsFields.get('product_type');
   assertExact(products, signs.SIGNS_PRODUCTS, 'fresh product type');
@@ -387,6 +395,7 @@ async function restorePrevious(db) {
     [id]
   );
   assert(equipment.changes === 1, 'equipment should be active before the upgrade');
+  await db.run('DELETE FROM system_settings WHERE key = ?', [fields.SIGNS_CATALOG_MIGRATION_KEY]);
   const smallId = await serviceId(db, 'Small Format');
   const paper = await db.run(
     `UPDATE service_fields SET options_json = ? WHERE service_id = ? AND key = 'media'`,
@@ -448,6 +457,9 @@ async function main() {
     `UPDATE service_fields SET type = 'select', options_json = ? WHERE service_id = ? AND key = 'finishing'`,
     [jsonOptions(['Grommets', 'Custom Hem']), signsId]
   );
+  // Drop the flag written by the fresh init. The row is now a pre-migration
+  // Signs finishing list an admin edited, with Equipment still active.
+  await custom.run('DELETE FROM system_settings WHERE key = ?', [fields.SIGNS_CATALOG_MIGRATION_KEY]);
   const equipmentOptions = jsonOptions(['Flatbed', 'Plotter']);
   await custom.run(
     `UPDATE service_fields SET is_active = 1, options_json = ? WHERE service_id = ? AND key = 'equipment'`,
@@ -477,7 +489,9 @@ async function main() {
   assert(!laminateNames.includes('Matt'), 'the Matt typo should not remain beside Matte');
   assert(laminateNames.includes('Shop Film'), 'an admin laminate should stay');
   const finishing = customSigns.get('finishing');
-  assert(finishing.type === 'select', 'a customised finishing field should keep the type the admin saved');
+  assert(finishing.type === 'multiselect', 'an edited Signs finishing list should become a multiselect once');
+  const migrated = await customized.get('SELECT value FROM system_settings WHERE key = ?', [fields.SIGNS_CATALOG_MIGRATION_KEY]);
+  assert(migrated && migrated.value === '1', 'the one-time migration flag should be recorded');
   const finishingNames = activeNames(finishing.options_json);
   assert(finishingNames[0] === 'Grommets' && finishingNames[1] === 'Custom Hem', 'admin finishing options should stay first');
   signs.SIGNS_FINISHING.forEach((name) => {
@@ -492,12 +506,21 @@ async function main() {
   assertNoGlossText(mediaNames, 'custom paper');
   const beforeSecond = finishing.options_json;
   const equipmentBefore = equipment.options_json;
+  await customized.run(
+    `UPDATE service_fields SET type = 'select' WHERE service_id = ? AND key = 'finishing'`,
+    [signsId]
+  );
+  await customized.run(
+    `UPDATE service_fields SET is_active = 1 WHERE service_id = ? AND key = 'equipment'`,
+    [signsId]
+  );
   await customized.close();
   await initDatabase(customDb);
   const customAgain = openDb(customDb);
   const againSigns = await fieldsFor(customAgain, 'Signs & Graphics');
+  assert(againSigns.get('finishing').type === 'select', 'an admin who sets finishing back to a single select should keep that type');
   assert(againSigns.get('finishing').options_json === beforeSecond, 'a second init should not add the same finishing options again');
-  assert(againSigns.get('equipment').is_active === 0 && againSigns.get('equipment').options_json === equipmentBefore, 'a second init should leave equipment inactive');
+  assert(againSigns.get('equipment').is_active === 1 && againSigns.get('equipment').options_json === equipmentBefore, 'an admin who turns Equipment back on should keep it');
   await customAgain.close();
   console.log('PASS customised lists only gain missing options');
 
@@ -579,6 +602,19 @@ async function main() {
     assert(aliasLine.field_values.finishing.join('|') === 'Stakes', 'a single finishing string should be stored as a list');
     assert(fieldDisplay(aliasLine, 'finishing') === 'Stakes', 'a submitted finishing string should display');
 
+    const mixedFinish = await request({
+      method: 'POST',
+      path: '/api/orders',
+      token: customer.token,
+      json: orderBody([signsService.id], [{
+        service_id: signsService.id,
+        field_values: signsValues({ finishing: ['None', 'Hems'] }),
+      }]),
+    });
+    assert(mixedFinish.status === 201, `None plus Hems failed: ${mixedFinish.text}`);
+    assert(mixedFinish.json.order.line_items[0].field_values.finishing.join('|') === 'Hems', mixedFinish.text);
+    assert(fieldDisplay(mixedFinish.json.order.line_items[0], 'finishing') === 'Hems', 'None should not display beside another finish');
+
     const withEquipment = await request({
       method: 'POST',
       path: '/api/orders',
@@ -658,6 +694,19 @@ async function main() {
       const spec = JSON.stringify(workOrder.json.specification_lines || []);
       assert(spec.includes('Equipment') && spec.includes('Flatbed'), 'work order detail should show equipment');
       assert(spec.includes('Grommets') && spec.includes('Coroplast') && spec.includes('Matte'), 'work order detail should show the legacy answers');
+      const bySpelling = await request({
+        method: 'GET',
+        path: '/api/search/orders?q=Coroplast',
+        token: adminAgain.token,
+      });
+      assert(bySpelling.status === 200, bySpelling.text);
+      assert((bySpelling.json.orders || []).some((order) => order.id === created.json.order.id), 'searching Coroplast should find a line that still stores Corplast');
+      const byMatt = await request({
+        method: 'GET',
+        path: '/api/search/orders?q=Matte',
+        token: adminAgain.token,
+      });
+      assert((byMatt.json.orders || []).some((order) => order.id === created.json.order.id), 'searching Matte should find a line that still stores Matt');
       console.log('PASS orders accept the new lists and legacy rows still render');
     } finally {
       restarted.stop();

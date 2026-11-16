@@ -38,6 +38,11 @@ const PAYMENT_UNSPECIFIED = 'Not specified';
 const PAYMENT_ALIASES = new Map([
   ['master card', 'Mastercard'],
 ]);
+// Set once, after Signs finishing is converted to a multiselect and Equipment
+// is deactivated. A later init does not repeat those two changes, so an admin
+// who switches finishing back to a single select or turns Equipment on again
+// keeps that choice. Option lists still pick up missing seed values.
+const SIGNS_CATALOG_MIGRATION_KEY = 'signs_catalog_migration';
 // Exact option values only. "65lb Matt Cover" is a different option and stays.
 const OPTION_RENAMES = new Map([
   ['corplast', 'Coroplast'],
@@ -359,6 +364,12 @@ function parseOneField(field, raw, label) {
       seen.add(token);
       chosen.push(match.value);
     }
+    // None means no other finishing. A mix such as None plus Hems keeps the
+    // other choices. None alone stays None. The same rule applies to every
+    // finishing multiselect, including Small Format when None is offered.
+    if (field.key === 'finishing') {
+      return { value: withoutExclusiveNone(chosen), keep: true };
+    }
     return { value: chosen, keep: true };
   }
   const parsed = parseText(raw, label, {
@@ -415,12 +426,19 @@ function validateLineFields(definitions, raw, lineLabel) {
   return { value: values };
 }
 
+function withoutExclusiveNone(values) {
+  const list = (values || []).map((item) => String(item).trim()).filter(Boolean);
+  if (!list.some((item) => item === 'None') || list.length === 1) return list;
+  return list.filter((item) => item !== 'None');
+}
+
 function displayOf(field, value) {
   if (field && field.type === 'checkbox') return value ? 'Yes' : 'No';
   const rename = field && (field.type === 'select' || field.type === 'multiselect');
   const show = (item) => (rename ? displayToken(item) : String(item));
   if (Array.isArray(value)) {
-    return value
+    const items = field && field.key === 'finishing' ? withoutExclusiveNone(value) : value;
+    return items
       .filter((item) => item != null && String(item).trim() !== '')
       .map((item) => show(item))
       .join(', ');
@@ -623,7 +641,7 @@ function reconcileSelectOptions(stored, previous, next) {
   return { options: merged, replaced: false };
 }
 
-async function upgradeExistingField(run, existing, field, previous) {
+async function upgradeExistingField(run, existing, field, previous, lockType) {
   if (!usesOptions(field.type) || !usesOptions(existing.type)) return;
   const stored = parseStoredOptions(existing.options_json);
   const result = reconcileSelectOptions(stored, previous, field.options || []);
@@ -637,7 +655,7 @@ async function upgradeExistingField(run, existing, field, previous) {
     sets.push('label = ?');
     params.push(field.label);
   }
-  if (result.replaced && existing.type !== field.type) {
+  if (!lockType && result.replaced && existing.type !== field.type) {
     sets.push('type = ?');
     params.push(field.type);
   }
@@ -647,7 +665,36 @@ async function upgradeExistingField(run, existing, field, previous) {
   await run(`UPDATE service_fields SET ${sets.join(', ')} WHERE id = ?`, params);
 }
 
-async function retireServiceFields(run, getRow) {
+async function signsCatalogMigrationPending(getRow) {
+  const table = await getRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'system_settings'`);
+  if (!table) return false;
+  const flagged = await getRow('SELECT key FROM system_settings WHERE key = ?', [SIGNS_CATALOG_MIGRATION_KEY]);
+  return !flagged;
+}
+
+async function finishSignsCatalogMigration(run, getRow) {
+  const service = await getRow(`SELECT id FROM services WHERE name = 'Signs & Graphics'`);
+  if (service) {
+    await run(
+      `UPDATE service_fields
+       SET type = 'multiselect', updated_at = datetime('now')
+       WHERE service_id = ? AND key = 'finishing' AND type != 'multiselect'`,
+      [service.id]
+    );
+    await run(
+      `UPDATE service_fields
+       SET is_active = 0, updated_at = datetime('now')
+       WHERE service_id = ? AND key = 'equipment' AND is_active != 0`,
+      [service.id]
+    );
+  }
+  await run(
+    `INSERT INTO system_settings (key, value, updated_at) VALUES (?, '1', datetime('now'))`,
+    [SIGNS_CATALOG_MIGRATION_KEY]
+  );
+}
+
+async function retireServiceFields(run, getRow, deactivateExisting) {
   for (const entry of RETIRED_FIELDS) {
     const service = await getRow('SELECT id FROM services WHERE name = ?', [entry.service]);
     if (!service) continue;
@@ -673,7 +720,7 @@ async function retireServiceFields(run, getRow) {
       );
       continue;
     }
-    if (existing.is_active === 0) continue;
+    if (!deactivateExisting || existing.is_active === 0) continue;
     await run(
       `UPDATE service_fields SET is_active = 0, updated_at = datetime('now') WHERE id = ? AND is_active != 0`,
       [existing.id]
@@ -682,6 +729,7 @@ async function retireServiceFields(run, getRow) {
 }
 
 async function seedServiceFields(run, getRow) {
+  const migrationPending = await signsCatalogMigrationPending(getRow);
   for (const group of SEED) {
     const service = await getRow('SELECT id FROM services WHERE name = ?', [group.service]);
     if (!service) continue;
@@ -711,10 +759,12 @@ async function seedServiceFields(run, getRow) {
         continue;
       }
       const previous = previousByKey && previousByKey[field.key];
-      if (previous) await upgradeExistingField(run, existing, field, previous);
+      const lockType = group.service === 'Signs & Graphics' && field.key === 'finishing' && !migrationPending;
+      if (previous) await upgradeExistingField(run, existing, field, previous, lockType);
     }
   }
-  await retireServiceFields(run, getRow);
+  await retireServiceFields(run, getRow, migrationPending);
+  if (migrationPending) await finishSignsCatalogMigration(run, getRow);
 }
 
 function normalizeOption(entry, index, label) {
@@ -941,6 +991,7 @@ module.exports = {
   PAYMENT_UNSPECIFIED,
   canonicalPaymentMethod,
   paymentMethodLabel,
+  SIGNS_CATALOG_MIGRATION_KEY,
   RETURN_TO_ME,
   RETURN_SEE_SHIP,
   RETURN_UNSPECIFIED,

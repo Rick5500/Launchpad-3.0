@@ -158,6 +158,17 @@ function chosenValues(value, choices) {
   return list.map((item) => canonicalOption(item, choices));
 }
 
+// None is the only finishing choice, or it is left off. Checking None clears
+// the others. Checking anything else clears None.
+function exclusiveNone(previous, next) {
+  const before = Array.isArray(previous) ? previous : [];
+  const after = Array.isArray(next) ? next.filter(Boolean) : [];
+  if (!after.includes('None')) return after;
+  if (after.length === 1) return after;
+  if (!before.includes('None')) return ['None'];
+  return after.filter((value) => value !== 'None');
+}
+
 const emptyBill = {
   name: '',
   phone: '',
@@ -454,7 +465,8 @@ function FieldInput({ id, field, value, disabled, onChange }) {
           disabled={disabled}
           onChange={(event) => {
             const next = event.target.value;
-            onChange(typeof next === 'string' ? next.split(',') : next);
+            const list = typeof next === 'string' ? next.split(',') : next;
+            onChange(field.key === 'finishing' ? exclusiveNone(selected, list) : list);
           }}
           SelectProps={{
             multiple: true,
@@ -1052,7 +1064,12 @@ export default function CustomerOrderForm({ inboundEmail = null }) {
       if (field.is_active === false) continue;
       const choices = optionValues(field);
       if (field.type === 'select') next[field.key] = canonicalOption(values?.[field.key] || '', choices);
-      if (field.type === 'multiselect') next[field.key] = chosenValues(values?.[field.key], choices);
+      if (field.type === 'multiselect') {
+        const picked = chosenValues(values?.[field.key], choices);
+        next[field.key] = field.key === 'finishing' && picked.includes('None') && picked.length > 1
+          ? picked.filter((value) => value !== 'None')
+          : picked;
+      }
     }
     return next;
   }

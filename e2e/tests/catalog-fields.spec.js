@@ -78,9 +78,23 @@ test('new Signs and Small Format lines save the catalog choices', async ({ page 
   await expect(page.getByText('Hems, Pole Pockets, Wind Slits').first()).toBeVisible();
 
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
-  await chooseMulti(page, 'Finishing', ['Stakes']);
-  await page.getByRole('dialog').getByRole('button', { name: 'Save line' }).click();
+  const editDialog = page.getByRole('dialog');
+  await editDialog.getByRole('combobox', { name: /^Finishing\b/ }).click();
+  const noneOption = page.getByRole('option', { name: 'None', exact: true });
+  const hemsOption = page.getByRole('option', { name: 'Hems', exact: true });
+  await noneOption.click();
+  await expect(noneOption).toHaveAttribute('aria-selected', 'true');
+  await expect(hemsOption).toHaveAttribute('aria-selected', 'false');
+  await hemsOption.click();
+  await expect(noneOption).toHaveAttribute('aria-selected', 'false');
+  await expect(hemsOption).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('option', { name: 'Pole Pockets', exact: true }).click();
+  await page.getByRole('option', { name: 'Wind Slits', exact: true }).click();
+  await page.getByRole('option', { name: 'Stakes', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await editDialog.getByRole('button', { name: 'Save line' }).click();
   await expect(page.getByText('Hems, Pole Pockets, Wind Slits, Stakes').first()).toBeVisible();
+  await expect(page.getByText(/None, Hems/)).toHaveCount(0);
 
   await page.getByRole('checkbox', { name: 'Small Format', exact: true }).click();
   await page.getByTestId(`add-line-${small.id}`).click();
